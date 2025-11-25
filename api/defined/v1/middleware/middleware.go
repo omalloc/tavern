@@ -11,5 +11,8 @@ type Middleware struct {
 
 // Unmarshal decodes the input into the Options map.
 func (m *Middleware) Unmarshal(in any) error {
+	if m.Options == nil {
+		return nil
+	}
 	return mapstruct.Decode(m.Options, in)
 }

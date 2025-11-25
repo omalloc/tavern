@@ -1,0 +1,78 @@
+strict: true
+logger:
+  level: info
+  caller: true
+  traceid: true
+  nopid: true
+  encrypt:
+    enabled: false
+    secret: "123"
+  path: ./logs/tavern.log
+server:
+  addr: ":8080"
+  read_timeout: 60s
+  write_timeout: 60s
+  idle_timeout: 90s
+  read_header_timeout: 30s
+  max_header_bytes: 1048576 # 1MB
+  middleware:
+    - name: recovery
+    - name: logging
+      options:
+        path: ./logs/access.log
+    - name: rewrite
+      options:
+        request_headers_rewrite:
+        response_headers_rewrite:
+          set:
+            X-Frame-Options: "DENY"
+            X-Content-Type-Options: "nosniff"
+            Referrer-Policy: "no-referrer"
+          add:
+            X-XSS-Protection: "1; mode=block"
+          remove:
+            - "Server"
+    - name: multirange
+      options:
+        merge: false
+    - name: caching
+      options:
+        fuzzy_refresh: true
+        fuzzy_refresh_rate: 0.1
+        collapsed_request: true
+        collapsed_request_timeout: 100ms
+        vary_limit: 100
+        vary_ignore_key:
+          - "Cookie"
+          - "Access-Control-Request-Headers"
+          - "Access-Control-Request-Method"
+plugin:
+  - name: example-plugin
+    options:
+      option1: value1
+      option2: value2
+  - name: purge
+    options:
+      threshold: 60
+      max_queue_size: 1000
+      allow_hosts:
+        - "127.0.0.1"
+        - "127.1"
+        - "localhost"
+      log_path: ./logs/purge.log
+  - name: verifier
+    options:
+      endpoint: https://crc-svc.omalloc.com
+      interval: 60
+      timeout: 5
+      report_ratio: 100
+storage:
+  driver: native # native, custom-driver
+  async_load: true
+  eviction_policy: fifo # fifo, lru, lfu
+  selection_policy: hashring # hashring, roundrobin
+  buckets:
+    - path: /cache1
+      type: normal
+    - path: /cache2
+      type: normal
