@@ -1,6 +1,7 @@
 package main
 
 import (
+	"flag"
 	"os"
 	"strings"
 	"time"
@@ -20,6 +21,9 @@ import (
 	"github.com/omalloc/tavern/pkg/encoding/json"
 	"github.com/omalloc/tavern/plugin"
 	"github.com/omalloc/tavern/server"
+	_ "github.com/omalloc/tavern/server/middleware/caching"
+	_ "github.com/omalloc/tavern/server/middleware/recovery"
+	_ "github.com/omalloc/tavern/server/middleware/rewrite"
 )
 
 var (
@@ -38,6 +42,10 @@ var (
 
 func init() {
 	// init flag
+	flag.StringVar(&flagConf, "c", "config.yaml", "config file path")
+	flag.BoolVar(&flagVerbose, "v", false, "enable verbose log")
+
+	// init global encoding
 	encoding.SetDefaultCodec(json.JSONCodec{})
 
 	// init logger
@@ -50,6 +58,8 @@ func init() {
 }
 
 func main() {
+	flag.Parse()
+
 	c := config.New[conf.Bootstrap](config.WithSource(file.NewSource(flagConf)))
 	defer c.Close()
 
@@ -59,6 +69,15 @@ func main() {
 	}
 
 	log.Debugf("conf = %#+v", bc)
+
+	app, err := newApp(bc)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	if err := app.Run(); err != nil {
+		log.Fatal(err)
+	}
 }
 
 func newApp(bc *conf.Bootstrap) (*kratos.App, error) {

@@ -41,7 +41,9 @@ type Caching struct {
 	processor *ProcessorChain
 	req       *http.Request
 
-	hit bool
+	hit         bool
+	refresh     bool
+	fileChanged bool
 }
 
 func (c *Caching) doProxy(req *http.Request) (*http.Response, error) {

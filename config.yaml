@@ -18,6 +18,9 @@ server:
   max_header_bytes: 1048576 # 1MB
   middleware:
     - name: recovery
+      options:
+        fail_count_threshold: 20
+        fail_window: 1m
     - name: rewrite
       options:
         request_headers_rewrite:

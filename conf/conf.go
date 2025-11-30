@@ -15,13 +15,13 @@ type Bootstrap struct {
 }
 
 type Server struct {
-	Addr              string                    `json:"addr" yaml:"addr"`
-	ReadTimeout       time.Duration             `json:"read_timeout" yaml:"read_timeout"`
-	WriteTimeout      time.Duration             `json:"write_timeout" yaml:"write_timeout"`
-	IdleTimeout       time.Duration             `json:"idle_timeout" yaml:"idle_timeout"`
-	ReadHeaderTimeout time.Duration             `json:"read_header_timeout" yaml:"read_header_timeout"`
-	MaxHeaderBytes    int                       `json:"max_header_bytes" yaml:"max_header_bytes"`
-	Middleware        []middlewarev1.Middleware `json:"middleware" yaml:"middleware"`
+	Addr              string                     `json:"addr" yaml:"addr"`
+	ReadTimeout       time.Duration              `json:"read_timeout" yaml:"read_timeout"`
+	WriteTimeout      time.Duration              `json:"write_timeout" yaml:"write_timeout"`
+	IdleTimeout       time.Duration              `json:"idle_timeout" yaml:"idle_timeout"`
+	ReadHeaderTimeout time.Duration              `json:"read_header_timeout" yaml:"read_header_timeout"`
+	MaxHeaderBytes    int                        `json:"max_header_bytes" yaml:"max_header_bytes"`
+	Middleware        []*middlewarev1.Middleware `json:"middleware" yaml:"middleware"`
 }
 
 type Plugin struct {
