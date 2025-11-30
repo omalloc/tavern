@@ -2,23 +2,36 @@ package server
 
 import (
 	"context"
+	"net"
 	"net/http"
 
+	"github.com/cloudflare/tableflip"
+
+	pluginv1 "github.com/omalloc/tavern/api/defined/v1/plugin"
 	"github.com/omalloc/tavern/contrib/log"
 	"github.com/omalloc/tavern/contrib/transport"
 )
 
 type HTTPServer struct {
 	*http.Server
+
+	plugins []pluginv1.Plugin
+
+	flip     *tableflip.Upgrader
+	listener net.Listener
+	cleanups []func() error
 }
 
-func NewServer() transport.Server {
-	return &HTTPServer{}
+func NewServer(flip *tableflip.Upgrader, plugins []pluginv1.Plugin) transport.Server {
+	return &HTTPServer{
+		Server:   &http.Server{},
+		flip:     flip,
+		cleanups: make([]func() error, 0),
+	}
 }
 
 func (s *HTTPServer) Start(ctx context.Context) error {
-	s.Server = &http.Server{}
-	return s.ListenAndServe()
+	return nil
 }
 
 func (s *HTTPServer) Stop(ctx context.Context) error {
@@ -61,4 +74,10 @@ func (s *HTTPServer) buildHandler(tripper http.RoundTripper) http.HandlerFunc {
 
 func (s *HTTPServer) buildEndpoint() (http.HandlerFunc, error) {
 	return nil, nil
+}
+
+func (s *HTTPServer) newServeMux() *http.ServeMux {
+	mux := http.NewServeMux()
+
+	return mux
 }

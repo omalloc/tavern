@@ -3,10 +3,13 @@ module github.com/omalloc/tavern
 go 1.25.2
 
 require (
+	github.com/cloudflare/tableflip v1.2.3
 	github.com/fsnotify/fsnotify v1.9.0
 	github.com/fxamacker/cbor/v2 v2.9.0
 	github.com/go-viper/mapstructure/v2 v2.4.0
 	github.com/goccy/go-json v0.10.5
+	github.com/google/uuid v1.6.0
+	github.com/kelindar/bitmap v1.5.3
 	github.com/prometheus/client_golang v1.23.2
 	golang.org/x/sync v0.18.0
 	gopkg.in/yaml.v3 v3.0.1
@@ -15,6 +18,8 @@ require (
 require (
 	github.com/beorn7/perks v1.0.1 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
+	github.com/kelindar/simd v1.1.2 // indirect
+	github.com/klauspost/cpuid/v2 v2.2.4 // indirect
 	github.com/kr/text v0.2.0 // indirect
 	github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822 // indirect
 	github.com/prometheus/client_model v0.6.2 // indirect

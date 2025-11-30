@@ -50,7 +50,7 @@ plugin:
   - name: example-plugin
     options:
       option1: value1
-      option2: value2
+      option2: 2
   - name: purge
     options:
       threshold: 60

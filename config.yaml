@@ -1,4 +1,5 @@
 strict: true
+pidfile: /var/run/tavern/tavern.pid
 logger:
   level: info
   caller: true
@@ -17,9 +18,6 @@ server:
   max_header_bytes: 1048576 # 1MB
   middleware:
     - name: recovery
-    - name: logging
-      options:
-        path: ./logs/access.log
     - name: rewrite
       options:
         request_headers_rewrite:
@@ -50,7 +48,7 @@ plugin:
   - name: example-plugin
     options:
       option1: value1
-      option2: value2
+      option2: 2
   - name: purge
     options:
       threshold: 60
