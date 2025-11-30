@@ -20,7 +20,7 @@ server:
     - name: recovery
       options:
         fail_count_threshold: 20
-        fail_window: 1m
+        fail_window: 60
     - name: rewrite
       options:
         request_headers_rewrite:

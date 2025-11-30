@@ -18,6 +18,10 @@ type middlewareOption struct {
 	ResponseHeadersRewrite *HeadersPolicy `yaml:"response_headers_rewrite,omitempty"`
 }
 
+func init() {
+	middleware.Register("rewrite", Middleware)
+}
+
 func Middleware(c *configv1.Middleware) (middleware.Middleware, func(), error) {
 	var opts middlewareOption
 	if err := c.Unmarshal(&opts); err != nil {

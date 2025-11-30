@@ -78,6 +78,14 @@ func (pc *ProcessorChain) preCacheProcessor(req *http.Request) (*Caching, error)
 	return caching, nil
 }
 
+func (pc *ProcessorChain) postCacheProcessor(caching *Caching, req *http.Request, resp *http.Response) (*http.Response, error) {
+	// TODO: add response processing logic
+	// TODO: add X-Cache headers
+	// TODO: incr index ref count.
+
+	return resp, nil
+}
+
 // String returns a string representation of the processor chain.
 func (pc *ProcessorChain) String() string {
 	sb := strings.Builder{}

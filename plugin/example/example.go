@@ -22,7 +22,7 @@ type ExamplePlugin struct {
 }
 
 func init() {
-	plugin.Register("example", NewExamplePlugin)
+	plugin.Register("example-plugin", NewExamplePlugin)
 }
 
 func NewExamplePlugin(opts configv1.Option, log *log.Helper) (configv1.Plugin, error) {

@@ -11,13 +11,13 @@ import (
 	"github.com/omalloc/tavern/server/middleware"
 )
 
-func init() {
-	middleware.Register("recovery", Middleware)
+type middlewareOption struct {
+	FailCountThreshold int64 `json:"fail_count_threshold,omitempty" yaml:"fail_count_threshold,omitempty"`
+	FailWindow         int32 `json:"fail_window,omitempty" yaml:"fail_window,omitempty"`
 }
 
-type middlewareOption struct {
-	FailCountThreshold int64         `json:"fail_count_threshold,omitempty" yaml:"fail_count_threshold,omitempty"`
-	FailWindow         time.Duration `json:"fail_window,omitempty" yaml:"fail_window,omitempty"`
+func init() {
+	middleware.Register("recovery", Middleware)
 }
 
 func Middleware(c *configv1.Middleware) (middleware.Middleware, func(), error) {
@@ -30,7 +30,7 @@ func Middleware(c *configv1.Middleware) (middleware.Middleware, func(), error) {
 
 	stopCh := make(chan struct{}, 1)
 	tick := func() {
-		windowTicker := time.NewTicker(opts.FailWindow)
+		windowTicker := time.NewTicker(time.Duration(opts.FailWindow) * time.Second)
 
 		for {
 			select {

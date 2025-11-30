@@ -45,6 +45,7 @@ func NewServer(flip *tableflip.Upgrader, config *conf.Bootstrap, plugins []plugi
 
 	s := &HTTPServer{
 		Server: &http.Server{
+			Addr:              servConfig.Addr,
 			ReadTimeout:       servConfig.ReadTimeout,
 			WriteTimeout:      servConfig.WriteTimeout,
 			IdleTimeout:       servConfig.IdleTimeout,
@@ -101,7 +102,7 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 		return err
 	}
 
-	log.Infof("HTTP Cache server listening on %s", s.Server.Addr)
+	log.Infof("HTTP Cache server listening on %s", s.config.Server.Addr)
 
 	if err := s.Serve(s.listener); err != nil &&
 		!errors.Is(err, http.ErrServerClosed) {

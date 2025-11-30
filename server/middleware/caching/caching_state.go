@@ -6,7 +6,12 @@ type StateProcessor struct{}
 
 // Lookup implements Processor.
 func (s *StateProcessor) Lookup(caching *Caching, req *http.Request) (bool, error) {
-	panic("unimplemented")
+	// index metadata nil
+	if caching.md == nil {
+		return false, nil
+	}
+
+	return true, nil
 }
 
 // PostRequst implements Processor.

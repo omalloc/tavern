@@ -20,6 +20,7 @@ import (
 	"github.com/omalloc/tavern/pkg/encoding"
 	"github.com/omalloc/tavern/pkg/encoding/json"
 	"github.com/omalloc/tavern/plugin"
+	_ "github.com/omalloc/tavern/plugin/example"
 	"github.com/omalloc/tavern/server"
 	_ "github.com/omalloc/tavern/server/middleware/caching"
 	_ "github.com/omalloc/tavern/server/middleware/recovery"
@@ -68,8 +69,6 @@ func main() {
 		log.Fatal(err)
 	}
 
-	log.Debugf("conf = %#+v", bc)
-
 	app, err := newApp(bc)
 	if err != nil {
 		log.Fatal(err)
@@ -100,12 +99,12 @@ func newApp(bc *conf.Bootstrap) (*kratos.App, error) {
 		}
 	}
 	// load plugin
-	plugins := loadPlugin(log.DefaultLogger, bc)
+	plugins := loadPlugin(log.GetLogger(), bc)
 
 	// trasnport server
 	servers := make([]transport.Server, 0)
 
-	srv := server.NewServer(flip, plugins)
+	srv := server.NewServer(flip, bc, plugins)
 	servers = append(servers, srv)
 
 	for _, plugin := range plugins {
@@ -117,7 +116,7 @@ func newApp(bc *conf.Bootstrap) (*kratos.App, error) {
 		kratos.Name("tavern"),
 		kratos.Version(Version),
 		kratos.StopTimeout(stopTimeout),
-		kratos.Logger(log.DefaultLogger),
+		kratos.Logger(log.GetLogger()),
 		kratos.Server(servers...),
 	), nil
 }
