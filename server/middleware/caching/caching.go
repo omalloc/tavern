@@ -6,6 +6,7 @@ import (
 	configv1 "github.com/omalloc/tavern/api/defined/v1/middleware"
 	"github.com/omalloc/tavern/api/defined/v1/storage/object"
 	"github.com/omalloc/tavern/contrib/log"
+	"github.com/omalloc/tavern/proxy"
 	"github.com/omalloc/tavern/server/middleware"
 )
 
@@ -26,9 +27,12 @@ func Middleware(c *configv1.Middleware) (middleware.Middleware, func(), error) {
 	).fill()
 
 	return func(origin http.RoundTripper) http.RoundTripper {
+
+		proxyClient := proxy.GetProxy()
+
 		return middleware.RoundTripperFunc(func(req *http.Request) (resp *http.Response, err error) {
 			// find indexdb cache-key has hit/miss.
-			caching, err := processor.preCacheProcessor(req)
+			caching, err := processor.preCacheProcessor(proxyClient, req)
 			// err to BYPASS caching
 			if err != nil {
 				caching.log.Warnf("caching find failed: %v BYPASS", err)
@@ -53,10 +57,11 @@ func Middleware(c *configv1.Middleware) (middleware.Middleware, func(), error) {
 }
 
 type Caching struct {
-	log       *log.Helper
-	processor *ProcessorChain
-	req       *http.Request
-	md        *object.Metadata
+	log         *log.Helper
+	processor   *ProcessorChain
+	req         *http.Request
+	md          *object.Metadata
+	proxyClient proxy.Proxy
 
 	hit         bool
 	refresh     bool
@@ -64,6 +69,7 @@ type Caching struct {
 }
 
 func (c *Caching) responseCache(req *http.Request) (*http.Response, error) {
+	// find disk cache file and return Body
 	return nil, nil
 }
 

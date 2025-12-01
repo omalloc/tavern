@@ -2,6 +2,7 @@ package storage
 
 import (
 	"context"
+	"errors"
 	"io"
 
 	"github.com/omalloc/tavern/api/defined/v1/storage/object"
@@ -55,10 +56,41 @@ type Bucket interface {
 	ID() string
 	// Weight returns the Bucket weight, range 0-1000.
 	Weight() int
+	// Allow returns the allow percent of the Bucket, range 0-100.
+	Allow() int
+	// UseAllow returns whether to use the allow percent.
+	UseAllow() bool
+	// HasBad returns whether the Bucket is in bad state.
+	HasBad() bool
 }
 
 type PurgeControl struct {
 	Hard        bool `json:"hard"`         // 是否硬删除, default: false
 	Dir         bool `json:"dir"`          // 是否清理目录, default: false
 	MarkExpired bool `json:"mark_expired"` // 是否标记为过期, default: false
+}
+
+var ErrSharedKVKeyNotFound = errors.New("key not found")
+
+type SharedKV interface {
+	io.Closer
+
+	// Get returns the value for the given key.
+	Get(ctx context.Context, key []byte) ([]byte, error)
+	// Set sets the value for the given key.
+	Set(ctx context.Context, key []byte, val []byte) error
+	// Incr increments the value for the given key.
+	Incr(ctx context.Context, key []byte, delta uint32) (uint32, error)
+	// Decr decrements the value for the given key.
+	Decr(ctx context.Context, key []byte, delta uint32) (uint32, error)
+	// GetCounter returns the value for the given key.
+	GetCounter(ctx context.Context, key []byte) (uint32, error)
+	// Delete deletes the value for the given key.
+	Delete(ctx context.Context, key []byte) error
+	// DropPrefix deletes all key-value pairs with the given prefix.
+	DropPrefix(ctx context.Context, prefix []byte) error
+	// Iterate iterates over all key-value pairs.
+	Iterate(ctx context.Context, f func(key, val []byte) error) error
+	// IteratePrefix iterates over all key-value pairs with the given prefix.
+	IteratePrefix(ctx context.Context, prefix []byte, f func(key, val []byte) error) error
 }

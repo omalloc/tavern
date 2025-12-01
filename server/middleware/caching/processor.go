@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/omalloc/tavern/contrib/log"
+	"github.com/omalloc/tavern/proxy"
 )
 
 // Processor defines the interface for caching processor middleware.
@@ -70,10 +71,11 @@ func (pc *ProcessorChain) PostRequst(caching *Caching, req *http.Request, resp *
 	return resp, nil
 }
 
-func (pc *ProcessorChain) preCacheProcessor(req *http.Request) (*Caching, error) {
+func (pc *ProcessorChain) preCacheProcessor(proxyClient proxy.Proxy, req *http.Request) (*Caching, error) {
 	caching := &Caching{
-		req:       req,
-		processor: pc,
+		proxyClient: proxyClient,
+		req:         req,
+		processor:   pc,
 	}
 	return caching, nil
 }

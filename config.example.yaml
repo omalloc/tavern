@@ -76,3 +76,15 @@ storage:
       type: normal
     - path: /cache2
       type: normal
+upstream:
+  balancing: wrr
+  address:
+    - http://127.0.0.1:8000
+    # - unix:///tmp/gw.sock
+  max_idle_conns: 1000
+  max_idle_conns_per_host: 500
+  max_connections_per_server: 100
+  insecure_skip_verify: true
+  resolve_addresses: false
+  features:
+    limit_rate_by_fd: true

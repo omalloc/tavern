@@ -2,11 +2,14 @@ package main
 
 import (
 	"flag"
+	"net/url"
 	"os"
 	"strings"
 	"time"
 
 	"github.com/cloudflare/tableflip"
+	"github.com/omalloc/proxy/selector"
+	"github.com/omalloc/proxy/selector/once"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/collectors"
 
@@ -21,6 +24,7 @@ import (
 	"github.com/omalloc/tavern/pkg/encoding/json"
 	"github.com/omalloc/tavern/plugin"
 	_ "github.com/omalloc/tavern/plugin/example"
+	"github.com/omalloc/tavern/proxy"
 	"github.com/omalloc/tavern/server"
 	_ "github.com/omalloc/tavern/server/middleware/caching"
 	_ "github.com/omalloc/tavern/server/middleware/recovery"
@@ -98,6 +102,24 @@ func newApp(bc *conf.Bootstrap) (*kratos.App, error) {
 			_ = os.Remove(bc.Server.Addr) // remove unix socket
 		}
 	}
+
+	// init storage
+
+	// init upstream
+	nodes := make([]selector.Node, 0, len(bc.Upstream.Address))
+	for _, addr := range bc.Upstream.Address {
+		u, err := url.Parse(addr)
+		if err != nil {
+			log.Errorf("parsed upstream.address failed %v", err)
+			continue
+		}
+		nodes = append(nodes, selector.NewNode(u.Scheme, u.Host, selector.RawMetadata("weight", "1")))
+	}
+	proxy.SetDefault(proxy.New(
+		proxy.WithSelector(once.New()),
+		proxy.WithInitialNodes(nodes),
+	))
+
 	// load plugin
 	plugins := loadPlugin(log.GetLogger(), bc)
 
