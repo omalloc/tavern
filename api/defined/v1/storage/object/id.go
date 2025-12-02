@@ -59,6 +59,11 @@ func (id *ID) WPath(pwd string) string {
 	return filepath.Join(pwd, hash[0:1], hash[2:4], hash)
 }
 
+func (idx IDHash) WPath(pwd string) string {
+	h := hex.EncodeToString(idx[:])
+	return filepath.Join(pwd, h[0:1], h[2:4], h)
+}
+
 func NewID(path string) *ID {
 	hash := sha1.Sum([]byte(path))
 	return &ID{

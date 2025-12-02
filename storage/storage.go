@@ -61,11 +61,12 @@ func (n *nativeStorage) reinit(config *conf.Storage) error {
 		n.log.Warnf("failed to drop prefix key `if/domain/` counter: %s", err)
 	}
 
-	globalConfig := &GlobalBucketOption{
+	globalConfig := &globalBucketOption{
 		AsyncLoad:       config.AsyncLoad,
 		EvictionPolicy:  config.EvictionPolicy,
 		SelectionPolicy: config.SelectionPolicy,
 		Driver:          config.Driver,
+		DBType:          config.DBType,
 	}
 
 	for _, c := range config.Buckets {

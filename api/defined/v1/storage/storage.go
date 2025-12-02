@@ -98,3 +98,38 @@ type SharedKV interface {
 	// IteratePrefix iterates over all key-value pairs with the given prefix.
 	IteratePrefix(ctx context.Context, prefix []byte, f func(key, val []byte) error) error
 }
+
+type Mark uint64
+
+const (
+	ClockBits   = 48
+	ClockMask   = (1 << ClockBits) - 1
+	CounterBits = 16
+	RefsMask    = (1 << CounterBits) - 1
+)
+
+func NewMark(clock int64, refs uint64) Mark {
+	return Mark(clock)<<CounterBits | Mark(refs)
+}
+
+func (m *Mark) SetLastAccess(clock int64) {
+	*m &^= ClockMask << CounterBits
+	*m |= Mark(clock) << CounterBits
+}
+
+func (m *Mark) LastAccess() uint64 {
+	return uint64(*m >> CounterBits)
+}
+
+func (m *Mark) Refs() uint64 {
+	return uint64(*m & RefsMask)
+}
+
+func (m *Mark) SetRefs(refs uint64) {
+	if refs > RefsMask {
+		refs = RefsMask
+	}
+
+	*m &^= RefsMask
+	*m |= Mark(refs)
+}

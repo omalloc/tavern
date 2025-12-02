@@ -7,13 +7,15 @@ import (
 	"github.com/omalloc/tavern/conf"
 	"github.com/omalloc/tavern/storage/bucket/disk"
 	"github.com/omalloc/tavern/storage/bucket/empty"
+	_ "github.com/omalloc/tavern/storage/indexdb/pebble"
 )
 
-type GlobalBucketOption struct {
+type globalBucketOption struct {
 	AsyncLoad       bool
 	EvictionPolicy  string
 	SelectionPolicy string
 	Driver          string
+	DBType          string
 }
 
 // implements storage.Bucket map.
@@ -31,12 +33,13 @@ func NewBucket(opt *conf.Bucket, sharedkv storage.SharedKV) (storage.Bucket, err
 	return factory(opt, sharedkv)
 }
 
-func mergeConfig(global *GlobalBucketOption, bucket *conf.Bucket) *conf.Bucket {
+func mergeConfig(global *globalBucketOption, bucket *conf.Bucket) *conf.Bucket {
 	// copied from conf bucket.
 	copied := &conf.Bucket{
 		Path:   bucket.Path,
 		Driver: bucket.Driver,
 		Type:   bucket.Type,
+		DBType: bucket.DBType,
 	}
 
 	if copied.Driver == "" {
@@ -44,6 +47,9 @@ func mergeConfig(global *GlobalBucketOption, bucket *conf.Bucket) *conf.Bucket {
 	}
 	if copied.Type == "" {
 		copied.Type = "normal"
+	}
+	if copied.DBType == "" {
+		copied.DBType = global.DBType
 	}
 	return copied
 }

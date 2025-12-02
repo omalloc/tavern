@@ -13,6 +13,7 @@ require (
 	github.com/google/uuid v1.6.0
 	github.com/kelindar/bitmap v1.5.3
 	github.com/omalloc/proxy v0.0.0-20251201151440-9054f8002a97
+	github.com/paulbellamy/ratecounter v0.2.0
 	github.com/prometheus/client_golang v1.23.2
 	golang.org/x/sync v0.18.0
 	gopkg.in/yaml.v3 v3.0.1

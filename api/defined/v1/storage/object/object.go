@@ -24,7 +24,7 @@ type Metadata struct {
 	Size        uint64        `json:"size"`
 	RespUnix    int64         `json:"resp_unix"`
 	LastRefUnix int64         `json:"last_ref_unix"`
-	CacheRef    int64         `json:"cache_ref"`
+	Refs        int64         `json:"refs"`
 	ExpiresAt   int64         `json:"expires_at"`
 	Headers     http.Header   `json:"headers"`
 	VirtualKey  []string      `json:"vkey,omitempty"`
@@ -64,7 +64,7 @@ func (m *Metadata) Clone() *Metadata {
 		Size:        m.Size,
 		RespUnix:    m.RespUnix,
 		LastRefUnix: m.LastRefUnix,
-		CacheRef:    m.CacheRef,
+		Refs:        m.Refs,
 		ExpiresAt:   m.ExpiresAt,
 		Headers:     m.Headers.Clone(),
 		Flags:       m.Flags,

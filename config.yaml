@@ -69,6 +69,7 @@ plugin:
       report_ratio: 100
 storage:
   driver: native # native, custom-driver
+  db_type: pebble # boltdb, badgerdb, pebble
   async_load: true
   eviction_policy: fifo # fifo, lru, lfu
   selection_policy: hashring # hashring, roundrobin
