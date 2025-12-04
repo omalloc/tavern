@@ -29,6 +29,10 @@ install:
 build:
 	@env CGO_ENABLED=0 go build ${LDFLAGS} -o bin/tavern main.go
 
+.PHONY: toolchain
+toolchain:
+	@env CGO_ENABLED=0 go build ${LDFLAGS} -o bin/tq cmd/tq/main.go
+
 .PHONY: run
 run:
 	@env CGO_ENABLED=0 go run ${LDFLAGS} main.go -c config.yaml
@@ -42,7 +46,7 @@ check:
 	@go vet ./...
 	@staticcheck ./...
 
-.PHONY: tools
-tools:
+.PHONY: init
+init:
 	@go env -w GOPROXY=https://goproxy.cn,direct
 	@go install honnef.co/go/tools/cmd/staticcheck@latest

@@ -12,6 +12,7 @@ import (
 
 	"github.com/omalloc/tavern/conf"
 	"github.com/omalloc/tavern/contrib/log"
+	"github.com/omalloc/tavern/metrics"
 	xhttp "github.com/omalloc/tavern/pkg/x/http"
 )
 
@@ -44,6 +45,7 @@ func HandleAccessLog(opt *conf.ServerAccessLog, next http.HandlerFunc) http.Hand
 		// 补全 request 结构
 		fillRequest(req)
 
+		req, _ = metrics.WithRequestMetric(req)
 		recorder := xhttp.NewResponseRecorder(w)
 
 		defer func() {

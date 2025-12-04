@@ -2,7 +2,14 @@ package server
 
 import (
 	"net"
+	"net/http"
+	"strconv"
 	"strings"
+)
+
+var (
+	bodyBytes = []byte(http.StatusText(http.StatusInternalServerError))
+	bodyLen   = strconv.FormatInt(int64(len(bodyBytes)), 10)
 )
 
 func (s *HTTPServer) listen() error {

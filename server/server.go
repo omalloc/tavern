@@ -20,6 +20,7 @@ import (
 	"github.com/omalloc/tavern/conf"
 	"github.com/omalloc/tavern/contrib/log"
 	"github.com/omalloc/tavern/contrib/transport"
+	xhttp "github.com/omalloc/tavern/pkg/x/http"
 	"github.com/omalloc/tavern/server/middleware"
 	_ "github.com/omalloc/tavern/server/middleware/caching"
 	_ "github.com/omalloc/tavern/server/middleware/recovery"
@@ -144,15 +145,14 @@ func (s *HTTPServer) Stop(ctx context.Context) error {
 func (s *HTTPServer) newServeMux() *http.ServeMux {
 	mux := http.NewServeMux()
 
-	// internal handlers
-	mux.Handle("/favicon.ico", http.NotFoundHandler())
 	// profiles handler
 	mod.HandlePProf(s.serverConfig.PProf, mux)
+	// internal handlers
+	mux.Handle("/favicon.ico", http.NotFoundHandler())
 	// metrics
 	mux.Handle("/metrics", promhttp.HandlerFor(prometheus.DefaultGatherer, promhttp.HandlerOpts{
 		EnableOpenMetrics: true,
 	}))
-
 	// 启动探针
 	mux.Handle("/healthz/startup-probe", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		payload := []byte("ok")
@@ -175,6 +175,8 @@ func (s *HTTPServer) newServeMux() *http.ServeMux {
 		plug.AddRouter(mux)
 	}
 
+	xhttp.PrintRoutes(mux)
+
 	return mux
 }
 
@@ -195,11 +197,21 @@ func (s *HTTPServer) buildHandler(tripper http.RoundTripper) http.HandlerFunc {
 		resp, err = tripper.RoundTrip(req)
 		if err != nil {
 			clog.Errorf("request %s %s failed: %s", req.Method, req.URL.Path, err)
+
+			// 如果上游没返回业务错误，则直接响应 500
+			w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+			w.Header().Set("Content-Length", bodyLen)
+			w.Header().Set("X-Content-Type-Options", "nosniff")
+			w.WriteHeader(http.StatusInternalServerError)
+			_, _ = w.Write(bodyBytes)
+
+			_metricRequestsTotal.WithLabelValues(req.Proto, strconv.Itoa(http.StatusInternalServerError)).Inc()
+			return
 		}
 
 		doCopyBody := func() {
 			if resp.Body == nil {
-				clog.Infof("response body is nil")
+				_metricRequestsTotal.WithLabelValues(req.Proto, strconv.Itoa(resp.StatusCode)).Inc()
 				return
 			}
 
@@ -212,6 +224,8 @@ func (s *HTTPServer) buildHandler(tripper http.RoundTripper) http.HandlerFunc {
 			defer func() {
 				_ = resp.Body.Close()
 				bufPool.Put(buf)
+
+				_metricRequestsTotal.WithLabelValues(req.Proto, strconv.Itoa(resp.StatusCode)).Inc()
 			}()
 
 			want := resp.Header.Get("Content-Length")
@@ -220,6 +234,7 @@ func (s *HTTPServer) buildHandler(tripper http.RoundTripper) http.HandlerFunc {
 			if err != nil {
 				// abort ? continue ?
 				clog.Errorf("failed to copy upstream response body to client: [%s] %s %s sent=%d want=%s err=%s", req.Proto, req.Method, req.URL.Path, sent, want, err)
+				_metricRequestUnexpectedClosed.WithLabelValues(req.Proto, req.Method).Inc()
 				return
 			}
 
