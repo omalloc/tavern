@@ -12,6 +12,8 @@ bin/*
 # Test binary, built with `go test -c`
 *.test
 logs/
+tests/**/*.bin
+
 
 # Code coverage profiles and other test artifacts
 *.out

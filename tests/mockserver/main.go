@@ -23,6 +23,8 @@ func main() {
 
 	mux := http.NewServeMux()
 
+	mux.Handle("/path/to/", http.StripPrefix("/path/to", http.FileServer(http.Dir("./files"))))
+
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		log.Printf("received request: %s %s", r.Method, r.URL.String())
 

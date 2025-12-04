@@ -209,6 +209,14 @@ func (s *HTTPServer) buildHandler(tripper http.RoundTripper) http.HandlerFunc {
 			return
 		}
 
+		// response now
+		headers := w.Header()
+		xhttp.CopyHeader(headers, resp.Header)
+		// see https://pkg.go.dev/net/http#example-ResponseWriter-Trailers
+		xhttp.CopyTrailer(headers, resp.Trailer)
+
+		w.WriteHeader(resp.StatusCode)
+
 		doCopyBody := func() {
 			if resp.Body == nil {
 				_metricRequestsTotal.WithLabelValues(req.Proto, strconv.Itoa(resp.StatusCode)).Inc()
