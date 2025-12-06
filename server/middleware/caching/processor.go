@@ -1,6 +1,7 @@
 package caching
 
 import (
+	"fmt"
 	"net/http"
 	"reflect"
 	"slices"
@@ -8,6 +9,7 @@ import (
 
 	"github.com/omalloc/tavern/contrib/log"
 	"github.com/omalloc/tavern/proxy"
+	"github.com/omalloc/tavern/storage"
 )
 
 // Processor defines the interface for caching processor middleware.
@@ -72,12 +74,24 @@ func (pc *ProcessorChain) PostRequst(caching *Caching, req *http.Request, resp *
 }
 
 func (pc *ProcessorChain) preCacheProcessor(proxyClient proxy.Proxy, req *http.Request) (*Caching, error) {
+	id, err := newObjectIDFromRequest(req, "", false)
+	if err != nil {
+		return nil, fmt.Errorf("failed new object-id from request err: %w", err)
+	}
+
+	// Select storage bucket by object ID
+	// hashring or diskhash
+	bucket := storage.Select(req.Context(), id)
+
 	caching := &Caching{
 		log:         log.Context(req.Context()),
 		proxyClient: proxyClient,
+		id:          id,
+		bucket:      bucket,
 		req:         req,
 		processor:   pc,
 	}
+
 	return caching, nil
 }
 

@@ -4,7 +4,11 @@ import (
 	"net/http"
 	"net/textproto"
 	"slices"
+	"strconv"
 	"strings"
+	"time"
+
+	"github.com/omalloc/tavern/pkg/x/http/cachecontrol"
 )
 
 // CopyHeader copies all headers from the source http.Header to the destination http.Header.
@@ -81,4 +85,53 @@ func RemoveHopByHopHeaders(h http.Header) {
 // see https://www.rfc-editor.org/rfc/rfc9112.html#name-chunked-transfer-coding
 func IsChunked(h http.Header) bool {
 	return h.Get("Transfer-Encoding") == "chunked" || h.Get("Content-Length") == ""
+}
+
+const DefaultProtocolCacheTime = time.Second * 300
+
+// ParseCacheTime parses cache time from HTTP headers.
+//
+// If withKey is empty, it will parse from standard Cache-Control and Expires headers.
+// If withKey is provided, it will look for that specific header key to determine cache time.
+//
+// It returns the parsed cache duration and a boolean indicating whether caching is allowed.
+func ParseCacheTime(withKey string, src http.Header) (time.Duration, bool) {
+	if withKey == "" {
+		hcc := src.Get("Cache-Control")
+		expire := src.Get("Expires")
+
+		if hcc == "" && expire == "" {
+			return DefaultProtocolCacheTime, true
+		}
+
+		ctrl := cachecontrol.Parse(hcc)
+
+		if ctrl.MaxAge() > 0 {
+			return ctrl.MaxAge(), true
+		}
+
+		if expire != "" {
+			if t, err := time.Parse(time.RFC1123, expire); err == nil {
+				// use the server time from the Date header to calculate
+				return time.Until(t), true
+			}
+		}
+
+		if !ctrl.Cacheable() {
+			return 0, false
+		}
+
+		// default cache time
+		return time.Second * 3600, true
+	}
+
+	str := src.Get(withKey)
+
+	ct, _ := strconv.Atoi(str)
+	// No-Cache
+	if ct <= 0 {
+		return 0, false
+	}
+
+	return time.Duration(ct) * time.Second, true
 }

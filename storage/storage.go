@@ -125,10 +125,17 @@ func (n *nativeStorage) PURGE(storeUrl string, typ storage.PurgeControl) error {
 		return bucket.Discard(context.Background(), cacheKey)
 	}
 
-	// TODO: MarkExpired to revalidate.
+	// MarkExpired to revalidate.
 	// soft delete cache file mode.
+	md, err := bucket.Lookup(context.Background(), cacheKey)
+	if err != nil {
+		return err
+	}
 
-	return nil
+	// set expire time to past time. and then store it back.
+	md.ExpiresAt = time.Now().Add(-1).Unix()
+	// TODO: we should acquire a globalResourceLock before updating.
+	return bucket.Store(context.Background(), md)
 }
 
 // Close implements storage.Storage.
