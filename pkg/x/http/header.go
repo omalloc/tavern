@@ -11,10 +11,47 @@ import (
 	"github.com/omalloc/tavern/pkg/x/http/cachecontrol"
 )
 
+const DefaultProtocolCacheTime = time.Second * 300
+
 // CopyHeader copies all headers from the source http.Header to the destination http.Header.
 // It iterates over each header key-value pair in the source and adds them to the destination.
 func CopyHeader(dst, src http.Header) {
 	for k, vv := range src {
+		dst[k] = make([]string, 0, len(vv))
+		for _, v := range vv {
+			dst.Add(k, v)
+		}
+	}
+}
+
+// CopyHeadersWithout copies all headers from the source http.Header to the destination http.Header,
+// excluding the headers specified in excludeKeys.
+// It creates a map of excluded keys for efficient lookup and skips those keys during the copy process.
+//
+// - dst: The destination http.Header where the headers will be copied to.
+// - src: The source http.Header from which the headers will be copied.
+// - excludeKeys: A variadic list of header keys to be excluded from copying.
+//
+// Example usage:
+//
+//	src := http.Header{
+//	    "Content-Type": {"application/json"},
+//	    "Content-Length": {"123"},
+//	    "Authorization": {"Bearer token"},
+//	}
+//	dst := http.Header{}
+//	CopyHeadersWithout(dst, src, "Authorization", "Content-Length")
+//	// dst will now contain only "Content-Type": {"application/json"}
+func CopyHeadersWithout(dst, src http.Header, excludeKeys ...string) {
+	excludeMap := make(map[string]struct{}, len(excludeKeys))
+	for _, key := range excludeKeys {
+		excludeMap[textproto.CanonicalMIMEHeaderKey(key)] = struct{}{}
+	}
+
+	for k, vv := range src {
+		if _, excluded := excludeMap[textproto.CanonicalMIMEHeaderKey(k)]; excluded {
+			continue
+		}
 		dst[k] = make([]string, 0, len(vv))
 		for _, v := range vv {
 			dst.Add(k, v)
@@ -86,8 +123,6 @@ func RemoveHopByHopHeaders(h http.Header) {
 func IsChunked(h http.Header) bool {
 	return h.Get("Transfer-Encoding") == "chunked" || h.Get("Content-Length") == ""
 }
-
-const DefaultProtocolCacheTime = time.Second * 300
 
 // ParseCacheTime parses cache time from HTTP headers.
 //

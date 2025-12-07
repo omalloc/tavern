@@ -24,6 +24,12 @@ var (
 	ErrRangeHeaderUnsatisfiable      = errors.New("header Range unsatisfiable")
 )
 
+var (
+	parser = NewUnsatisfiableParser()
+	Parse = parser.Parse
+	SingleParse = parser.SingleParse
+)
+
 type Range struct {
 	Start, End int64
 }
@@ -262,4 +268,65 @@ func ParseContentRange(header http.Header) (*ContentRange, error) {
 	}
 
 	return cr, nil
+}
+
+// UnsatisfiableMultiRange ...
+func UnsatisfiableMultiRange(header string) ([]*Range, error) {
+	if header == "" {
+		return nil, ErrRangeHeaderNotFound
+	}
+
+	if !strings.HasPrefix(header, b) {
+		return nil, ErrRangeHeaderInvalidFormat
+	}
+
+	index := strings.Index(header, "=")
+	if index == -1 {
+		return nil, ErrRangeHeaderInvalidFormat
+	}
+
+	multipart := strings.Split(header[index+1:], ",")
+	ranges := make([]*Range, 0, len(multipart))
+
+	for _, part := range multipart {
+
+		part = strings.TrimSpace(part)
+		// not -nnn or nnn- or nnn-nnn
+		if !strings.Contains(part, "-") {
+			continue
+		}
+
+		r := strings.Split(part, "-")
+
+		// -nnn or nnn-
+		if len(r) < 2 {
+			// -nnn
+			if strings.HasPrefix(part, "-") {
+				continue
+			}
+
+			// nnn-
+			if strings.HasSuffix(part, "-") {
+				continue
+			}
+		}
+
+		start, startErr := strconv.ParseInt(r[0], 10, 64)
+		end, endErr := strconv.ParseInt(r[1], 10, 64)
+
+		if startErr != nil && endErr != nil {
+			continue
+		}
+
+		if start > end || start < 0 {
+			continue
+		}
+
+		ranges = append(ranges, &Range{
+			Start: start,
+			End:   end,
+		})
+	}
+
+	return ranges, nil
 }
