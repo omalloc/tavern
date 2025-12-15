@@ -1,13 +1,23 @@
 # Tavern Caching
 
-Tavern 是一个高性能的 HTTP 缓存代理服务器，旨在利用现代化的微服务框架提供更灵活的架构、更强的扩展性以及更优秀的性能。
+Tavern 是一个高性能的 HTTP 缓存代理服务器，旨在利用现代化的服务框架提供更灵活的架构、更强的扩展性以及更优秀的性能。
 
 ## ✨ 特性 (Features)
 
 - **核心缓存能力**:
-  - 支持缓存预取 (Prefetch) 与自动刷新 (Auto Refresh)
-  - 支持热点迁移 (Hot Migration) 与模糊获取 (Fuzzying fetch)
-  - 支持 Vary 响应头与 Range 请求 (MultiRange)
+  - [x] 缓存预取 (Prefetch)
+  - [ ] 缓存推送 (URL/DIR Push)
+  - [ ] 模糊刷新 (Fuzzying fetch)
+  - [x] 自动刷新 (Auto Refresh)
+  - [ ] 缓存变更校验 (Cache Validation)
+  - [ ] 热点迁移 (Hot Migration) 
+  - [ ] 冷热分离 ()
+  - [ ] 上游请求合并 (Upstream Merge Request)
+  - [ ] 图像压缩自适应 (Webp Support)
+  - [ ] Vary分版本缓存 (Vary Cache)
+  - [x] 头部重写 (Headers Rewrite)
+  - [x] 支持 Multiple Range 请求
+  - [ ] 缓存权威校验 (CRC checksum center)
 - **现代化架构**:
   - 基于 **Kratos** 框架，提供高扩展、模块复用能力
   - **插件系统 (Plugin System)**: 支持通过插件扩展核心业务逻辑
