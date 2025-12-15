@@ -6,6 +6,7 @@ const AppName = "tavern"
 const (
 	ProtocolRequestIDKey   = "X-Request-ID"
 	ProtocolCacheStatusKey = "X-Cache"
+	PrefetchCacheKey       = "X-Prefetch"
 
 	InternalTraceKey = "i-xtrace"
 	InternalStoreUrl = "i-x-store-url"

@@ -2,6 +2,7 @@ package caching
 
 import (
 	"fmt"
+	"io"
 	"net/http"
 	"reflect"
 	"slices"
@@ -120,6 +121,11 @@ func (pc *ProcessorChain) postCacheProcessor(caching *Caching, _ *http.Request, 
 	if resp != nil && resp.Header != nil && caching.md != nil {
 		resp.Header.Set("Age", strconv.FormatInt(time.Now().Unix()-caching.md.RespUnix, 10))
 		resp.Header.Set("Expires", time.Unix(caching.md.ExpiresAt, 0).UTC().Format(http.TimeFormat))
+	}
+
+	// FETCH request
+	if resp != nil && caching.prefetch {
+		_, _ = io.Copy(io.Discard, resp.Body)
 	}
 
 	// TODO: incr index ref count.

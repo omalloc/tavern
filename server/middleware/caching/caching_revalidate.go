@@ -98,7 +98,11 @@ func (r *RevalidateProcessor) revalidate(c *Caching, resp *http.Response, req *h
 
 	// TODO: lazilyRespond
 
-	return nil, nil
+	return resp, nil
+}
+
+func NewRevalidateProcessor(opts ...RefreshOption) Processor {
+	return &RevalidateProcessor{}
 }
 
 // hasExpired checks if the metadata has expired based on the ExpiresAt timestamp.
