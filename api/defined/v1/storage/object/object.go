@@ -19,6 +19,7 @@ type Metadata struct {
 	Flags CacheFlag `json:"flags"`
 
 	ID          *ID           `json:"id" yaml:"id"`
+	BlockSize   uint64        `json:"bsize"`
 	Parts       bitmap.Bitmap `json:"parts"`
 	Code        int           `json:"code"`
 	Size        uint64        `json:"size"`
@@ -53,6 +54,21 @@ func (m *Metadata) IsVaryChunked() bool {
 // HasVary returns true if the metadata has vary keys.
 func (m *Metadata) HasVary() bool {
 	return len(m.VirtualKey) > 0
+}
+
+func (m *Metadata) HasComplete() bool {
+	if m.IsVary() {
+		return false
+	}
+	if m.Size <= 0 {
+		return false
+	}
+
+	n := m.Size / m.BlockSize
+	if m.Size%m.BlockSize != 0 {
+		n++
+	}
+	return n == uint64(m.Parts.Count())
 }
 
 // Clone clones the metadata.

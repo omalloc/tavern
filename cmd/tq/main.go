@@ -17,7 +17,7 @@ var marker = map[int]string{
 	3:  "RequestTime",
 	4:  "",
 	5:  "Method",
-	6:  "ResponseStatus",
+	6:  "Status",
 	7:  "SentBytes(header+body)",
 	8:  "Referer",
 	9:  "UserAgent",

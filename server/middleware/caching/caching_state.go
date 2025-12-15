@@ -14,13 +14,13 @@ func (s *StateProcessor) Lookup(caching *Caching, req *http.Request) (bool, erro
 	return true, nil
 }
 
-// PreRequst implements Processor.
-func (s *StateProcessor) PreRequst(caching *Caching, req *http.Request) (*http.Request, error) {
+// PreRequest implements Processor.
+func (s *StateProcessor) PreRequest(caching *Caching, req *http.Request) (*http.Request, error) {
 	return req, nil
 }
 
-// PostRequst implements Processor.
-func (s *StateProcessor) PostRequst(caching *Caching, req *http.Request, resp *http.Response) (*http.Response, error) {
+// PostRequest implements Processor.
+func (s *StateProcessor) PostRequest(caching *Caching, req *http.Request, resp *http.Response) (*http.Response, error) {
 	return resp, nil
 }
 

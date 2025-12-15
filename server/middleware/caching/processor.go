@@ -19,10 +19,10 @@ import (
 type Processor interface {
 	// Lookup checks if the request hits the cache.
 	Lookup(caching *Caching, req *http.Request) (bool, error)
-	// PreRequst processes the request before sending it to the origin server.
-	PreRequst(caching *Caching, req *http.Request) (*http.Request, error)
-	// PostRequst processes the response received from the origin server.
-	PostRequst(caching *Caching, req *http.Request, resp *http.Response) (*http.Response, error)
+	// PreRequest processes the request before sending it to the origin server.
+	PreRequest(caching *Caching, req *http.Request) (*http.Request, error)
+	// PostRequest processes the response received from the origin server.
+	PostRequest(caching *Caching, req *http.Request, resp *http.Response) (*http.Response, error)
 }
 
 // ProcessorChain represents a chain of caching processors.
@@ -49,11 +49,11 @@ func (pc *ProcessorChain) Lookup(caching *Caching, req *http.Request) (bool, err
 	return true, nil
 }
 
-// PreRequst processes the request through the processor chain before sending it to the origin server.
-func (pc *ProcessorChain) PreRequst(caching *Caching, req *http.Request) (*http.Request, error) {
+// PreRequest processes the request through the processor chain before sending it to the origin server.
+func (pc *ProcessorChain) PreRequest(caching *Caching, req *http.Request) (*http.Request, error) {
 	var err error
 	for _, processor := range *pc {
-		req, err = processor.PreRequst(caching, req)
+		req, err = processor.PreRequest(caching, req)
 		if err != nil {
 			if caching.log.Enabled(log.LevelDebug) {
 				typeof := reflect.TypeOf(processor).Elem()
@@ -65,11 +65,11 @@ func (pc *ProcessorChain) PreRequst(caching *Caching, req *http.Request) (*http.
 	return req, nil
 }
 
-// PostRequst processes the response through the processor chain after receiving it from the origin server.
-func (pc *ProcessorChain) PostRequst(caching *Caching, req *http.Request, resp *http.Response) (*http.Response, error) {
+// PostRequest processes the response through the processor chain after receiving it from the origin server.
+func (pc *ProcessorChain) PostRequest(caching *Caching, req *http.Request, resp *http.Response) (*http.Response, error) {
 	var err error
 	for _, processor := range *pc {
-		resp, err = processor.PostRequst(caching, req, resp)
+		resp, err = processor.PostRequest(caching, req, resp)
 		if err != nil {
 			if caching.log.Enabled(log.LevelDebug) {
 				typeof := reflect.TypeOf(processor).Elem()

@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"syscall"
@@ -32,7 +33,7 @@ import (
 
 const BYPASS = "BYPASS"
 
-var fileMode = os.O_RDONLY | 0o1000000 // O_NOATIME
+var fileMode = os.O_RDONLY
 
 type cachingOption struct {
 	IncludeQueryInCacheKey  bool     `json:"include_query_in_cache_key" yaml:"include_query_in_cache_key"`
@@ -47,6 +48,10 @@ type cachingOption struct {
 
 func init() {
 	middleware.Register("caching", Middleware)
+
+	if runtime.GOOS == "linux" {
+		fileMode |= 0o1000000 // O_NOATIME
+	}
 }
 
 // Middleware initializes a middleware component based on the provided configuration and returns the middleware logic.
@@ -137,7 +142,7 @@ type Caching struct {
 	cacheStatus  storage.CacheStatus
 	cacheable    bool
 	hit          bool
-	refresh      bool
+	revalidate   bool
 	fileChanged  bool
 	noContentLen bool // noContentLen indicates whether the content length is omitted in the HTTP response.
 	migration    bool // cache migration
@@ -269,7 +274,7 @@ func (c *Caching) getUpstreamReader(fromByte, toByte uint64, async bool) (io.Rea
 }
 
 func (c *Caching) doProxy(req *http.Request, subRequest bool) (*http.Response, error) {
-	proxyReq, err := c.processor.PreRequst(c, cloneRequest(req))
+	proxyReq, err := c.processor.PreRequest(c, cloneRequest(req))
 	if err != nil {
 		return nil, fmt.Errorf("pre-request failed: %w", err)
 	}
@@ -308,7 +313,7 @@ func (c *Caching) doProxy(req *http.Request, subRequest bool) (*http.Response, e
 
 	// handle error response
 	if resp.StatusCode >= http.StatusBadRequest {
-		if c.md != nil && !c.refresh {
+		if c.md != nil && !c.revalidate {
 			proxyErr = fmt.Errorf("upstream returns error status: %d", resp.StatusCode)
 		}
 	}
@@ -375,7 +380,7 @@ func (c *Caching) doProxy(req *http.Request, subRequest bool) (*http.Response, e
 		resp.Body = iobuf.SavepartReader(resp.Body, iobuf.BitBlock, 0, flushBuffer, c.flushFailed, cleanup)
 	}
 
-	resp, err = c.processor.PostRequst(c, proxyReq, resp)
+	resp, err = c.processor.PostRequest(c, proxyReq, resp)
 	if err != nil {
 		return resp, err
 	}
