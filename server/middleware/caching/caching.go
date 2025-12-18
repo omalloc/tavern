@@ -31,15 +31,22 @@ const BYPASS = "BYPASS"
 
 var fileMode = os.O_RDONLY
 
+type Duration string
+
+func (r Duration) AsDuration() time.Duration {
+	d, _ := time.ParseDuration(string(r))
+	return d
+}
+
 type cachingOption struct {
-	IncludeQueryInCacheKey  bool     `json:"include_query_in_cache_key" yaml:"include_query_in_cache_key"`
-	FuzzyRefresh            bool     `json:"fuzzy_refresh" yaml:"fuzzy_refresh"`
-	FuzzyRefreshRate        float64  `json:"fuzzy_refresh_rate" yaml:"fuzzy_refresh_rate"`
-	CollapsedRequest        bool     `json:"collapsed_request" yaml:"collapsed_request"`
-	CollapsedRequestTimeout string   `json:"collapsed_request_timeout" yaml:"collapsed_request_timeout"`
-	VaryLimit               int      `json:"vary_limit" yaml:"vary_limit"`
-	VaryIgnoreKey           []string `json:"vary_ignore_key" yaml:"vary_ignore_key"`
-	Hostname                string   `json:"hostname" yaml:"hostname"`
+	IncludeQueryInCacheKey      bool     `json:"include_query_in_cache_key" yaml:"include_query_in_cache_key"`
+	FuzzyRefresh                bool     `json:"fuzzy_refresh" yaml:"fuzzy_refresh"`
+	FuzzyRefreshRate            float64  `json:"fuzzy_refresh_rate" yaml:"fuzzy_refresh_rate"`
+	CollapsedRequest            bool     `json:"collapsed_request" yaml:"collapsed_request"`
+	CollapsedRequestWaitTimeout Duration `json:"collapsed_request_wait_timeout" yaml:"collapsed_request_wait_timeout"`
+	VaryLimit                   int      `json:"vary_limit" yaml:"vary_limit"`
+	VaryIgnoreKey               []string `json:"vary_ignore_key" yaml:"vary_ignore_key"`
+	Hostname                    string   `json:"hostname" yaml:"hostname"`
 }
 
 func init() {
@@ -125,6 +132,9 @@ func Middleware(c *configv1.Middleware) (middleware.Middleware, func(), error) {
 
 			// full MISS
 			resp, err = caching.doProxy(req, false)
+			if err != nil {
+				return nil, err
+			}
 
 			resp, err = processor.postCacheProcessor(caching, req, resp)
 			return
@@ -264,9 +274,9 @@ func (c *Caching) doProxy(req *http.Request, subRequest bool) (*http.Response, e
 		return nil, fmt.Errorf("pre-request failed: %w", err)
 	}
 
-	c.log.Infof("doPorxy with %s", proxyReq.URL.String())
+	c.log.Debugf("doProxy begin with %s", proxyReq.URL.String())
 
-	resp, err := c.proxyClient.Do(proxyReq, false)
+	resp, err := c.proxyClient.Do(proxyReq, c.opt.CollapsedRequest, c.opt.CollapsedRequestWaitTimeout.AsDuration())
 	if err != nil {
 		return resp, err
 	}

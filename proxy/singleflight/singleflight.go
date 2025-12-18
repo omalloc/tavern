@@ -79,8 +79,9 @@ type call struct {
 // Group represents a class of work and forms a namespace in
 // which units of work can be executed with duplicate suppression.
 type Group struct {
-	mu sync.Mutex       // protects m
-	m  map[string]*call // lazily initialized
+	mu   sync.Mutex       // protects m
+	m    map[string]*call // lazily initialized
+	wait time.Duration
 }
 
 // Result holds the results of Do, so they can be passed
@@ -127,7 +128,7 @@ func (g *Group) Do(key string, fn func() (*http.Response, error)) (v *http.Respo
 // results when they are ready.
 //
 // The returned channel will not be closed.
-func (g *Group) DoChan(key string, fn func() (*http.Response, error)) <-chan Result {
+func (g *Group) DoChan(key string, waiter time.Duration, fn func() (*http.Response, error)) <-chan Result {
 	ch := make(chan Result, 1)
 	g.mu.Lock()
 	if g.m == nil {
@@ -139,7 +140,7 @@ func (g *Group) DoChan(key string, fn func() (*http.Response, error)) <-chan Res
 		g.mu.Unlock()
 		return ch
 	}
-	c := &call{chans: []chan<- Result{ch}, ticker: time.NewTimer(waitTime)}
+	c := &call{chans: []chan<- Result{ch}, ticker: time.NewTimer(waiter)}
 	c.wg.Add(1)
 	g.m[key] = c
 	g.mu.Unlock()

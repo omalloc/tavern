@@ -40,7 +40,7 @@ server:
         fuzzy_refresh: true
         fuzzy_refresh_rate: 0.1
         collapsed_request: true
-        collapsed_request_timeout: 100ms
+        collapsed_request_wait_timeout: 100ms
         include_query_in_cache_key: true
         vary_limit: 100
         vary_ignore_key:

@@ -24,7 +24,7 @@ type Tuple struct {
 }
 
 type Proxy interface {
-	Do(req *http.Request, collasped bool) (*http.Response, error)
+	Do(req *http.Request, collapsed bool, waitTimeout time.Duration) (*http.Response, error)
 	DoLoopback(req *http.Request) (*http.Response, error)
 	Apply(nodes []selector.Node)
 }
@@ -64,7 +64,7 @@ func New(opts ...Option) *ReverseProxy {
 	return r
 }
 
-func (r *ReverseProxy) Do(req *http.Request, collasped bool) (*http.Response, error) {
+func (r *ReverseProxy) Do(req *http.Request, collapsed bool, waitTimeout time.Duration) (*http.Response, error) {
 	current, done, err := r.selector.Select(req.Context())
 	if err != nil {
 		return nil, selector.ErrNoAvailable
@@ -77,11 +77,11 @@ func (r *ReverseProxy) Do(req *http.Request, collasped bool) (*http.Response, er
 	})
 
 	client := r.find(current.Address())
-	if !collasped {
+	if !collapsed {
 		return r.uncompress(client.Do(req))
 	}
 
-	ret := <-r.flight.DoChan(onceKey(req), func() (*http.Response, error) {
+	ret := <-r.flight.DoChan(onceKey(req), waitTimeout, func() (*http.Response, error) {
 		return r.uncompress(client.Do(req))
 	})
 
