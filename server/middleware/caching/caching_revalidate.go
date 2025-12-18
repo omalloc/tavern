@@ -99,7 +99,8 @@ func (r *RevalidateProcessor) revalidate(c *Caching, resp *http.Response, req *h
 	_ = r.freshness(c, resp)
 
 	// lazilyRespond
-	if rawRange := req.Context().Value(rawRangeKey{}).(string); rawRange != "" {
+	if raw := req.Context().Value(rawRangeKey{}); raw != nil {
+		rawRange := raw.(string)
 		rng, err := xhttp.SingleRange(rawRange, c.md.Size)
 		if err != nil {
 			return nil, xhttp.NewBizError(http.StatusRequestedRangeNotSatisfiable, nil)
@@ -124,7 +125,7 @@ func (r *RevalidateProcessor) freshness(c *Caching, resp *http.Response) bool {
 	}
 
 	now := time.Now()
-	metadata := c.md
+	metadata := c.md.Clone()
 	metadata.ExpiresAt = now.Add(expiredAt).Unix()
 	metadata.RespUnix = now.Unix()
 	metadata.LastRefUnix = now.Unix()
@@ -138,6 +139,9 @@ func (r *RevalidateProcessor) freshness(c *Caching, resp *http.Response) bool {
 	}
 	c.cacheable = true
 	c.md = metadata
+
+	// save freshness metadata
+	_ = c.bucket.Store(c.req.Context(), c.md)
 	return true
 }
 

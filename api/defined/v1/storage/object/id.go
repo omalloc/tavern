@@ -5,6 +5,8 @@ import (
 	"encoding/hex"
 	"fmt"
 	"path/filepath"
+
+	"github.com/goccy/go-json"
 )
 
 // IdHashSize is the size of the byte array that contains the object hash.
@@ -50,6 +52,34 @@ func (id *ID) HashStr() string {
 
 func (id *ID) Bytes() []byte {
 	return id.hash[:]
+}
+
+func (id *ID) MarshalJSON() ([]byte, error) {
+	return json.Marshal([]string{id.path, id.ext})
+}
+
+func (id *ID) unmarshal(data []string) error {
+	if len(data) < 1 || data[0] == "" {
+		return fmt.Errorf("invalid object-id %v", data)
+	}
+
+	if cnt := len(data); cnt > 1 {
+		*id = *NewVirtualID(data[0], data[1])
+	} else {
+		*id = *NewID(data[0])
+	}
+	return nil
+}
+
+func (id *ID) UnmarshalJSON(buf []byte) error {
+	var (
+		data []string
+		err  error
+	)
+	if err = json.Unmarshal(buf, &data); err != nil {
+		return err
+	}
+	return id.unmarshal(data)
 }
 
 // WPath returns the read/write path of the object ID.
