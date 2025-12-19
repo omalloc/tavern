@@ -140,8 +140,8 @@ func newApp(bc *conf.Bootstrap, logger log.Logger) (*kratos.App, error) {
 	srv := server.NewServer(flip, bc, plugins)
 	servers = append(servers, srv)
 
-	for _, plugin := range plugins {
-		servers = append(servers, plugin)
+	for _, p := range plugins {
+		servers = append(servers, p)
 	}
 
 	return kratos.New(

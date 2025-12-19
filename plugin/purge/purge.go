@@ -2,6 +2,7 @@ package purge
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -20,8 +21,10 @@ const Method = "PURGE"
 var _ configv1.Plugin = (*PurgePlugin)(nil)
 
 type option struct {
-	AllowAddr  []string `json:"allow-addr" yaml:"allow-addr"`
-	HeaderName string   `yaml:"header-name"` // default `Purge-Type`
+	Threshold  int      `json:"threshold" yaml:"threshold"`
+	AllowHosts []string `json:"allow_hosts" yaml:"allow_hosts"`
+	HeaderName string   `json:"header_name" yaml:"header_name"` // default `Purge-Type`
+	LogPath    string   `json:"log_path" yaml:"log_path"`
 }
 
 type PurgePlugin struct {
@@ -64,8 +67,8 @@ func (r *PurgePlugin) HandleFunc(next http.HandlerFunc) http.HandlerFunc {
 			return
 		}
 
-		ipport := strings.Split(req.RemoteAddr, ":")
-		if _, ok := r.allowAddr[ipport[0]]; !ok {
+		ipPort := strings.Split(req.RemoteAddr, ":")
+		if _, ok := r.allowAddr[ipPort[0]]; !ok {
 			w.WriteHeader(http.StatusForbidden)
 			return
 		}
@@ -75,7 +78,7 @@ func (r *PurgePlugin) HandleFunc(next http.HandlerFunc) http.HandlerFunc {
 		if storeUrl == "" {
 			storeUrl = req.URL.String()
 		}
-		r.log.Infof("purge request %s received: %s", ipport[0], storeUrl)
+		r.log.Debugf("purge request %s received: %s", ipPort[0], storeUrl)
 
 		// purge dir
 		if typ := req.Header.Get(r.opt.HeaderName); strings.ToLower(typ) == "dir" {
@@ -88,6 +91,15 @@ func (r *PurgePlugin) HandleFunc(next http.HandlerFunc) http.HandlerFunc {
 			Hard: true,
 			Dir:  false,
 		}); err != nil {
+			// key not found.
+			if errors.Is(err, storagev1.ErrKeyNotFound) {
+				w.Header().Set("Content-Length", "0")
+				w.Header().Set("Content-Type", "application/json; charset=utf-8")
+				w.WriteHeader(http.StatusNotFound)
+				return
+			}
+
+			// others error
 			r.log.Errorf("purge %s failed: %v", storeUrl, err)
 			w.WriteHeader(http.StatusInternalServerError)
 			return
@@ -109,8 +121,8 @@ func NewPurgePlugin(opts configv1.Option, log *log.Helper) (configv1.Plugin, err
 		return nil, err
 	}
 
-	allowAddr := make(map[string]struct{}, len(opt.AllowAddr))
-	for _, addr := range opt.AllowAddr {
+	allowAddr := make(map[string]struct{}, len(opt.AllowHosts))
+	for _, addr := range opt.AllowHosts {
 		allowAddr[addr] = struct{}{}
 	}
 

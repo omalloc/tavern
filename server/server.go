@@ -65,6 +65,7 @@ func NewServer(flip *tableflip.Upgrader, config *conf.Bootstrap, plugins []plugi
 			ReadHeaderTimeout: servConfig.ReadHeaderTimeout,
 			MaxHeaderBytes:    servConfig.MaxHeaderBytes,
 		},
+		plugins:      plugins,
 		flip:         flip,
 		config:       config,
 		serverConfig: config.Server,
@@ -276,7 +277,10 @@ func (s *HTTPServer) buildEndpoint() (http.HandlerFunc, error) {
 
 	// Let plugins handle the request.
 	for _, plug := range s.plugins {
-		plug.HandleFunc(next)
+		cur := plug.HandleFunc(next)
+		if cur != nil {
+			next = cur
+		}
 	}
 
 	// add access-log handler

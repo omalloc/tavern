@@ -89,5 +89,5 @@ func (r *Plugin) PluginName() string {
 }
 
 func (r *Plugin) Unmarshal(v any) error {
-	return mapstruct.Decode(r, v)
+	return mapstruct.Decode(r.Options, v)
 }
