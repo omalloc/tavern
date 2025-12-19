@@ -25,6 +25,7 @@ type savepartReader struct {
 
 	skip      bool
 	eof       bool
+	closed    bool
 	pos       uint64
 	blockSize uint64
 	buf       *bytes.Buffer
@@ -61,8 +62,9 @@ func (s *savepartReader) Read(p []byte) (n int, err error) {
 
 // Close closes the underlying reader and triggers the onClose event if defined. Returns any error from the reader's Close method.
 func (s *savepartReader) Close() error {
-	if s.onClose != nil {
+	if s.onClose != nil && !s.closed {
 		s.onClose(s.eof)
+		s.closed = true
 	}
 	return s.R.Close()
 }
