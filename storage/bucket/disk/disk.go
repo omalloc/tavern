@@ -41,8 +41,10 @@ type diskBucket struct {
 }
 
 func New(config *conf.Bucket, sharedkv storage.SharedKV) (storage.Bucket, error) {
-	dbPath := path.Join(config.Path, ".indexdb/")
-
+	dbPath := config.DBPath
+	if dbPath == "" {
+		dbPath = path.Join(config.Path, ".indexdb/")
+	}
 	bucket := &diskBucket{
 		path:      config.Path,
 		dbPath:    dbPath,
@@ -51,7 +53,7 @@ func New(config *conf.Bucket, sharedkv storage.SharedKV) (storage.Bucket, error)
 		asyncLoad: config.AsyncLoad,
 		weight:    100, // default weight
 		sharedkv:  sharedkv,
-		cache:     lru.New[object.IDHash, storage.Mark](100_000),
+		cache:     lru.New[object.IDHash, storage.Mark](1_000_000),
 		fileMode:  fs.FileMode(0o755),
 		stop:      make(chan struct{}, 1),
 	}
@@ -237,8 +239,8 @@ func (d *diskBucket) discard(ctx context.Context, md *object.Metadata) error {
 }
 
 // Exist implements storage.Bucket.
-func (d *diskBucket) Exist(ctx context.Context, id []byte) bool {
-	return d.indexdb.Exist(ctx, id)
+func (d *diskBucket) Exist(ctx context.Context, id object.IDHash) bool {
+	return d.indexdb.Exist(ctx, id[:])
 }
 
 // Expired implements storage.Bucket.
