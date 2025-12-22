@@ -183,6 +183,19 @@ func (g *Group) doCall(c *call, key string, fn func() (*http.Response, error)) {
 		} else {
 			// Normal return
 			if c.dups > 0 {
+				// fast err return.
+				if c.err != nil {
+					// emit error
+					for _, ch := range c.chans {
+						ch <- Result{
+							c.val,
+							c.err,
+							c.dups > 0,
+						}
+					}
+					return
+				}
+
 				pipes := make([]struct {
 					reader *io.PipeReader
 					writer *io.PipeWriter
@@ -196,8 +209,11 @@ func (g *Group) doCall(c *call, key string, fn func() (*http.Response, error)) {
 							writer *io.PipeWriter
 						}{pr, pw})
 
-						val := cloneResponse(c.val)
-						val.Body = pr
+						var val *http.Response
+						if c.val != nil {
+							val = cloneResponse(c.val)
+							val.Body = pr
+						}
 
 						ch <- Result{
 							val,
