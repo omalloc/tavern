@@ -78,14 +78,15 @@ plugin:
 storage:
   driver: native # native, custom-driver
   db_type: pebble # boltdb, badgerdb, pebble
+  db_path: .indexdb # index-db path, default: ./.indexdb/
   async_load: true
   eviction_policy: fifo # fifo, lru, lfu
   selection_policy: hashring # hashring, roundrobin
   buckets:
     - path: /cache1
       type: normal
-    - path: /cache2
-      type: normal
+      # db_type: pebble
+      # db_path: inmemory # index-db path, default: <path>/.indexdb/; use "inmemory" for in-memory store
 upstream:
   balancing: wrr
   address:

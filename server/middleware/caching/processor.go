@@ -123,7 +123,6 @@ func (pc *ProcessorChain) preCacheProcessor(proxyClient proxy.Proxy, opt *cachin
 		caching.log.Errorf("failed lookup cache err: %v", err)
 	}
 	caching.hit = hit
-
 	return caching, nil
 }
 

@@ -22,7 +22,7 @@ type Operation interface {
 	// Store store the metadata for the specified object ID.
 	Store(ctx context.Context, meta *object.Metadata) error
 	// Exist checks if the object exists.
-	Exist(ctx context.Context, id []byte) bool
+	Exist(ctx context.Context, id object.IDHash) bool
 	// Remove soft-removes the object.
 	Remove(ctx context.Context, id *object.ID) error
 	// Discard hard-removes the object.

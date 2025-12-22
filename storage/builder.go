@@ -7,6 +7,7 @@ import (
 	"github.com/omalloc/tavern/conf"
 	"github.com/omalloc/tavern/storage/bucket/disk"
 	"github.com/omalloc/tavern/storage/bucket/empty"
+	"github.com/omalloc/tavern/storage/bucket/memory"
 	_ "github.com/omalloc/tavern/storage/indexdb/pebble"
 )
 
@@ -16,12 +17,14 @@ type globalBucketOption struct {
 	SelectionPolicy string
 	Driver          string
 	DBType          string
+	DBPath          string
 }
 
 // implements storage.Bucket map.
 var bucketMap = map[string]func(opt *conf.Bucket, sharedkv storage.SharedKV) (storage.Bucket, error){
 	"empty":  empty.New,
 	"native": disk.New, // disk is an alias of native
+	"memory": memory.New,
 }
 
 func NewBucket(opt *conf.Bucket, sharedkv storage.SharedKV) (storage.Bucket, error) {
@@ -40,6 +43,7 @@ func mergeConfig(global *globalBucketOption, bucket *conf.Bucket) *conf.Bucket {
 		Driver: bucket.Driver,
 		Type:   bucket.Type,
 		DBType: bucket.DBType,
+		DBPath: bucket.DBPath,
 	}
 
 	if copied.Driver == "" {
@@ -50,6 +54,9 @@ func mergeConfig(global *globalBucketOption, bucket *conf.Bucket) *conf.Bucket {
 	}
 	if copied.DBType == "" {
 		copied.DBType = global.DBType
+	}
+	if copied.DBPath == "" {
+		copied.DBPath = global.DBPath
 	}
 	return copied
 }

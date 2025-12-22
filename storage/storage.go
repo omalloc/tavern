@@ -26,7 +26,7 @@ type nativeStorage struct {
 	selector     storage.Selector
 	sharedkv     storage.SharedKV
 	nopBucket    storage.Bucket
-	memoryBucket []storage.Bucket
+	memoryBucket storage.Bucket
 	hotBucket    []storage.Bucket
 	normalBucket []storage.Bucket
 }
@@ -41,7 +41,7 @@ func New(config *conf.Storage, logger log.Logger) (storage.Storage, error) {
 		selector:     selector.New([]storage.Bucket{}, config.SelectionPolicy),
 		sharedkv:     sharedkv.NewEmpty(),
 		nopBucket:    nopBucket,
-		memoryBucket: make([]storage.Bucket, 0, len(config.Buckets)),
+		memoryBucket: nil,
 		hotBucket:    make([]storage.Bucket, 0, len(config.Buckets)),
 		normalBucket: make([]storage.Bucket, 0, len(config.Buckets)),
 	}
@@ -67,21 +67,28 @@ func (n *nativeStorage) reinit(config *conf.Storage) error {
 		SelectionPolicy: config.SelectionPolicy,
 		Driver:          config.Driver,
 		DBType:          config.DBType,
+		DBPath:          config.DBPath,
 	}
 
-	for _, c := range config.Buckets {
-		bucket, err := NewBucket(mergeConfig(globalConfig, c), n.sharedkv)
+	for _, bucketCfg := range config.Buckets {
+		bucket, err := NewBucket(mergeConfig(globalConfig, bucketCfg), n.sharedkv)
 		if err != nil {
 			return err
 		}
 
-		switch bucket.StoreType() {
+		stype := bucket.StoreType()
+
+		switch stype {
 		case "normal":
 			n.normalBucket = append(n.normalBucket, bucket)
 		case "hot":
 			n.hotBucket = append(n.hotBucket, bucket)
-		case "fastmemory":
-			n.memoryBucket = append(n.memoryBucket, bucket)
+		case "memory":
+			if n.memoryBucket != nil {
+				continue
+			}
+			// only one memory bucket is allowed.
+			n.memoryBucket = bucket
 		}
 	}
 
@@ -97,6 +104,15 @@ func (n *nativeStorage) reinit(config *conf.Storage) error {
 
 // Select implements storage.Selector.
 func (n *nativeStorage) Select(ctx context.Context, id *object.ID) storage.Bucket {
+	// first check memory bucket
+	if n.memoryBucket != nil && n.memoryBucket.UseAllow() {
+		// TODO: we can add select `level2` bucket logic here later.
+		//
+		// has Hit
+		// n.memoryBucket.Exist(ctx, id.Hash())
+		return n.memoryBucket
+	}
+
 	bucket := n.selector.Select(ctx, id)
 	return bucket
 }
@@ -150,8 +166,8 @@ func (n *nativeStorage) Close() error {
 		errs = append(errs, bucket.Close())
 	}
 
-	for _, bucket := range n.memoryBucket {
-		errs = append(errs, bucket.Close())
+	if n.memoryBucket != nil {
+		errs = append(errs, n.memoryBucket.Close())
 	}
 
 	if len(errs) > 0 {

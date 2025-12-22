@@ -3,10 +3,9 @@ package pebble
 import (
 	"context"
 	"errors"
-	"fmt"
-	"time"
 
 	"github.com/cockroachdb/pebble/v2"
+	"github.com/cockroachdb/pebble/v2/vfs"
 
 	"github.com/omalloc/tavern/api/defined/v1/storage"
 	"github.com/omalloc/tavern/api/defined/v1/storage/object"
@@ -119,19 +118,18 @@ func (p *PebbleDB) GC(ctx context.Context) error {
 }
 
 func New(path string, option storage.Option) (storage.IndexDB, error) {
+	var fs vfs.FS = nil
+	if path == indexdb.TypeInMemory {
+		log.Infof("kvstore used in-memory")
+		fs = vfs.NewMem()
+	}
 	pdb, err := pebble.Open(path, &pebble.Options{
+		FS:     fs,
 		Logger: log.NewHelper(log.NewFilter(log.GetLogger(), log.FilterLevel(log.LevelWarn))),
 	})
 	if err != nil {
 		return nil, err
 	}
-
-	go func() {
-		tick := time.NewTicker(time.Second * 10)
-		for range tick.C {
-			fmt.Println(pdb.Metrics().String())
-		}
-	}()
 
 	return &PebbleDB{
 		codec:         option.Codec(),

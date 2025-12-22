@@ -65,6 +65,7 @@ type Upstream struct {
 type Storage struct {
 	Driver          string    `json:"driver" yaml:"driver"`
 	DBType          string    `json:"db_type" yaml:"db_type"`
+	DBPath          string    `json:"db_path" yaml:"db_path"`
 	AsyncLoad       bool      `json:"async_load" yaml:"async_load"`
 	EvictionPolicy  string    `json:"eviction_policy" yaml:"eviction_policy"`
 	SelectionPolicy string    `json:"selection_policy" yaml:"selection_policy"`
@@ -76,6 +77,7 @@ type Bucket struct {
 	Driver    string `json:"driver" yaml:"driver"`         // native, custom-driver
 	Type      string `json:"type" yaml:"type"`             // normal, cold, hot, fastmemory
 	DBType    string `json:"db_type" yaml:"db_type"`       // boltdb, badgerdb, pebble
+	DBPath    string `json:"db_path" yaml:"db_path"`       // indexdb path, default: <path>/.indexdb/
 	AsyncLoad bool   `json:"async_load" yaml:"async_load"` // load metadata async
 }
 

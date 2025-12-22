@@ -6,6 +6,8 @@ import (
 	"github.com/omalloc/tavern/pkg/mapstruct"
 )
 
+const TypeInMemory = "inmemory"
+
 var defaultRegistry = NewRegistry()
 
 type option struct {
