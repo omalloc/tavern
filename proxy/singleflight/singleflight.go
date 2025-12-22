@@ -183,6 +183,18 @@ func (g *Group) doCall(c *call, key string, fn func() (*http.Response, error)) {
 		} else {
 			// Normal return
 			if c.dups > 0 {
+				// response nil
+				if c.val == nil {
+					for _, ch := range c.chans {
+						ch <- Result{
+							Val:    nil,
+							Err:    c.err,
+							Shared: c.dups > 0,
+						}
+					}
+					return
+				}
+
 				pipes := make([]struct {
 					reader *io.PipeReader
 					writer *io.PipeWriter
