@@ -132,6 +132,7 @@ func cloneRequest(req *http.Request) *http.Request {
 		Header:     make(http.Header),
 	}
 	xhttp.CopyHeader(proxyReq.Header, req.Header)
+	xhttp.RemoveHopByHopHeaders(proxyReq.Header)
 
 	return proxyReq
 }
