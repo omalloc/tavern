@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/omalloc/tavern/contrib/log"
 	"github.com/omalloc/tavern/internal/constants"
 )
 
@@ -49,6 +50,19 @@ func MustParseRequestID(h http.Header) string {
 		return generateRequestID()
 	}
 	return id
+}
+
+func RequestID() log.Valuer {
+	return func(ctx context.Context) interface{} {
+		if ctx == nil {
+			return ""
+		}
+
+		if info := FromContext(ctx); info != nil {
+			return info.RequestID
+		}
+		return ""
+	}
 }
 
 func generateRequestID() string {

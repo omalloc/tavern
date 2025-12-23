@@ -3,8 +3,6 @@ package pebble
 import (
 	"context"
 	"errors"
-	"fmt"
-	"time"
 
 	"github.com/cockroachdb/pebble/v2"
 
@@ -125,13 +123,6 @@ func New(path string, option storage.Option) (storage.IndexDB, error) {
 	if err != nil {
 		return nil, err
 	}
-
-	go func() {
-		tick := time.NewTicker(time.Second * 10)
-		for range tick.C {
-			fmt.Println(pdb.Metrics().String())
-		}
-	}()
 
 	return &PebbleDB{
 		codec:         option.Codec(),

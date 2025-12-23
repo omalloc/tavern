@@ -19,7 +19,7 @@ import (
 func HandleAccessLog(opt *conf.ServerAccessLog, next http.HandlerFunc) http.HandlerFunc {
 	if !opt.Enabled {
 		log.Infof("access-log is turned off")
-		return next
+		return wrap(next)
 	}
 
 	if opt.Path == "" {

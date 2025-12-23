@@ -12,6 +12,7 @@ import (
 	"github.com/cloudflare/tableflip"
 	"github.com/omalloc/proxy/selector"
 	"github.com/omalloc/proxy/selector/once"
+	"github.com/omalloc/tavern/metrics"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/collectors"
 	"gopkg.in/natefinch/lumberjack.v2"
@@ -181,7 +182,7 @@ func newLogger(cl *conf.Logger) log.Logger {
 		opts = append(opts, "caller", log.Caller(5))
 	}
 	if cl.TraceID {
-		//opts = append(opts, "request.id", metrics.RequestID())
+		opts = append(opts, "request.id", metrics.RequestID())
 	}
 
 	logger := log.NewFilter(

@@ -21,7 +21,7 @@ type Logger struct {
 	Level   string `json:"level" yaml:"level"`
 	Path    string `json:"path" yaml:"path"`
 	Caller  bool   `json:"caller" yaml:"caller"`
-	TraceID bool   `json:"taceid" yaml:"taceid"`
+	TraceID bool   `json:"traceid" yaml:"traceid"`
 	NoPid   bool   `json:"nopid" yaml:"nopid"`
 }
 
