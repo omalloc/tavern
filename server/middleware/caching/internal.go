@@ -123,14 +123,15 @@ func cloneRequest(req *http.Request) *http.Request {
 		proxyURL.Scheme = xhttp.Scheme(req)
 	}
 	proxyReq := &http.Request{
-		ProtoMajor: 1,
-		ProtoMinor: 1,
-		Host:       req.Host,
+		ProtoMajor: req.ProtoMajor,
+		ProtoMinor: req.ProtoMinor,
 		Proto:      req.Proto,
+		Host:       req.Host,
 		Method:     req.Method,
 		URL:        proxyURL,
 		Header:     make(http.Header),
 	}
+	xhttp.CopyHeader(proxyReq.Header, req.Header)
 
 	return proxyReq
 }
