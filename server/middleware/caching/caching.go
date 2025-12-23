@@ -81,6 +81,11 @@ func Middleware(c *configv1.Middleware) (middleware.Middleware, func(), error) {
 		NewRevalidateProcessor(),
 		// ETag/Last-Modified/ContentLength Changed
 		NewFileChangedProcessor(),
+		// Vary
+		NewVaryProcessor(
+			WithVaryMaxLimit(opts.VaryLimit),
+			WithVaryIgnoreKeys(opts.VaryIgnoreKey...),
+		),
 	).fill()
 
 	return func(origin http.RoundTripper) http.RoundTripper {

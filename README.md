@@ -9,12 +9,12 @@ Tavern 是一个高性能的 HTTP 缓存代理服务器，旨在利用现代化�
   - [ ] 缓存推送 (URL/DIR Push)
   - [ ] 模糊刷新 (Fuzzying fetch)
   - [x] 自动刷新 (Auto Refresh)
-  - [ ] 缓存变更校验 (Cache Validation)
-  - [ ] 热点迁移 (Hot Migration) 
+  - [x] 缓存变更校验 (Cache Validation)
+  - [ ] 热点迁移 (Hot Migration)
   - [ ] 冷热分离 (Warm Cold Split)
   - [x] 上游请求合并 (Upstream Collapse Request)
   - [ ] ~~图像压缩自适应 (Webp Support)~~
-  - [ ] Vary分版本缓存 (Vary Cache)
+  - [x] Vary 分版本缓存 (Vary Cache)
   - [x] 头部重写 (Headers Rewrite)
   - [x] 支持 Multiple Range 请求
   - [ ] 缓存权威校验 (CRC checksum center)
@@ -78,7 +78,7 @@ make build
 - `conf/`: 配置定义与解析
 - `plugin/`: 插件接口与实现
 - `proxy/`: 核心代理转发逻辑
-- `server/`: HTTP服务端实现及中间件 (Middleware)
+- `server/`: HTTP 服务端实现及中间件 (Middleware)
 - `storage/`: 存储引擎抽象与实现
 
 ## 📝 License

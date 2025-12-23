@@ -90,9 +90,9 @@ func (d *diskBucket) evict() {
 				return
 			case evicted := <-ch:
 				fd := evicted.Key.WPath(d.path)
-				clog.Infof("evict file %s, last-access %d", fd, evicted.Value.LastAccess())
+				clog.Debugf("evict file %s, last-access %d", fd, evicted.Value.LastAccess())
 				// TODO: discard expired cachefile or Move to cold storage
-				// d.Discard(context.Background(), evicted.Key)
+				d.DiscardWithHash(context.Background(), evicted.Key)
 			}
 		}
 	}()
@@ -160,7 +160,9 @@ func (d *diskBucket) DiscardWithHash(ctx context.Context, hash object.IDHash) er
 	id := hash[:]
 	wpath := hash.WPath(d.path)
 
-	log.Debugf("discard %s", wpath)
+	if log.Enabled(log.LevelDebug) {
+		log.Debugf("discard %s", wpath)
+	}
 
 	md, err := d.indexdb.Get(ctx, id)
 	if err != nil {
@@ -177,6 +179,8 @@ func (d *diskBucket) DiscardWithHash(ctx context.Context, hash object.IDHash) er
 		return d.indexdb.Delete(ctx, id)
 	}
 
+	// how get caching locker
+
 	// 存在
 	if err = os.Remove(wpath); err != nil && !errors.Is(err, os.ErrNotExist) {
 		log.Context(ctx).Errorf("failed to remove file %s: %v", wpath, err)
@@ -184,8 +188,7 @@ func (d *diskBucket) DiscardWithHash(ctx context.Context, hash object.IDHash) er
 
 	// 删除 part
 	md.Parts.Clear()
-
-	return d.indexdb.Set(ctx, id, md)
+	return d.indexdb.Delete(ctx, id)
 }
 
 // DiscardWithMessage implements storage.Bucket.

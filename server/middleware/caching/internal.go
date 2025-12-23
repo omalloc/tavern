@@ -34,6 +34,7 @@ type Caching struct {
 	req          *http.Request
 	id           *object.ID
 	md           *object.Metadata
+	rootmd       *object.Metadata
 	bucket       storage.Bucket
 	proxyClient  proxy.Proxy
 	cacheStatus  storage.CacheStatus
@@ -88,6 +89,10 @@ func (c *Caching) setXCache(resp *http.Response) {
 		resp.Header.Set(constants.InternalStoreUrl, strconv.FormatInt(int64(c.cacheStatus), 10))
 		resp.Header.Set(constants.InternalSwapfile, c.id.WPath(c.bucket.Path()))
 	}
+}
+
+func (c *Caching) hasNoCache() bool {
+	return c.md == nil
 }
 
 func (c *Caching) reset() {

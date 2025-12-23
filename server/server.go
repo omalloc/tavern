@@ -30,10 +30,9 @@ import (
 )
 
 var localMatcher = map[string]struct{}{
-	"localhost":    {},
-	"127.1":        {},
-	"127.0.0.1":    {},
-	"172.16.8.115": {},
+	"localhost": {},
+	"127.1":     {},
+	"127.0.0.1": {},
 }
 var bufPool = sync.Pool{
 	New: func() any {
