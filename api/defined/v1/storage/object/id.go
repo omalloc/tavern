@@ -11,9 +11,11 @@ import (
 
 // IdHashSize is the size of the byte array that contains the object hash.
 const IdHashSize = sha1.Size
+const IdSliceHashSize = IdHashSize + 4
 
 // IDHash is the fixed-width byte array that represents an ObjectID hash.
 type IDHash [IdHashSize]byte
+type IDSliceHash [IdSliceHashSize]byte
 
 type ID struct {
 	path string
@@ -87,6 +89,11 @@ func (id *ID) UnmarshalJSON(buf []byte) error {
 func (id *ID) WPath(pwd string) string {
 	hash := hex.EncodeToString(id.hash[:])
 	return filepath.Join(pwd, hash[0:1], hash[2:4], hash)
+}
+
+func (id *ID) WPathSlice(pwd string, slice uint32) string {
+	hash := hex.EncodeToString(id.hash[:])
+	return filepath.Join(pwd, hash[0:1], hash[2:4], fmt.Sprintf("%s-%06d", hash, slice))
 }
 
 func (idx IDHash) WPath(pwd string) string {

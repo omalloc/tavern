@@ -157,7 +157,7 @@ func (s *savepartReader) writeBlock(eof bool) error {
 // - flushBuffer: Callback triggered when a block is successfully written.
 // - flushFailed: Callback triggered if an error occurs during block processing.
 // - cleanup: Callback executed when the reader is closed.
-func SavepartReader(r io.ReadCloser, blockSize int, startAt int,
+func SavepartReader(r io.ReadCloser, blockSize uint64, startAt uint,
 	flushBuffer EventSuccess, flushFailed EventError, cleanup EventClose) io.ReadCloser {
 	skip := false
 	if startAt > 0 {
@@ -168,7 +168,7 @@ func SavepartReader(r io.ReadCloser, blockSize int, startAt int,
 
 		skip:      skip,
 		pos:       uint64(startAt),
-		blockSize: uint64(blockSize),
+		blockSize: blockSize,
 		onSuccess: flushBuffer,
 		onError:   flushFailed,
 		onClose:   cleanup,

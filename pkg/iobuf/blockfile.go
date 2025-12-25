@@ -82,6 +82,12 @@ func BufBlock(blocks []uint32) (offset, limit int64) {
 	return
 }
 
+func ChunkPart(blocks []uint32, partSize uint32) (offset, limit int64) {
+	offset = int64(blocks[0] * partSize)
+	limit = int64((blocks[len(blocks)-1])*partSize) + int64(partSize)
+	return
+}
+
 func groupBy(v []uint32) [][]uint32 {
 	if len(v) == 0 {
 		return nil

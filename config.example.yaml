@@ -81,6 +81,7 @@ storage:
   async_load: true
   eviction_policy: fifo # fifo, lru, lfu
   selection_policy: hashring # hashring, roundrobin
+  slice_size: 1048576 # 1MB
   buckets:
     - path: /cache1
       type: normal

@@ -18,17 +18,18 @@ const (
 type Metadata struct {
 	Flags CacheFlag `json:"flags"`
 
-	ID          *ID           `json:"id" yaml:"id"`
-	BlockSize   uint64        `json:"bsize"`
-	Parts       bitmap.Bitmap `json:"parts"`
-	Code        int           `json:"code"`
-	Size        uint64        `json:"size"`
-	RespUnix    int64         `json:"resp_unix"`
-	LastRefUnix int64         `json:"last_ref_unix"`
-	Refs        int64         `json:"refs"`
-	ExpiresAt   int64         `json:"expires_at"`
-	Headers     http.Header   `json:"headers"`
-	VirtualKey  []string      `json:"vkey,omitempty"`
+	ID          *ID           `json:"id"`             // object ID
+	BlockSize   uint64        `json:"bsize"`          // block size
+	Chunks      bitmap.Bitmap `json:"chunks"`         // file chunk
+	Parts       bitmap.Bitmap `json:"parts"`          // file chunk parts
+	Code        int           `json:"code"`           // http response code
+	Size        uint64        `json:"size"`           // object size
+	RespUnix    int64         `json:"resp_unix"`      // response time
+	LastRefUnix int64         `json:"last_ref_unix"`  // last reference time
+	Refs        int64         `json:"refs"`           // reference count
+	ExpiresAt   int64         `json:"expires_at"`     // expiration time
+	Headers     http.Header   `json:"headers"`        // http headers
+	VirtualKey  []string      `json:"vkey,omitempty"` // vary keys
 }
 
 // IsVary returns true if the metadata is a vary metadata.
@@ -75,8 +76,9 @@ func (m *Metadata) HasComplete() bool {
 func (m *Metadata) Clone() *Metadata {
 	return &Metadata{
 		ID:          m.ID,
-		Parts:       m.Parts.Clone(nil),
 		BlockSize:   m.BlockSize,
+		Chunks:      m.Chunks.Clone(nil),
+		Parts:       m.Parts.Clone(nil),
 		Code:        m.Code,
 		Size:        m.Size,
 		RespUnix:    m.RespUnix,

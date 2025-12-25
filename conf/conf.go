@@ -68,6 +68,7 @@ type Storage struct {
 	AsyncLoad       bool      `json:"async_load" yaml:"async_load"`
 	EvictionPolicy  string    `json:"eviction_policy" yaml:"eviction_policy"`
 	SelectionPolicy string    `json:"selection_policy" yaml:"selection_policy"`
+	SliceSize       uint64    `json:"slice_size" yaml:"slice_size"`
 	Buckets         []*Bucket `json:"buckets" yaml:"buckets"`
 }
 
@@ -77,6 +78,7 @@ type Bucket struct {
 	Type      string `json:"type" yaml:"type"`             // normal, cold, hot, fastmemory
 	DBType    string `json:"db_type" yaml:"db_type"`       // boltdb, badgerdb, pebble
 	AsyncLoad bool   `json:"async_load" yaml:"async_load"` // load metadata async
+	SliceSize uint64 `json:"slice_size" yaml:"slice_size"` // slice size for each part
 }
 
 type Plugin struct {

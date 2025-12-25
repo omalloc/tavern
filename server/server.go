@@ -12,6 +12,7 @@ import (
 	"strings"
 	"sync"
 
+	"dario.cat/mergo"
 	"github.com/cloudflare/tableflip"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
@@ -288,16 +289,25 @@ func (s *HTTPServer) buildEndpoint() (http.HandlerFunc, error) {
 }
 
 func (s *HTTPServer) buildMiddlewareChain(tripper http.RoundTripper) (http.RoundTripper, error) {
-	conf := s.config.Server.Middleware
-	for i := len(conf) - 1; i >= 0; i-- {
-		if conf[i].Name == "" {
+	middlewares := s.config.Server.Middleware
+	//
+	global := map[string]any{
+		"slice_size": s.config.Storage.SliceSize,
+	}
+	for i := len(middlewares) - 1; i >= 0; i-- {
+		if middlewares[i].Name == "" {
 			panic("middlewares name is empty, config file array index " + strconv.Itoa(i))
 		}
 
-		middlewareConf := conf[i]
-		next, cleanup, err := middleware.Create(middlewareConf)
+		conf := middlewares[i]
+		if conf != nil && len(conf.Options) > 0 {
+			if err := mergo.Map(&conf.Options, global, mergo.WithOverride); err != nil {
+				log.Warnf("failed to merge global options to middleware %s: %v", conf.Name, err)
+			}
+		}
+		next, cleanup, err := middleware.Create(conf)
 		if err != nil {
-			log.Warnf("failed to create middleware %s: %v", middlewareConf.Name, err)
+			log.Warnf("failed to create middleware %s: %v", conf.Name, err)
 			continue
 		}
 

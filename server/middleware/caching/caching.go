@@ -46,6 +46,7 @@ type cachingOption struct {
 	CollapsedRequestWaitTimeout Duration `json:"collapsed_request_wait_timeout" yaml:"collapsed_request_wait_timeout"`
 	ObjectPoolEnabled           bool     `json:"object_pool_enabled" yaml:"object_pool_enabled"`
 	ObjectPollSize              int      `json:"object_poll_size" yaml:"object_poll_size"`
+	SliceSize                   uint64   `json:"slice_size" yaml:"slice_size"`
 	VaryLimit                   int      `json:"vary_limit" yaml:"vary_limit"`
 	VaryIgnoreKey               []string `json:"vary_ignore_key" yaml:"vary_ignore_key"`
 	Hostname                    string   `json:"hostname" yaml:"hostname"`
@@ -67,10 +68,13 @@ func Middleware(c *configv1.Middleware) (middleware.Middleware, func(), error) {
 		Hostname:          hostname,
 		ObjectPoolEnabled: false,
 		ObjectPollSize:    20000,
+		SliceSize:         iobuf.BitBlock, // default 32KB
 	}
 	if err := c.Unmarshal(opts); err != nil {
 		return nil, middleware.EmptyCleanup, err
 	}
+
+	log.Infof("middleware.caching inited %v", opts.SliceSize)
 
 	processor := NewProcessorChain(
 		// Cache-State
@@ -161,40 +165,50 @@ func Middleware(c *configv1.Middleware) (middleware.Middleware, func(), error) {
 }
 
 func (c *Caching) lazilyRespond(req *http.Request, start, end int64) (*http.Response, error) {
+	psize := int64(c.opt.SliceSize)
 	// find disk cache file and return Body
-	reqBlocks := iobuf.BreakInBitmap(start, end, iobuf.BitBlock)
-	startOffset := start % iobuf.BitBlock
+	reqChunks := iobuf.BreakInBitmap(start, end, psize)
+	startOffset := start % psize
 
-	// match hit-blocks, miss-blocks
-	matchedBlocks := iobuf.BlockGroup(c.md.Parts, reqBlocks)
+	// match hit chunk, miss chunk
+	matchedChunks := iobuf.BlockGroup(c.md.Parts, reqChunks)
 
 	c.md.LastRefUnix = time.Now().Unix()
 
 	c.log.Debugf("lazilyRespond %s %s start %d end %d", req.Method, c.id.Key(), start, end)
-	f, err := ropen(c.id.WPath(c.bucket.Path()))
-	if err != nil {
-		if isTooManyFiles(err) {
-			c.log.Errorf("too many open files: %v", err)
-		}
 
-		// 如果文件不存在，需要回源
-		if os.IsNotExist(err) {
-			c.log.Warnf("lazilyRespond backoff doProxy with %s", err.Error())
-			// 要解除 If-Header 校验304
-			req.Header.Del("If-None-Match")
-			req.Header.Del("If-Modified-Since")
-			req.Header.Del("If-Match")
-			req.Header.Del("If-Unmodified-Since")
-			req.Header.Del("If-Range")
-			// 发起回上游
-			return c.doProxy(req, false)
+	// f, err := ropen(c.id.WPath(c.bucket.Path()))
+	// if err != nil {
+	// 	if isTooManyFiles(err) {
+	// 		c.log.Errorf("too many open files: %v", err)
+	// 	}
+
+	// 	// 如果文件不存在，需要回源
+	// 	if os.IsNotExist(err) {
+	// 		c.log.Warnf("lazilyRespond backoff doProxy with %s", err.Error())
+	// 		// 要解除 If-Header 校验304
+	// 		req.Header.Del("If-None-Match")
+	// 		req.Header.Del("If-Modified-Since")
+	// 		req.Header.Del("If-Match")
+	// 		req.Header.Del("If-Unmodified-Since")
+	// 		req.Header.Del("If-Range")
+	// 		// 发起回上游
+	// 		return c.doProxy(req, false)
+	// 	}
+	// 	return nil, err
+	// }
+
+	// io readers
+	readers := make([]io.ReadCloser, 0, len(matchedChunks))
+	cleanup := func() {
+		for _, r := range readers {
+			_ = r.Close()
 		}
-		return nil, err
 	}
 
-	readers := make([]io.ReadCloser, 0, len(matchedBlocks))
-	for i, block := range matchedBlocks {
-		offset, limit := iobuf.BufBlock(block.BlockRange)
+	// TODO: find file chunks.
+	for i, block := range matchedChunks {
+		offset, limit := iobuf.ChunkPart(block.BlockRange, uint32(psize))
 		if i == 0 && startOffset > 0 {
 			offset += startOffset
 		}
@@ -208,6 +222,26 @@ func (c *Caching) lazilyRespond(req *http.Request, start, end int64) (*http.Resp
 		// from cachefile
 		// hit block
 		if block.Match {
+			f, err := ropen(c.id.WPathSlice(c.bucket.Path(), 0))
+			if err != nil {
+				if isTooManyFiles(err) {
+					c.log.Errorf("too many open files: %v", err)
+				}
+				// 如果文件不存在，需要回源
+				if os.IsNotExist(err) {
+					c.log.Warnf("lazilyRespond backoff doProxy with %s", err.Error())
+					// 要解除 If-Header 校验304
+					req.Header.Del("If-None-Match")
+					req.Header.Del("If-Modified-Since")
+					req.Header.Del("If-Match")
+					req.Header.Del("If-Unmodified-Since")
+					req.Header.Del("If-Range")
+					// 发起回上游
+					return c.doProxy(req, false)
+				}
+				return nil, err
+			}
+
 			readers = append(readers, iobuf.LimitReadCloser(iobuf.SeekReadCloser(f, offset), limit-offset))
 			continue
 		}
@@ -352,7 +386,7 @@ func (c *Caching) doProxy(req *http.Request, subRequest bool) (*http.Response, e
 		c.md = &object.Metadata{
 			ID:          c.id,
 			Headers:     make(http.Header),
-			BlockSize:   iobuf.BitBlock,
+			BlockSize:   c.opt.SliceSize, // iobuf.BitBlock,
 			Parts:       bitmap.Bitmap{},
 			Size:        respRange.ObjSize,
 			Code:        http.StatusOK,
@@ -387,10 +421,10 @@ func (c *Caching) doProxy(req *http.Request, subRequest bool) (*http.Response, e
 		}
 
 		// flushbuffer 文件从这里写出到 bucket / disk
-		flushBuffer, cleanup := c.flushbuffer(respRange)
+		flushBuffer, cleanup := c.flushbufferSlice(respRange)
 
 		// save body stream to bucket(disk).
-		resp.Body = iobuf.SavepartReader(resp.Body, iobuf.BitBlock, 0, flushBuffer, c.flushFailed, cleanup)
+		resp.Body = iobuf.SavepartReader(resp.Body, c.opt.SliceSize, 0, flushBuffer, c.flushFailed, cleanup)
 	}
 
 	resp, err = c.processor.PostRequest(c, proxyReq, resp)
@@ -499,6 +533,61 @@ func (c *Caching) flushbuffer(respRange xhttp.ContentRange) (iobuf.EventSuccess,
 	}
 
 	return writeBuffer, cleanup
+}
+
+func (c *Caching) flushbufferSlice(respRange xhttp.ContentRange) (iobuf.EventSuccess, iobuf.EventClose) {
+	// is chunked encoding
+	// chunked encoding when object size unknown, waiting for Read io.EOF
+	chunked := respRange.ObjSize <= 0
+
+	// auto calculate end part with block-size.
+	endPart := func() uint32 {
+		epart := uint32(respRange.ObjSize / c.md.BlockSize)
+		if respRange.ObjSize%c.md.BlockSize > 0 {
+			epart++
+		}
+		return epart
+	}()
+
+	writerBuffer := func(buf []byte, index uint32, current uint64, eof bool) error {
+		wpath := c.id.WPathSlice(c.bucket.Path(), index)
+		_ = os.MkdirAll(filepath.Dir(wpath), 0o755)
+
+		f, err := os.OpenFile(wpath, os.O_CREATE|os.O_RDWR, 0o755)
+		if err != nil {
+			return fmt.Errorf("writeBuffer open-file part[%d] failed err %w", index, err)
+		}
+		defer f.Close()
+
+		if chunked {
+			c.md.Size = current
+			c.md.Headers.Set("Content-Length", fmt.Sprintf("%d", current))
+		} else if uint64(len(buf)) != c.md.BlockSize && current != respRange.ObjSize {
+			c.log.Debugf("writeBuffer part[%d] is not complete, want end-part [%d] ", index+1, endPart)
+			return nil
+		}
+
+		if nn, err1 := f.Write(buf); err1 != nil || nn != len(buf) {
+			return fmt.Errorf("writeBuffer part[%d] failed err %w", index, err)
+		}
+
+		// save slice part
+		c.md.Chunks.Set(index)
+
+		if eof {
+			if endPart == uint32(c.md.Chunks.Count()) {
+				c.log.Debugf("file all part complete at %s", time.Now().Format(time.DateTime))
+
+				// TODO: trigger file crc check
+				// ...
+			}
+		}
+
+		//c.log.Debugf("flushBuffer %s, curPart: %d endPart: %d, offset %d, write bufsize %d", wpath, bitIdx, endPart, offset, n)
+		return nil
+	}
+
+	return writerBuffer, func(eof bool) {}
 }
 
 // flushFailed flush cache file to bucket failed callback

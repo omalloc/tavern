@@ -3,6 +3,7 @@ module github.com/omalloc/tavern
 go 1.25.2
 
 require (
+	dario.cat/mergo v1.0.2
 	github.com/andybalholm/brotli v1.2.0
 	github.com/cloudflare/tableflip v1.2.3
 	github.com/cockroachdb/pebble/v2 v2.1.2
