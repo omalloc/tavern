@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"runtime"
+	"strconv"
 	"strings"
 )
 
@@ -23,7 +24,7 @@ func PrintStackTrace(skip int) string {
 		sb.WriteString("\n\t")
 		sb.WriteString(frame.File)
 		sb.WriteString(":")
-		sb.WriteRune(rune(frame.Line))
+		sb.WriteString(strconv.Itoa(frame.Line))
 		sb.WriteString("\n")
 		if !more {
 			break

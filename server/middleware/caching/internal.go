@@ -150,7 +150,7 @@ func getContents(c *Caching, reqChunks []uint32, from uint32) (reader io.ReadClo
 			availableChunks[i] <= reqChunks[len(reqChunks)-1]
 	})
 
-	c.log.Debugf("find availabe chunk index %d, chunk %d, availableChunks: %v", index, availableChunks[index], availableChunks)
+	c.log.Debugf("find availabe chunk index %d, availableChunks: %v", index, availableChunks)
 	fromByte := uint64(reqChunks[from] * uint32(c.md.BlockSize))
 	if index < len(availableChunks) {
 		chunkFile, _ := getSliceChunkFile(c, availableChunks[index])
