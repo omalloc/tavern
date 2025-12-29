@@ -76,7 +76,7 @@ func Middleware(c *configv1.Middleware) (middleware.Middleware, func(), error) {
 		Hostname:          hostname,
 		ObjectPoolEnabled: false,
 		ObjectPollSize:    20000,
-		SliceSize:         iobuf.BitBlock, // default 32KB
+		SliceSize:         1048576, // default 1MB
 		FillRangePercent:  100,
 		FillRangeSize:     1048576,
 	}

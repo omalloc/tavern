@@ -42,6 +42,8 @@ server:
         collapsed_request: true
         collapsed_request_wait_timeout: 100ms
         include_query_in_cache_key: true
+        fill_range_size: 1048576 # 1MB
+        fill_range_percent: 100
         object_pool_enabled: true
         object_pool_size: 20000
         vary_limit: 100
@@ -55,6 +57,10 @@ server:
       enabled: false
       secret: "123"
     path: ./logs/access.log
+  local_api_allow_hosts:
+    - "localhost"
+    - "127.1"
+    - "127.0.0.1"
 plugin:
   - name: example-plugin
     options:

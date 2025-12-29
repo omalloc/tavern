@@ -73,6 +73,12 @@ func NewServer(flip *tableflip.Upgrader, config *conf.Bootstrap, plugins []plugi
 		cleanups:     make([]func(), 0),
 	}
 
+	if len(servConfig.LocalApiAllowHosts) > 0 {
+		for _, host := range servConfig.LocalApiAllowHosts {
+			localMatcher[host] = struct{}{}
+		}
+	}
+
 	// 初始化内部路由
 	// - 探测接口
 	// - 监控接口
