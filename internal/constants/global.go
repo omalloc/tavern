@@ -8,7 +8,8 @@ const (
 	ProtocolCacheStatusKey = "X-Cache"
 	PrefetchCacheKey       = "X-Prefetch"
 
-	InternalTraceKey = "i-xtrace"
-	InternalStoreUrl = "i-x-store-url"
-	InternalSwapfile = "i-x-swapfile"
+	InternalTraceKey         = "i-xtrace"
+	InternalStoreUrl         = "i-x-store-url"
+	InternalSwapfile         = "i-x-swapfile"
+	InternalFillRangePercent = "i-x-fp"
 )

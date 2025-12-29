@@ -27,6 +27,9 @@ func (r *RevalidateProcessor) Lookup(c *Caching, req *http.Request) (bool, error
 		return true, nil
 	}
 
+	c.log.Debugf("cache freshness ExpiresAt %s for object: %s",
+		time.Unix(c.md.ExpiresAt, 0).Format(time.DateTime), c.id.Key())
+
 	if c.md.HasComplete() && hasConditionHeader(c.md.Headers) {
 		c.revalidate = true
 		c.cacheStatus = storagev1.CacheRevalidateHit
