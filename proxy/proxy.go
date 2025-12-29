@@ -128,6 +128,7 @@ func (r *ReverseProxy) find(addr string) *http.Client {
 			TLSHandshakeTimeout:   10 * time.Second,
 			ExpectContinueTimeout: 1 * time.Second,
 			ResponseHeaderTimeout: 30 * time.Second,
+			DisableCompression:    true,
 			DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
 				return r.dialer.DialContext(ctx, network, addr)
 			},
