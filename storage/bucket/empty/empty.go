@@ -43,7 +43,7 @@ func (e *emptyBucket) DiscardWithMetadata(ctx context.Context, meta *object.Meta
 }
 
 // Exist implements storage.Bucket.
-func (e *emptyBucket) Exist(ctx context.Context, id []byte) bool {
+func (e *emptyBucket) Exist(ctx context.Context, id object.IDHash) bool {
 	return false
 }
 
