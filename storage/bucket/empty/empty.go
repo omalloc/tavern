@@ -10,7 +10,9 @@ import (
 
 var _ storage.Bucket = (*emptyBucket)(nil)
 
-type emptyBucket struct{}
+type emptyBucket struct {
+	path string
+}
 
 // Allow implements storage.Bucket.
 func (e *emptyBucket) Allow() int {
@@ -103,9 +105,15 @@ func (e *emptyBucket) Type() string {
 }
 
 func (e *emptyBucket) Path() string {
-	return "/dev/null"
+	return e.path
 }
 
-func New(_ *conf.Bucket, _ storage.SharedKV) (storage.Bucket, error) {
-	return &emptyBucket{}, nil
+func New(c *conf.Bucket, _ storage.SharedKV) (storage.Bucket, error) {
+	path := c.Path
+	if path == "" {
+		path = "/dev/null"
+	}
+	return &emptyBucket{
+		path: path,
+	}, nil
 }

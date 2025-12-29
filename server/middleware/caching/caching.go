@@ -22,6 +22,7 @@ import (
 	"github.com/omalloc/tavern/contrib/log"
 	"github.com/omalloc/tavern/internal/constants"
 	"github.com/omalloc/tavern/pkg/iobuf"
+	"github.com/omalloc/tavern/pkg/iobuf/ioindexes"
 	xhttp "github.com/omalloc/tavern/pkg/x/http"
 	"github.com/omalloc/tavern/proxy"
 	"github.com/omalloc/tavern/server/middleware"
@@ -165,17 +166,51 @@ func Middleware(c *configv1.Middleware) (middleware.Middleware, func(), error) {
 }
 
 func (c *Caching) lazilyRespond(req *http.Request, start, end int64) (*http.Response, error) {
-	psize := int64(c.opt.SliceSize)
-	// find disk cache file and return Body
-	reqChunks := iobuf.BreakInBitmap(start, end, psize)
-	startOffset := start % psize
-
-	// match hit chunk, miss chunk
-	matchedChunks := iobuf.BlockGroup(c.md.Parts, reqChunks)
+	// 这里通过缓存的块大小来计算，而不是配置默认的 SliceSize
+	// 这样已缓存的对象可以使用原来的配置块大小，不受配置文件变更影响
+	psize := c.md.BlockSize
+	// 计算请求的 start, end 块索引
+	reqChunks := ioindexes.Build(uint64(start), uint64(end), psize)
+	startOffset := start % int64(psize)
 
 	c.md.LastRefUnix = time.Now().Unix()
 
 	c.log.Debugf("lazilyRespond %s %s start %d end %d", req.Method, c.id.Key(), start, end)
+
+	readers := make([]io.ReadCloser, 0, len(reqChunks))
+	_ = func() {
+		for _, r := range readers {
+			_ = r.Close()
+		}
+	}
+
+	for _, ichunk := range reqChunks {
+		offset, limit := iobuf.ChunkPart(reqChunks, uint32(psize))
+		if ichunk == 0 && startOffset > 0 {
+			offset += startOffset
+		}
+		if end < limit {
+			limit = end + 1
+		}
+
+		// [ 0-32767 = hit, 32768-65535 = miss, 65536-98303 = hit, 98304-131071 = hit]
+		// [ from file,       from upstream,     from file   ,      from file ]
+
+		// from cachefile
+		// hit block
+		// if block.Match {
+		// 	readers = append(readers, iobuf.LimitReadCloser(iobuf.SeekReadCloser(f, offset), limit-offset))
+		// 	continue
+		// }
+
+		// from upstream
+		// miss block
+		reader, err2 := c.getUpstreamReader(uint64(offset), uint64(limit-1), true)
+		if err2 != nil {
+			return nil, err2
+		}
+		readers = append(readers, reader)
+	}
 
 	// f, err := ropen(c.id.WPath(c.bucket.Path()))
 	// if err != nil {
@@ -198,69 +233,14 @@ func (c *Caching) lazilyRespond(req *http.Request, start, end int64) (*http.Resp
 	// 	return nil, err
 	// }
 
-	// io readers
-	readers := make([]io.ReadCloser, 0, len(matchedChunks))
-	cleanup := func() {
-		for _, r := range readers {
-			_ = r.Close()
-		}
-	}
-
 	// TODO: find file chunks.
-	for i, block := range matchedChunks {
-		offset, limit := iobuf.ChunkPart(block.BlockRange, uint32(psize))
-		if i == 0 && startOffset > 0 {
-			offset += startOffset
-		}
-		if end < limit {
-			limit = end + 1
-		}
-
-		// [ 0-32767 = hit, 32768-65535 = miss, 65536-98303 = hit, 98304-131071 = hit]
-		// [ from file,       from upstream,     from file   ,      from file ]
-
-		// from cachefile
-		// hit block
-		if block.Match {
-			f, err := ropen(c.id.WPathSlice(c.bucket.Path(), 0))
-			if err != nil {
-				if isTooManyFiles(err) {
-					c.log.Errorf("too many open files: %v", err)
-				}
-				// 如果文件不存在，需要回源
-				if os.IsNotExist(err) {
-					c.log.Warnf("lazilyRespond backoff doProxy with %s", err.Error())
-					// 要解除 If-Header 校验304
-					req.Header.Del("If-None-Match")
-					req.Header.Del("If-Modified-Since")
-					req.Header.Del("If-Match")
-					req.Header.Del("If-Unmodified-Since")
-					req.Header.Del("If-Range")
-					// 发起回上游
-					return c.doProxy(req, false)
-				}
-				return nil, err
-			}
-
-			readers = append(readers, iobuf.LimitReadCloser(iobuf.SeekReadCloser(f, offset), limit-offset))
-			continue
-		}
-
-		// from upstream
-		// miss block
-		reader, err2 := c.getUpstreamReader(uint64(offset), uint64(limit-1), true)
-		if err2 != nil {
-			return nil, err2
-		}
-		readers = append(readers, reader)
-	}
 
 	resp := &http.Response{
 		// 状态码可以统一在这里固定 200，由 PostRequest 阶段或 postCacheProcessor 统一处理
 		StatusCode:    c.md.Code, // http.StatusOK,
 		ContentLength: int64(c.md.Size),
 		Header:        make(http.Header),
-		Body:          iobuf.PartsReader(f, readers...),
+		// Body:          iobuf.PartsReader(f, readers...),
 	}
 
 	xhttp.CopyHeader(resp.Header, c.md.Headers)
