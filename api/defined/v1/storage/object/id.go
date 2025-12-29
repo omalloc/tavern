@@ -91,9 +91,9 @@ func (id *ID) WPath(pwd string) string {
 	return filepath.Join(pwd, hash[0:1], hash[2:4], hash)
 }
 
-func (id *ID) WPathSlice(pwd string, slice uint32) string {
+func (id *ID) WPathSlice(pwd string, sliceIndex uint32) string {
 	hash := hex.EncodeToString(id.hash[:])
-	return filepath.Join(pwd, hash[0:1], hash[2:4], fmt.Sprintf("%s-%06d", hash, slice))
+	return filepath.Join(pwd, hash[0:1], hash[2:4], fmt.Sprintf("%s-%06d", hash, sliceIndex))
 }
 
 func (idx IDHash) WPath(pwd string) string {

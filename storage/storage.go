@@ -32,7 +32,7 @@ type nativeStorage struct {
 }
 
 func New(config *conf.Storage, logger log.Logger) (storage.Storage, error) {
-	nopBucket, _ := empty.New(nil, sharedkv.NewEmpty())
+	nopBucket, _ := empty.New(&conf.Bucket{}, sharedkv.NewEmpty())
 	n := &nativeStorage{
 		closed: false,
 		mu:     sync.Mutex{},

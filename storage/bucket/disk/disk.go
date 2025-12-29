@@ -100,7 +100,7 @@ func (d *diskBucket) evict() {
 
 func (d *diskBucket) loadLRU() {
 	load := func(async bool) {
-		mdCount, blockCount := 0, 0
+		mdCount, chunkCount := 0, 0
 		counter := ratecounter.NewRateCounter(1 * time.Second)
 		blockCounter := ratecounter.NewRateCounter(1 * time.Second)
 		stop := make(chan struct{}, 1)
@@ -113,10 +113,10 @@ func (d *diskBucket) loadLRU() {
 				select {
 				case <-stop:
 					tick.Stop()
-					log.Infof("bucket %s %s load metadata(%d/block-%d) done. per-second %d(%d)/s", d.ID(), runMode, mdCount, blockCount, counter.Rate(), blockCounter.Rate())
+					log.Infof("bucket %s %s load metadata(%d/chunk-%d) done. per-second %d(%d)/s", d.ID(), runMode, mdCount, chunkCount, counter.Rate(), blockCounter.Rate())
 					return
 				case <-tick.C:
-					log.Infof("bucket %s %s load metadata(%d/block-%d). per-second %d(%d)/s", d.ID(), runMode, mdCount, blockCount, counter.Rate(), blockCounter.Rate())
+					log.Infof("bucket %s %s load metadata(%d/chunk-%d). per-second %d(%d)/s", d.ID(), runMode, mdCount, chunkCount, counter.Rate(), blockCounter.Rate())
 				}
 			}
 		}()
@@ -125,12 +125,12 @@ func (d *diskBucket) loadLRU() {
 		_ = d.indexdb.Iterate(context.Background(), nil, func(key []byte, meta *object.Metadata) bool {
 			if meta != nil {
 				mdCount++
-				blockCount += int(meta.Parts.Count())
+				chunkCount += int(meta.Chunks.Count())
 				d.cache.Set(meta.ID.Hash(), storage.NewMark(meta.LastRefUnix, uint64(meta.Refs)))
 				u, _ := url.Parse(meta.ID.Path())
 				_, _ = d.sharedkv.Incr(context.Background(), []byte(fmt.Sprintf("if/domain/%s", u.Host)), 1)
 				counter.Incr(1)
-				blockCounter.Incr(int64(meta.Parts.Count()))
+				blockCounter.Incr(int64(meta.Chunks.Count()))
 			}
 			return true
 		})
@@ -228,10 +228,13 @@ func (d *diskBucket) discard(ctx context.Context, md *object.Metadata) error {
 		}
 	}
 
-	fpath := md.ID.WPath(d.path)
-	if err := os.Remove(fpath); err != nil && !errors.Is(err, os.ErrNotExist) {
-		log.Context(ctx).Errorf("failed to remove cached file %s: %v", fpath, err)
-	}
+	// 删除所有 slice 缓存文件
+	md.Chunks.Range(func(x uint32) {
+		wpath := md.ID.WPathSlice(d.path, x)
+		if err := os.Remove(wpath); err != nil && !errors.Is(err, os.ErrNotExist) {
+			log.Context(ctx).Errorf("failed to remove cached slice file %s: %v", wpath, err)
+		}
+	})
 
 	u, _ := url.Parse(md.ID.Path())
 	_, _ = d.sharedkv.Decr(ctx, []byte(fmt.Sprintf("if/domain/%s", u.Host)), 1)

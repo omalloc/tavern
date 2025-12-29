@@ -30,6 +30,11 @@ import (
 
 const BYPASS = "BYPASS"
 
+var keyMap = map[string]struct{}{
+	"Content-Range":  {},
+	"Content-Length": {},
+}
+
 var fileMode = os.O_RDONLY
 
 type Duration string
@@ -48,6 +53,8 @@ type cachingOption struct {
 	ObjectPoolEnabled           bool     `json:"object_pool_enabled" yaml:"object_pool_enabled"`
 	ObjectPollSize              int      `json:"object_poll_size" yaml:"object_poll_size"`
 	SliceSize                   uint64   `json:"slice_size" yaml:"slice_size"`
+	FillRangePercent            uint64   `json:"fill_range_percent" yaml:"fill_range_percent"`
+	FillRangeSize               uint64   `json:"fill_range_size" yaml:"fill_range_size"`
 	VaryLimit                   int      `json:"vary_limit" yaml:"vary_limit"`
 	VaryIgnoreKey               []string `json:"vary_ignore_key" yaml:"vary_ignore_key"`
 	Hostname                    string   `json:"hostname" yaml:"hostname"`
@@ -70,6 +77,8 @@ func Middleware(c *configv1.Middleware) (middleware.Middleware, func(), error) {
 		ObjectPoolEnabled: false,
 		ObjectPollSize:    20000,
 		SliceSize:         iobuf.BitBlock, // default 32KB
+		FillRangePercent:  100,
+		FillRangeSize:     1048576,
 	}
 	if err := c.Unmarshal(opts); err != nil {
 		return nil, middleware.EmptyCleanup, err
@@ -91,6 +100,8 @@ func Middleware(c *configv1.Middleware) (middleware.Middleware, func(), error) {
 			WithVaryMaxLimit(opts.VaryLimit),
 			WithVaryIgnoreKeys(opts.VaryIgnoreKey...),
 		),
+		// Range fill
+		NewFillRangeProcessor(WithFillRangePercent(int(opts.FillRangePercent)), WithChunkSize(opts.FillRangeSize)),
 	).fill()
 
 	return func(origin http.RoundTripper) http.RoundTripper {
@@ -178,72 +189,64 @@ func (c *Caching) lazilyRespond(req *http.Request, start, end int64) (*http.Resp
 	c.log.Debugf("lazilyRespond %s %s start %d end %d", req.Method, c.id.Key(), start, end)
 
 	readers := make([]io.ReadCloser, 0, len(reqChunks))
-	_ = func() {
+	cleanup := func() {
 		for _, r := range readers {
 			_ = r.Close()
 		}
 	}
 
-	for _, ichunk := range reqChunks {
-		offset, limit := iobuf.ChunkPart(reqChunks, uint32(psize))
-		if ichunk == 0 && startOffset > 0 {
-			offset += startOffset
-		}
-		if end < limit {
-			limit = end + 1
+	for i := 0; i < len(reqChunks); {
+		reader, count, err := getContents(c, reqChunks, uint32(i))
+		if err != nil {
+			cleanup()
+			return nil, err
 		}
 
-		// [ 0-32767 = hit, 32768-65535 = miss, 65536-98303 = hit, 98304-131071 = hit]
-		// [ from file,       from upstream,     from file   ,      from file ]
-
-		// from cachefile
-		// hit block
-		// if block.Match {
-		// 	readers = append(readers, iobuf.LimitReadCloser(iobuf.SeekReadCloser(f, offset), limit-offset))
-		// 	continue
-		// }
-
-		// from upstream
-		// miss block
-		reader, err2 := c.getUpstreamReader(uint64(offset), uint64(limit-1), true)
-		if err2 != nil {
-			return nil, err2
+		if count == -1 {
+			cleanup()
+			readers = []io.ReadCloser{
+				iobuf.RangeReader(reader, 0, int(c.md.Size-1), int(start), int(end)),
+			}
+			break
 		}
+
+		// head skip
+		if i == 0 && startOffset > 0 {
+			reader = iobuf.SkipReadCloser(reader, int64(startOffset))
+		}
+
+		// tail skip
+		if i+count == len(reqChunks) {
+			endLimit := uint64(count-1)*psize + uint64(end)%psize + 1
+			if i == 0 {
+				endLimit -= uint64(startOffset)
+			}
+			reader = iobuf.LimitReadCloser(reader, int64(endLimit))
+		}
+
 		readers = append(readers, reader)
+		i += count
 	}
 
-	// f, err := ropen(c.id.WPath(c.bucket.Path()))
-	// if err != nil {
-	// 	if isTooManyFiles(err) {
-	// 		c.log.Errorf("too many open files: %v", err)
-	// 	}
-
-	// 	// 如果文件不存在，需要回源
-	// 	if os.IsNotExist(err) {
-	// 		c.log.Warnf("lazilyRespond backoff doProxy with %s", err.Error())
-	// 		// 要解除 If-Header 校验304
-	// 		req.Header.Del("If-None-Match")
-	// 		req.Header.Del("If-Modified-Since")
-	// 		req.Header.Del("If-Match")
-	// 		req.Header.Del("If-Unmodified-Since")
-	// 		req.Header.Del("If-Range")
-	// 		// 发起回上游
-	// 		return c.doProxy(req, false)
-	// 	}
-	// 	return nil, err
-	// }
-
-	// TODO: find file chunks.
+	in := iobuf.PartsReader(nil, readers...)
+	if req.Method == http.MethodHead {
+		in = nil
+		cleanup()
+	}
 
 	resp := &http.Response{
 		// 状态码可以统一在这里固定 200，由 PostRequest 阶段或 postCacheProcessor 统一处理
 		StatusCode:    c.md.Code, // http.StatusOK,
 		ContentLength: int64(c.md.Size),
 		Header:        make(http.Header),
-		// Body:          iobuf.PartsReader(f, readers...),
+		Body:          in,
 	}
 
 	xhttp.CopyHeader(resp.Header, c.md.Headers)
+
+	for k := range keyMap {
+		resp.Header.Del(k)
+	}
 
 	// 206 Range 头处理
 	if req.Header.Get("Range") != "" {
@@ -251,7 +254,7 @@ func (c *Caching) lazilyRespond(req *http.Request, start, end int64) (*http.Resp
 		resp.Header.Set("Content-Range", fmt.Sprintf("bytes %d-%d/%d", start, end, c.md.Size))
 	}
 
-	// 计算真实 ContentLength, 这里主要防止出现 0 body size 的情况
+	// 计算真实 CL, 这里主要防止出现 0 body size 的情况
 	cl := end - start + 1
 	resp.ContentLength = cl
 	resp.Header.Set("Content-Length", strconv.FormatInt(cl, 10))
@@ -404,7 +407,7 @@ func (c *Caching) doProxy(req *http.Request, subRequest bool) (*http.Response, e
 		flushBuffer, cleanup := c.flushbufferSlice(respRange)
 
 		// save body stream to bucket(disk).
-		resp.Body = iobuf.SavepartReader(resp.Body, c.opt.SliceSize, 0, flushBuffer, c.flushFailed, cleanup)
+		resp.Body = iobuf.SavepartReader(resp.Body, c.md.BlockSize, uint(respRange.Start), flushBuffer, c.flushFailed, cleanup)
 	}
 
 	resp, err = c.processor.PostRequest(c, proxyReq, resp)
@@ -533,7 +536,10 @@ func (c *Caching) flushbufferSlice(respRange xhttp.ContentRange) (iobuf.EventSuc
 		wpath := c.id.WPathSlice(c.bucket.Path(), index)
 		_ = os.MkdirAll(filepath.Dir(wpath), 0o755)
 
-		f, err := os.OpenFile(wpath, os.O_CREATE|os.O_RDWR, 0o755)
+		tmpWPath := wpath + time.Now().Format("-tmp20060102150405")
+
+		c.log.Debugf("flushbuffer now. chunked %t part %d/%d", chunked, index, endPart)
+		f, err := os.OpenFile(tmpWPath, os.O_CREATE|os.O_RDWR, 0o755)
 		if err != nil {
 			return fmt.Errorf("writeBuffer open-file part[%d] failed err %w", index, err)
 		}
@@ -553,6 +559,10 @@ func (c *Caching) flushbufferSlice(respRange xhttp.ContentRange) (iobuf.EventSuc
 
 		// save slice part
 		c.md.Chunks.Set(index)
+		// rename tmp file to final slice file
+		if err := os.Rename(tmpWPath, wpath); err != nil {
+			return fmt.Errorf("writeBuffer rename part[%d] failed err %w", index, err)
+		}
 
 		if eof {
 			if endPart == uint32(c.md.Chunks.Count()) {
@@ -567,7 +577,9 @@ func (c *Caching) flushbufferSlice(respRange xhttp.ContentRange) (iobuf.EventSuc
 		return nil
 	}
 
-	return writerBuffer, func(eof bool) {}
+	return writerBuffer, func(eof bool) {
+		_ = c.bucket.Store(c.req.Context(), c.md)
+	}
 }
 
 // flushFailed flush cache file to bucket failed callback

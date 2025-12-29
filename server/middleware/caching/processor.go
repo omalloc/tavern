@@ -132,7 +132,8 @@ func (pc *ProcessorChain) postCacheProcessor(caching *Caching, _ *http.Request, 
 
 	if resp != nil && resp.Header != nil && caching.md != nil {
 		resp.Header.Set("Age", strconv.FormatInt(time.Now().Unix()-caching.md.RespUnix, 10))
-		resp.Header.Set("Expires", time.Unix(caching.md.ExpiresAt, 0).UTC().Format(http.TimeFormat))
+		resp.Header.Set("Date", time.Unix(caching.md.RespUnix, 0).Local().UTC().Format(http.TimeFormat))
+		resp.Header.Set("Expires", time.Unix(caching.md.ExpiresAt, 0).Local().UTC().Format(http.TimeFormat))
 	}
 
 	// FETCH request

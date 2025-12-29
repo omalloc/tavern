@@ -69,7 +69,7 @@ func (m *Metadata) HasComplete() bool {
 	if m.Size%m.BlockSize != 0 {
 		n++
 	}
-	return n == uint64(m.Parts.Count())
+	return n == uint64(m.Chunks.Count())
 }
 
 // Clone clones the metadata.
