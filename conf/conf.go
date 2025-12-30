@@ -9,6 +9,7 @@ import (
 
 type Bootstrap struct {
 	Strict   bool      `json:"strict" yaml:"strict"`
+	Hostname string    `json:"hostname" yaml:"hostname"`
 	PidFile  string    `json:"pidfile" yaml:"pidfile"`
 	Logger   *Logger   `json:"logger" yaml:"logger"`
 	Server   *Server   `json:"server" yaml:"server"`
