@@ -54,7 +54,6 @@ type cachingOption struct {
 	ObjectPollSize              int      `json:"object_poll_size" yaml:"object_poll_size"`
 	SliceSize                   uint64   `json:"slice_size" yaml:"slice_size"`
 	FillRangePercent            uint64   `json:"fill_range_percent" yaml:"fill_range_percent"`
-	FillRangeSize               uint64   `json:"fill_range_size" yaml:"fill_range_size"`
 	VaryLimit                   int      `json:"vary_limit" yaml:"vary_limit"`
 	VaryIgnoreKey               []string `json:"vary_ignore_key" yaml:"vary_ignore_key"`
 	Hostname                    string   `json:"hostname" yaml:"hostname"`
@@ -73,12 +72,11 @@ func Middleware(c *configv1.Middleware) (middleware.Middleware, func(), error) {
 	hostname, _ := os.Hostname()
 	opts := &cachingOption{
 		VaryLimit:         100,
-		Hostname:          hostname,
+		Hostname:          hostname, // 默认从系统获取主机名, 可通过
 		ObjectPoolEnabled: false,
 		ObjectPollSize:    20000,
-		SliceSize:         1048576, // default 1MB
-		FillRangePercent:  100,
-		FillRangeSize:     1048576,
+		SliceSize:         1048576, // 切片大小 默认1MB, 从配置文件 storage.slice_size 配置
+		FillRangePercent:  100,     // Range 默认填充百分比, 参考 fillRange 处理器对百分比的计算
 	}
 	if err := c.Unmarshal(opts); err != nil {
 		return nil, middleware.EmptyCleanup, err
@@ -101,7 +99,10 @@ func Middleware(c *configv1.Middleware) (middleware.Middleware, func(), error) {
 			WithVaryIgnoreKeys(opts.VaryIgnoreKey...),
 		),
 		// Range fill
-		NewFillRangeProcessor(WithFillRangePercent(int(opts.FillRangePercent)), WithChunkSize(opts.FillRangeSize)),
+		NewFillRangeProcessor(
+			WithFillRangePercent(int(opts.FillRangePercent)),
+			WithChunkSize(opts.SliceSize),
+		),
 	).fill()
 
 	return func(origin http.RoundTripper) http.RoundTripper {
@@ -189,21 +190,16 @@ func (c *Caching) lazilyRespond(req *http.Request, start, end int64) (*http.Resp
 	c.log.Debugf("lazilyRespond %s %s start %d end %d", req.Method, c.id.Key(), start, end)
 
 	readers := make([]io.ReadCloser, 0, len(reqChunks))
-	cleanup := func() {
-		for _, r := range readers {
-			_ = r.Close()
-		}
-	}
 
 	for i := 0; i < len(reqChunks); {
 		reader, count, err := getContents(c, reqChunks, uint32(i))
 		if err != nil {
-			cleanup()
+			iobuf.AllCloser(readers).Close()
 			return nil, err
 		}
 
 		if count == -1 {
-			cleanup()
+			iobuf.AllCloser(readers).Close()
 			readers = []io.ReadCloser{
 				iobuf.RangeReader(reader, 0, int(c.md.Size-1), int(start), int(end)),
 			}
@@ -228,10 +224,10 @@ func (c *Caching) lazilyRespond(req *http.Request, start, end int64) (*http.Resp
 		i += count
 	}
 
-	in := iobuf.PartsReader(nil, readers...)
+	in := iobuf.PartsReader(iobuf.AllCloser(readers), readers...)
 	if req.Method == http.MethodHead {
 		in = nil
-		cleanup()
+		iobuf.AllCloser(readers).Close()
 	}
 
 	resp := &http.Response{
@@ -538,7 +534,7 @@ func (c *Caching) flushbufferSlice(respRange xhttp.ContentRange) (iobuf.EventSuc
 
 		tmpWPath := wpath + time.Now().Format("-tmp20060102150405")
 
-		c.log.Debugf("flushbuffer now. chunked %t part %d/%d", chunked, index, endPart)
+		c.log.Debugf("flushbuffer %s. isChunked=%t part=%d/%d", wpath, chunked, index, endPart)
 		f, err := os.OpenFile(tmpWPath, os.O_CREATE|os.O_RDWR, 0o755)
 		if err != nil {
 			return fmt.Errorf("writeBuffer open-file part[%d] failed err %w", index, err)

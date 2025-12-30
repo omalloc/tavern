@@ -7,6 +7,7 @@ import (
 
 	storagev1 "github.com/omalloc/tavern/api/defined/v1/storage"
 	"github.com/omalloc/tavern/api/defined/v1/storage/object"
+	"github.com/omalloc/tavern/contrib/log"
 	xhttp "github.com/omalloc/tavern/pkg/x/http"
 )
 
@@ -27,8 +28,10 @@ func (r *RevalidateProcessor) Lookup(c *Caching, req *http.Request) (bool, error
 		return true, nil
 	}
 
-	c.log.Debugf("cache freshness ExpiresAt %s for object: %s",
-		time.Unix(c.md.ExpiresAt, 0).Format(time.DateTime), c.id.Key())
+	if c.log.Enabled(log.LevelDebug) {
+		c.log.Debugf("cache freshness ExpiresAt %s for object: %s",
+			time.Unix(c.md.ExpiresAt, 0).Format(time.DateTime), c.id.Key())
+	}
 
 	if c.md.HasComplete() && hasConditionHeader(c.md.Headers) {
 		c.revalidate = true
@@ -36,8 +39,10 @@ func (r *RevalidateProcessor) Lookup(c *Caching, req *http.Request) (bool, error
 		return false, nil
 	}
 
-	c.revalidate = true
-	c.cacheStatus = storagev1.CacheRevalidateMiss
+	// metadata is expired and no-fullyiable chunks file.
+	// cannot revalidate, treat as cache miss
+	c.revalidate = false
+	c.cacheStatus = storagev1.CacheMiss
 
 	// drop metadata
 	if discardErr := c.bucket.DiscardWithMessage(req.Context(), c.id, "revalidate cache with expired"); discardErr != nil {
@@ -108,7 +113,7 @@ func (r *RevalidateProcessor) revalidate(c *Caching, resp *http.Response, req *h
 		if err != nil {
 			return nil, xhttp.NewBizError(http.StatusRequestedRangeNotSatisfiable, nil)
 		}
-		c.log.Debugf("freshness cache by Range bytes=%d-%d", rng.Start, rng.End)
+		c.log.Debugf("freshness cache by RawRange bytes=%d-%d", rng.Start, rng.End)
 		return c.lazilyRespond(req, rng.Start, rng.End)
 	}
 
@@ -117,7 +122,7 @@ func (r *RevalidateProcessor) revalidate(c *Caching, resp *http.Response, req *h
 		end = int64(c.md.Size - 1)
 	}
 
-	c.log.Debugf("freshness cache by Range bytes=%d-%d", 0, end)
+	c.log.Debugf("freshness cache by RawRange bytes=%d-%d", 0, end)
 	return c.lazilyRespond(req, 0, end)
 }
 

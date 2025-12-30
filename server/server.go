@@ -296,10 +296,10 @@ func (s *HTTPServer) buildEndpoint() (http.HandlerFunc, error) {
 
 func (s *HTTPServer) buildMiddlewareChain(tripper http.RoundTripper) (http.RoundTripper, error) {
 	middlewares := s.config.Server.Middleware
-	//
-	global := map[string]any{
-		"slice_size": s.config.Storage.SliceSize,
-	}
+
+	// merge global options to each middleware options
+	global := s.globalOptions(make(map[string]any))
+
 	for i := len(middlewares) - 1; i >= 0; i-- {
 		if middlewares[i].Name == "" {
 			panic("middlewares name is empty, config file array index " + strconv.Itoa(i))
@@ -322,4 +322,14 @@ func (s *HTTPServer) buildMiddlewareChain(tripper http.RoundTripper) (http.Round
 		tripper = next(tripper)
 	}
 	return tripper, nil
+}
+
+func (s *HTTPServer) globalOptions(src map[string]any) map[string]any {
+
+	src["slice_size"] = s.config.Storage.SliceSize
+	if s.config.Hostname != "" {
+		src["hostname"] = s.config.Hostname
+	}
+
+	return src
 }

@@ -42,7 +42,6 @@ server:
         collapsed_request: true
         collapsed_request_wait_timeout: 100ms
         include_query_in_cache_key: true
-        fill_range_size: 1048576 # 1MB
         fill_range_percent: 100
         object_pool_enabled: true
         object_pool_size: 20000

@@ -159,11 +159,9 @@ func getContents(c *Caching, reqChunks []uint32, from uint32) (reader io.ReadClo
 				_ = c.bucket.Discard(context.Background(), c.id)
 				return nil, 0, err
 			}
-
-			return chunkFile, 1, nil
 		}
 
-		// 没有缓存文件
+		// 找到一个起始块，需要补齐前面的缺失块到当前这个块
 		toByte := min(c.md.Size-1, uint64(availableChunks[index]*uint32(partSize))-1)
 		req := c.req.Clone(context.Background())
 		newRange := fmt.Sprintf("bytes=%d-%d", fromByte, toByte)
@@ -190,8 +188,13 @@ func getContents(c *Caching, reqChunks []uint32, from uint32) (reader io.ReadClo
 	}
 
 	// no more hit block, fill
-	toByte := min(c.md.Size-1, uint64(reqChunks[len(reqChunks)-1]+1)*uint64(partSize)-1)
 	rawRange := c.req.Header.Get("Range")
+	rng, _ := xhttp.SingleRange(rawRange, c.md.Size)
+	tailChunkSize := uint64(reqChunks[len(reqChunks)-1]+1)*uint64(partSize) - 1
+	if tailChunkSize > uint64(rng.End) {
+		tailChunkSize = uint64(rng.End)
+	}
+	toByte := min(c.md.Size-1, tailChunkSize)
 	newRange := fmt.Sprintf("bytes=%d-%d", fromByte, toByte)
 	req := c.req.Clone(context.Background())
 	req.Header.Set("Range", newRange)

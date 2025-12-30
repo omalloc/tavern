@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 
+	"github.com/omalloc/tavern/tests/mockserver/middleware/cachecontrol"
 	"github.com/omalloc/tavern/tests/mockserver/middleware/logging"
 )
 
@@ -40,7 +41,7 @@ func main() {
 	addr := fmt.Sprintf(":%d", flagPort)
 
 	log.Printf("HTTP server listener on %s", addr)
-	if err := http.ListenAndServe(addr, logging.Logging(mux)); err != nil {
+	if err := http.ListenAndServe(addr, logging.Logging(cachecontrol.CacheControl(mux))); err != nil {
 		return
 	}
 }
