@@ -29,6 +29,7 @@ import (
 	"github.com/omalloc/tavern/plugin"
 	_ "github.com/omalloc/tavern/plugin/example"
 	_ "github.com/omalloc/tavern/plugin/purge"
+	_ "github.com/omalloc/tavern/plugin/watchdog"
 	"github.com/omalloc/tavern/proxy"
 	"github.com/omalloc/tavern/server"
 	"github.com/omalloc/tavern/storage"

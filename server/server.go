@@ -95,6 +95,7 @@ func NewServer(flip *tableflip.Upgrader, config *conf.Bootstrap, plugins []plugi
 	s.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		host := fmtAddr(r.Host)
 		if _, ok := localMatcher[host]; ok {
+			w.Header().Set("X-Internal-Server", "true")
 			// 内部接口处理流程
 			mux.ServeHTTP(w, r)
 			return
