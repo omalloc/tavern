@@ -403,7 +403,7 @@ func (c *Caching) doProxy(req *http.Request, subRequest bool) (*http.Response, e
 		flushBuffer, cleanup := c.flushbufferSlice(respRange)
 
 		// save body stream to bucket(disk).
-		resp.Body = iobuf.SavepartReader(resp.Body, c.md.BlockSize, uint(respRange.Start), flushBuffer, c.flushFailed, cleanup)
+		resp.Body = iobuf.SavepartAsyncReader(resp.Body, c.md.BlockSize, uint(respRange.Start), flushBuffer, c.flushFailed, cleanup, 8)
 	}
 
 	resp, err = c.processor.PostRequest(c, proxyReq, resp)
