@@ -342,6 +342,11 @@ func (d *diskBucket) Allow() int {
 	panic("unimplemented")
 }
 
+// Objects implements storage.Bucket.
+func (d *diskBucket) Objects() uint64 {
+	return uint64(d.cache.Len())
+}
+
 func (d *diskBucket) Path() string {
 	return d.path
 }

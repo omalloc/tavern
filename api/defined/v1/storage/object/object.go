@@ -15,6 +15,23 @@ const (
 	FlagChunkedCache CacheFlag = 0x1 << 2 // chunked index
 )
 
+func (f CacheFlag) String() string {
+	switch f {
+	case FlagCache:
+		return "CACHE"
+	case FlagVaryIndex:
+		return "VARY_INDEX"
+	case FlagVaryCache:
+		return "VARY_CACHE"
+	case FlagChunkedCache:
+		return "CHUNKED_CACHE"
+	case FlagVaryCache | FlagChunkedCache:
+		return "VARY_CHUNKED_CACHE"
+	default:
+		return "UNKNOWN"
+	}
+}
+
 type Metadata struct {
 	Flags CacheFlag `json:"flags"`
 

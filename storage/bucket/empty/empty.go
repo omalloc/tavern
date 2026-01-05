@@ -14,6 +14,10 @@ type emptyBucket struct {
 	path string
 }
 
+func (e *emptyBucket) Objects() uint64 {
+	return 0
+}
+
 // Allow implements storage.Bucket.
 func (e *emptyBucket) Allow() int {
 	return 100

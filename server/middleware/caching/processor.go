@@ -1,6 +1,7 @@
 package caching
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"net/http"
@@ -134,6 +135,12 @@ func (pc *ProcessorChain) postCacheProcessor(caching *Caching, _ *http.Request, 
 		resp.Header.Set("Age", strconv.FormatInt(time.Now().Unix()-caching.md.RespUnix, 10))
 		resp.Header.Set("Date", time.Unix(caching.md.RespUnix, 0).Local().UTC().Format(http.TimeFormat))
 		resp.Header.Set("Expires", time.Unix(caching.md.ExpiresAt, 0).Local().UTC().Format(http.TimeFormat))
+	}
+
+	if caching.cacheable {
+		if caching.rootmd != nil {
+			_ = caching.bucket.Store(context.Background(), caching.rootmd)
+		}
 	}
 
 	// FETCH request

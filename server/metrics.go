@@ -11,10 +11,10 @@ var (
 		Name:      "requests_code_total",
 		Help:      "The total number of processed requests",
 	}, []string{"protocol", "code"})
-	_metricRequestUnexpectedClosed = prometheus.NewCounterVec(prometheus.CounterOpts{
+	_metricRequestUnexpectedClosedTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Namespace: "tr",
 		Subsystem: "tavern",
-		Name:      "requests_unexpected_closed",
+		Name:      "requests_unexpected_closed_total",
 		Help:      "The total number of unexpected closed requests",
 	}, []string{"protocol", "method"})
 	_metricDiskUsage = prometheus.NewGaugeVec(prometheus.GaugeOpts{
@@ -34,7 +34,7 @@ var (
 func init() {
 	// register metrics
 	prometheus.MustRegister(_metricRequestsTotal)
-	prometheus.MustRegister(_metricRequestUnexpectedClosed)
+	prometheus.MustRegister(_metricRequestUnexpectedClosedTotal)
 	prometheus.MustRegister(_metricDiskUsage)
 	prometheus.MustRegister(_metricDiskIO)
 
@@ -45,6 +45,6 @@ func init() {
 	_metricRequestsTotal.WithLabelValues("HTTP/1.1", "404")
 	_metricRequestsTotal.WithLabelValues("HTTP/1.1", "500")
 
-	_metricRequestUnexpectedClosed.WithLabelValues("HTTP/1.1", "GET")
-	_metricRequestUnexpectedClosed.WithLabelValues("HTTP/1.1", "HEAD")
+	_metricRequestUnexpectedClosedTotal.WithLabelValues("HTTP/1.1", "GET")
+	_metricRequestUnexpectedClosedTotal.WithLabelValues("HTTP/1.1", "HEAD")
 }
