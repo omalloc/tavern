@@ -59,6 +59,19 @@ func (k *Key) VaryData(h http.Header) string {
 	return buf.String()
 }
 
+func (k Key) Compare(k2 Key) bool {
+	if len(k) != len(k2) {
+		return false
+	}
+
+	for i, vk1 := range k {
+		if vk1 != k2[i] {
+			return false
+		}
+	}
+	return true
+}
+
 func Clean(values ...string) Key {
 	keys := make([]string, 0)
 

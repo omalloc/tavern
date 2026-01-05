@@ -262,7 +262,7 @@ func (s *HTTPServer) buildHandler(tripper http.RoundTripper) http.HandlerFunc {
 			if err != nil && !errors.Is(err, io.EOF) {
 				// abort ? continue ?
 				clog.Errorf("failed to copy response body to client: [%s] %s %s sent=%d want=%s err=%s", req.Proto, req.Method, req.URL.Path, sent, want, err)
-				_metricRequestUnexpectedClosed.WithLabelValues(req.Proto, req.Method).Inc()
+				_metricRequestUnexpectedClosedTotal.WithLabelValues(req.Proto, req.Method).Inc()
 				return
 			}
 

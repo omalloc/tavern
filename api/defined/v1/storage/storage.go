@@ -60,6 +60,8 @@ type Bucket interface {
 	Allow() int
 	// UseAllow returns whether to use the allow percent.
 	UseAllow() bool
+	// Objects returns whether to all cached objects len.
+	Objects() uint64
 	// HasBad returns whether the Bucket is in bad state.
 	HasBad() bool
 	// Type returns the Bucket type, empty memory native

@@ -13,7 +13,9 @@ func CacheControl(next http.Handler) http.HandlerFunc {
 
 		log.Printf("cache-control set %#+v", cc)
 
-		w.Header().Set("Cache-Control", r.Header.Get("Cache-Control"))
+		if cc.Cacheable() {
+			w.Header().Set("Cache-Control", r.Header.Get("Cache-Control"))
+		}
 
 		next.ServeHTTP(w, r)
 	}

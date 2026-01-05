@@ -78,11 +78,13 @@ func (r *ReverseProxy) Do(req *http.Request, collapsed bool, waitTimeout time.Du
 
 	client := r.find(current.Address())
 	if !collapsed {
-		return r.uncompress(client.Do(req))
+		return client.Do(req)
+		//return r.uncompress(client.Do(req))
 	}
 
 	ret := <-r.flight.DoChan(onceKey(req), waitTimeout, func() (*http.Response, error) {
-		return r.uncompress(client.Do(req))
+		//return r.uncompress(client.Do(req))
+		return client.Do(req)
 	})
 
 	if ret.Err != nil {
