@@ -100,6 +100,7 @@ func (d *diskBucket) evict() {
 }
 
 func (d *diskBucket) loadLRU() {
+
 	load := func(async bool) {
 		mdCount, chunkCount := 0, 0
 		counter := ratecounter.NewRateCounter(1 * time.Second)
@@ -126,10 +127,18 @@ func (d *diskBucket) loadLRU() {
 		_ = d.indexdb.Iterate(context.Background(), nil, func(key []byte, meta *object.Metadata) bool {
 			if meta != nil {
 				mdCount++
-				chunkCount += int(meta.Chunks.Count())
+				chunkCount += meta.Chunks.Count()
 				d.cache.Set(meta.ID.Hash(), storage.NewMark(meta.LastRefUnix, uint64(meta.Refs)))
-				u, _ := url.Parse(meta.ID.Path())
-				_, _ = d.sharedkv.Incr(context.Background(), []byte(fmt.Sprintf("if/domain/%s", u.Host)), 1)
+
+				// store service domains
+				// TODO: add Debounce incr
+				if u, err1 := url.Parse(meta.ID.Path()); err1 == nil {
+					_, _ = d.sharedkv.Incr(context.Background(), []byte(fmt.Sprintf("if/domain/%s", u.Host)), 1)
+				}
+
+				// backfill inverted index for directory purge
+				_ = d.sharedkv.Set(context.Background(), []byte(fmt.Sprintf("ix/%s/%s", d.ID(), meta.ID.Key())), meta.ID.Bytes())
+
 				counter.Incr(1)
 				blockCounter.Incr(int64(meta.Chunks.Count()))
 			}
@@ -161,13 +170,13 @@ func (d *diskBucket) DiscardWithHash(ctx context.Context, hash object.IDHash) er
 	id := hash[:]
 	wpath := hash.WPath(d.path)
 
-	if log.Enabled(log.LevelDebug) {
-		log.Debugf("discard %s", wpath)
-	}
-
 	md, err := d.indexdb.Get(ctx, id)
 	if err != nil {
 		return err
+	}
+
+	if log.Enabled(log.LevelDebug) {
+		log.Debugf("discard url=%s hash=%s ", md.ID.Key(), wpath)
 	}
 
 	return d.discard(ctx, md)
@@ -218,8 +227,12 @@ func (d *diskBucket) discard(ctx context.Context, md *object.Metadata) error {
 		}
 	})
 
-	u, _ := url.Parse(md.ID.Path())
-	_, _ = d.sharedkv.Decr(ctx, []byte(fmt.Sprintf("if/domain/%s", u.Host)), 1)
+	// 删除目录倒排索引
+	_ = d.sharedkv.Delete(ctx, []byte(fmt.Sprintf("ix/%s/%s", d.ID(), md.ID.Key())))
+
+	if u, err1 := url.Parse(md.ID.Path()); err1 == nil {
+		_, _ = d.sharedkv.Decr(ctx, []byte(fmt.Sprintf("if/domain/%s", u.Host)), 1)
+	}
 
 	return nil
 }
@@ -274,7 +287,23 @@ func (d *diskBucket) Store(ctx context.Context, meta *object.Metadata) error {
 		d.cache.Set(meta.ID.Hash(), storage.NewMark(meta.LastRefUnix, uint64(meta.Refs)))
 	}
 
-	return d.indexdb.Set(ctx, meta.ID.Bytes(), meta)
+	if err := d.indexdb.Set(ctx, meta.ID.Bytes(), meta); err != nil {
+		return err
+	}
+
+	// 写入域名 counter
+	if u, err1 := url.Parse(meta.ID.Path()); err1 == nil {
+		if _, err1 = d.sharedkv.Incr(context.Background(), []byte(fmt.Sprintf("if/domain/%s", u.Host)), 1); err1 != nil {
+			log.Warnf("save kvstore domain %s failed", u.Host)
+		}
+
+	}
+	// 写入目录倒排索引
+	if err := d.sharedkv.Set(ctx, []byte(fmt.Sprintf("ix/%s/%s", d.ID(), meta.ID.Key())), meta.ID.Bytes()); err != nil {
+		// ignore sharedkv error to not affect main storage
+		_ = err
+	}
+	return nil
 }
 
 // HasBad implements storage.Bucket.

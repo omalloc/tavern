@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"flag"
 	stdlog "log"
 	"net/url"
@@ -151,6 +152,9 @@ func newApp(bc *conf.Bootstrap, logger log.Logger) (*kratos.App, error) {
 		kratos.StopTimeout(stopTimeout),
 		kratos.Logger(logger),
 		kratos.Server(servers...),
+		kratos.BeforeStop(func(_ context.Context) error {
+			return storage.Close()
+		}),
 	), nil
 }
 

@@ -59,6 +59,7 @@ func (p *PebbleDB) Iterate(ctx context.Context, prefix []byte, f storage.Iterate
 	if err != nil {
 		return err
 	}
+	defer iter.Close()
 
 	if p.skipErrRecord {
 		for iter.First(); iter.Valid(); iter.Next() {

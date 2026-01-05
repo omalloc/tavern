@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -39,7 +40,7 @@ func New(config *conf.Storage, logger log.Logger) (storage.Storage, error) {
 		log:    log.NewHelper(logger),
 
 		selector:     selector.New([]storage.Bucket{}, config.SelectionPolicy),
-		sharedkv:     sharedkv.NewEmpty(),
+		sharedkv:     sharedkv.NewMemSharedKV(),
 		nopBucket:    nopBucket,
 		memoryBucket: make([]storage.Bucket, 0, len(config.Buckets)),
 		hotBucket:    make([]storage.Bucket, 0, len(config.Buckets)),
@@ -113,6 +114,68 @@ func (n *nativeStorage) Buckets() []storage.Bucket {
 
 // PURGE implements storage.Storage.
 func (n *nativeStorage) PURGE(storeUrl string, typ storage.PurgeControl) error {
+	// Directory prefix purge
+	if typ.Dir {
+		// For directory purge, we prefer SharedKV inverted index when available:
+		// key schema: ix/<bucketID>/<storeUrl>
+		// value: object.IDHash bytes
+		ctx := context.Background()
+		processed := 0
+
+		for _, b := range n.Buckets() {
+			prefix := fmt.Sprintf("ix/%s/%s", b.ID(), storeUrl)
+			_ = n.sharedkv.IteratePrefix(ctx, []byte(prefix), func(key, val []byte) error {
+				// parse hash
+				var h object.IDHash
+				if len(val) >= object.IdHashSize {
+					copy(h[:], val[:object.IdHashSize])
+				} else {
+					// skip invalid record
+					return nil
+				}
+
+				if typ.Hard || !typ.MarkExpired {
+					if err := b.DiscardWithHash(ctx, h); err == nil {
+						processed++
+					}
+				} else {
+					// For mark-expired on dir, skip sharedkv hits and fallback to full scan below.
+				}
+
+				// remove index mapping
+				_ = n.sharedkv.Delete(ctx, key)
+				return nil
+			})
+		}
+
+		// fallback: scan indexdb if no sharedkv hits, or to ensure completeness
+		if processed == 0 {
+			for _, b := range n.Buckets() {
+				_ = b.Iterate(ctx, func(md *object.Metadata) error {
+					if md == nil {
+						return nil
+					}
+					if strings.HasPrefix(md.ID.Path(), storeUrl) {
+						if typ.Hard || !typ.MarkExpired {
+							_ = b.DiscardWithMetadata(ctx, md)
+						} else {
+							md.ExpiresAt = time.Now().Add(-1).Unix()
+							_ = b.Store(ctx, md)
+						}
+						processed++
+					}
+					return nil
+				})
+			}
+		}
+
+		if processed == 0 {
+			return storage.ErrKeyNotFound
+		}
+		return nil
+	}
+
+	// Single object purge
 	cacheKey := object.NewID(storeUrl)
 
 	bucket := n.Select(context.Background(), cacheKey)
@@ -138,6 +201,10 @@ func (n *nativeStorage) PURGE(storeUrl string, typ storage.PurgeControl) error {
 	return bucket.Store(context.Background(), md)
 }
 
+func (n *nativeStorage) SharedKV() storage.SharedKV {
+	return n.sharedkv
+}
+
 // Close implements storage.Storage.
 func (n *nativeStorage) Close() error {
 	var errs []error
@@ -152,6 +219,11 @@ func (n *nativeStorage) Close() error {
 
 	for _, bucket := range n.memoryBucket {
 		errs = append(errs, bucket.Close())
+	}
+
+	// memdb close
+	if err := n.sharedkv.Close(); err != nil {
+		errs = append(errs, err)
 	}
 
 	if len(errs) > 0 {

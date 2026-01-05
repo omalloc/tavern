@@ -2,9 +2,11 @@ package purge
 
 import (
 	"context"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 
@@ -81,14 +83,56 @@ func (r *PurgePlugin) HandleFunc(next http.HandlerFunc) http.HandlerFunc {
 		}
 		r.log.Debugf("purge request %s received: %s", ipPort[0], storeUrl)
 
+		u, err1 := url.Parse(storeUrl)
+		if err1 != nil {
+			r.log.Errorf("failed to parse storeUrl %s: %s", storeUrl, err1)
+			return
+		}
+
+		current := storage.Current()
+
+		if log.Enabled(log.LevelDebug) {
+			_ = current.SharedKV().IteratePrefix(context.Background(), []byte("if/domain"), func(key, val []byte) error {
+				r.log.Debugf("kvstore domina=%s, cache-counter=%d", string(key), binary.BigEndian.Uint32(val))
+				return nil
+			})
+		}
+
 		// purge dir
 		if typ := req.Header.Get(r.opt.HeaderName); strings.ToLower(typ) == "dir" {
-			// TODO: add DIR purge task.
+			// check if/domain exist
+			if _, err := current.SharedKV().Get(context.Background(),
+				[]byte(fmt.Sprintf("if/domain/%s", u.Host))); err != nil && errors.Is(err, storagev1.ErrKeyNotFound) {
+				r.log.Infof("purge dir %s but is not caching in the service", storeUrl)
+				return
+			}
+
+			if err := current.PURGE(storeUrl, storagev1.PurgeControl{
+				Hard: true,
+				Dir:  true,
+			}); err != nil {
+				if errors.Is(err, storagev1.ErrKeyNotFound) {
+					w.Header().Set("Content-Length", "0")
+					w.Header().Set("Content-Type", "application/json; charset=utf-8")
+					w.WriteHeader(http.StatusNotFound)
+					return
+				}
+
+				r.log.Errorf("purge dir %s failed: %v", storeUrl, err)
+				w.WriteHeader(http.StatusInternalServerError)
+				return
+			}
+
+			payload := []byte(`{"message":"success"}`)
+			w.Header().Set("Content-Length", strconv.Itoa(len(payload)))
+			w.Header().Set("Content-Type", "application/json; charset=utf-8")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write(payload)
 			return
 		}
 
 		// purge single file.
-		if err := storage.Current().PURGE(storeUrl, storagev1.PurgeControl{
+		if err := current.PURGE(storeUrl, storagev1.PurgeControl{
 			Hard: true,
 			Dir:  false,
 		}); err != nil {

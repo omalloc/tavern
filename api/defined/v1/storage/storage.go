@@ -45,6 +45,8 @@ type Storage interface {
 
 	Buckets() []Bucket
 
+	SharedKV() SharedKV
+
 	PURGE(storeUrl string, typ PurgeControl) error
 }
 
