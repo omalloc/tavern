@@ -6,8 +6,12 @@ Tavern 是一个高性能的 HTTP 缓存代理服务器，旨在利用现代化�
 
 - **核心缓存能力**:
   - [x] 缓存预取 (Prefetch)
-  - [ ] 缓存推送 (URL/DIR Push)
-  - [ ] 模糊刷新 (Fuzzying fetch)
+  - [x] 缓存推送 (URL/DIR Push)
+    - [x] URL标记过期 (Mark Expired)
+    - [x] URL缓存文件删除 (CacheFile Delete)
+    - [ ] DIR标记过期 (DirPath Mark Expired)
+    - [x] DIR缓存文件删除 (DirPath Delete)
+  - [ ] 模糊刷新 (Fuzzing fetch)
   - [x] 自动刷新 (Auto Refresh)
   - [x] 缓存变更校验 (Cache Validation)
   - [ ] 热点迁移 (Hot Migration)

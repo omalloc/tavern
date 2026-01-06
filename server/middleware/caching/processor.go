@@ -1,7 +1,6 @@
 package caching
 
 import (
-	"context"
 	"fmt"
 	"io"
 	"net/http"
@@ -139,7 +138,7 @@ func (pc *ProcessorChain) postCacheProcessor(caching *Caching, _ *http.Request, 
 
 	if caching.cacheable {
 		if caching.rootmd != nil {
-			_ = caching.bucket.Store(context.Background(), caching.rootmd)
+			_ = caching.bucket.Store(caching.req.Context(), caching.rootmd)
 		}
 	}
 

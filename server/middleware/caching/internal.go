@@ -21,6 +21,7 @@ import (
 	"github.com/omalloc/tavern/api/defined/v1/storage/object"
 	"github.com/omalloc/tavern/contrib/log"
 	"github.com/omalloc/tavern/internal/constants"
+	"github.com/omalloc/tavern/metrics"
 	"github.com/omalloc/tavern/pkg/iobuf"
 	xhttp "github.com/omalloc/tavern/pkg/x/http"
 	"github.com/omalloc/tavern/proxy"
@@ -90,6 +91,9 @@ func (c *Caching) setXCache(resp *http.Response) {
 	}
 
 	resp.Header.Set(constants.ProtocolCacheStatusKey, strings.Join([]string{c.cacheStatus.String(), "from", c.opt.Hostname, "(tavern/4.0)"}, " "))
+
+	metric := metrics.FromContext(c.req.Context())
+	metric.CacheStatus = c.cacheStatus.String()
 
 	// debug header
 	if trace := c.req.Header.Get(constants.InternalTraceKey); trace != "" {
