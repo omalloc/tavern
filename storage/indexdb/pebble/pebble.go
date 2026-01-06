@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/cockroachdb/pebble/v2"
+	"github.com/cockroachdb/pebble/v2/vfs"
 
 	"github.com/omalloc/tavern/api/defined/v1/storage"
 	"github.com/omalloc/tavern/api/defined/v1/storage/object"
@@ -146,8 +147,15 @@ func New(path string, option storage.Option) (storage.IndexDB, error) {
 		pebbleOption.WalMinSyncInterval = 0
 	}
 
+	var FS = vfs.Default
+	if path == storage.TypeInMemory {
+		path = ""
+		FS = vfs.NewMem()
+	}
+
 	pdb, err := pebble.Open(path, &pebble.Options{
 		Logger:          log.NewHelper(log.NewFilter(log.GetLogger(), log.FilterLevel(log.LevelWarn))),
+		FS:              FS,
 		CacheSize:       int64(pebbleOption.CacheSize),
 		MemTableSize:    uint64(pebbleOption.MemTableSize),
 		BytesPerSync:    pebbleOption.BytesPerSync,

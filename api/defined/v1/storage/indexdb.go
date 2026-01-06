@@ -11,6 +11,11 @@ import (
 
 var ErrKeyNotFound = errors.New("key not found")
 
+const (
+	TypeInMemory = "inmemory"
+	TypeDisk     = "disk"
+)
+
 type IterateFunc func(key []byte, val *object.Metadata) bool
 
 // IndexDB represents the interface for metadata storage operations

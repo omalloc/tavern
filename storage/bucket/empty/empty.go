@@ -2,6 +2,7 @@ package empty
 
 import (
 	"context"
+	"io"
 
 	"github.com/omalloc/tavern/api/defined/v1/storage"
 	"github.com/omalloc/tavern/api/defined/v1/storage/object"
@@ -110,6 +111,11 @@ func (e *emptyBucket) Type() string {
 
 func (e *emptyBucket) Path() string {
 	return e.path
+}
+
+func (e *emptyBucket) WriteChunkFile(ctx context.Context, id *object.ID, index uint32) (io.WriteCloser, error) {
+	//TODO implement me
+	panic("implement me")
 }
 
 func New(c *conf.Bucket, _ storage.SharedKV) (storage.Bucket, error) {
