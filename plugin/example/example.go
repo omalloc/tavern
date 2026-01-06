@@ -2,8 +2,10 @@ package example
 
 import (
 	"context"
+	"encoding/binary"
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -119,6 +121,31 @@ func (e *ExamplePlugin) AddRouter(router *http.ServeMux) {
 		_, _ = w.Write(payload)
 	}))
 
+	// get this device's service domains
+	router.Handle("/plugin/store/service-domains", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		sharedKV := storage.Current().SharedKV()
+		// type map[domain]counter
+		domainMap := make(map[string]uint32)
+		_ = sharedKV.IteratePrefix(r.Context(), []byte("if/domain"), func(key, val []byte) error {
+			if len(key) > 10 {
+				domainMap[string(key[10:])] = binary.BigEndian.Uint32(val)
+			}
+			return nil
+		})
+
+		buf, err := json.Marshal(domainMap)
+		if err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Content-Length", strconv.Itoa(len(buf)))
+		w.WriteHeader(http.StatusOK)
+
+		_, _ = w.Write(buf)
+		return
+	}))
 }
 
 // Start implements plugin.Plugin.

@@ -15,6 +15,7 @@ import (
 
 	"dario.cat/mergo"
 	"github.com/cloudflare/tableflip"
+	"github.com/omalloc/tavern/storage"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 
@@ -145,6 +146,10 @@ func (s *HTTPServer) Stop(ctx context.Context) error {
 	// Call all middleware cleanup.
 	for _, cleanup := range s.cleanups {
 		cleanup()
+	}
+	// close storage.
+	if err := storage.Close(); err != nil {
+		errs = append(errs, err)
 	}
 
 	if len(errs) > 0 {

@@ -111,6 +111,7 @@ func (p *PebbleDB) Expired(ctx context.Context, f storage.IterateFunc) error {
 
 // Close implements storage.IndexDB.
 func (p *PebbleDB) Close() error {
+	log.Debug("pebble db close now.")
 	// force flush data to disk
 	_ = p.db.Flush()
 	return p.db.Close()

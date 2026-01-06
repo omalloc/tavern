@@ -153,7 +153,7 @@ func newApp(bc *conf.Bootstrap, logger log.Logger) (*kratos.App, error) {
 		kratos.Logger(logger),
 		kratos.Server(servers...),
 		kratos.BeforeStop(func(_ context.Context) error {
-			return storage.Close()
+			return nil
 		}),
 	), nil
 }
