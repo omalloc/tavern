@@ -2,9 +2,15 @@ package memory
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"io"
 	"io/fs"
+	"net/url"
+	"os"
 	"path/filepath"
+	"strings"
+	"time"
 
 	"github.com/cockroachdb/pebble/v2/vfs"
 	"github.com/omalloc/tavern/pkg/iobuf"
@@ -29,6 +35,7 @@ type memoryBucket struct {
 	sharedkv  storage.SharedKV
 	indexdb   storage.IndexDB
 	cache     *lru.Cache[object.IDHash, storage.Mark]
+	fileFlag  int
 	fileMode  fs.FileMode
 	maxSize   uint64
 	stop      chan struct{}
@@ -37,13 +44,14 @@ type memoryBucket struct {
 func New(config *conf.Bucket, sharedkv storage.SharedKV) (storage.Bucket, error) {
 	mb := &memoryBucket{
 		fs:        vfs.NewMem(),
-		path:      config.Path,
+		path:      "/",
 		dbPath:    storage.TypeInMemory,
 		driver:    config.Driver,
 		storeType: storage.TypeInMemory,
 		weight:    100, // default weight
 		sharedkv:  sharedkv,
 		cache:     lru.New[object.IDHash, storage.Mark](config.MaxObjectLimit), // in-memory object size
+		fileFlag:  os.O_RDONLY,
 		fileMode:  fs.FileMode(0o755),
 		maxSize:   1024 * 1024 * 100, // e.g. 100 MB
 		stop:      make(chan struct{}, 1),
@@ -71,22 +79,84 @@ func (m *memoryBucket) Close() error {
 
 // Discard implements [storage.Bucket].
 func (m *memoryBucket) Discard(ctx context.Context, id *object.ID) error {
-	panic("unimplemented")
+	md, err := m.indexdb.Get(ctx, id.Bytes())
+	if err != nil {
+		return err
+	}
+
+	return m.discard(ctx, md)
+}
+
+func (m *memoryBucket) discard(ctx context.Context, md *object.Metadata) error {
+	// 缓存不存在
+	if md == nil {
+		return os.ErrNotExist
+	}
+
+	clog := log.Context(ctx)
+
+	// 先删除 db 中的数据, 避免被其他协程 HIT
+	if err := m.indexdb.Delete(ctx, md.ID.Bytes()); err != nil {
+		clog.Warnf("failed to delete metadata %s: %v", md.ID.WPath(m.path), err)
+	}
+
+	// 如果缓存为1级，则清除全部子缓存(vary)
+	if md.IsVary() && len(md.VirtualKey) > 0 {
+		for _, varyKey := range md.VirtualKey {
+			oid := object.NewVirtualID(md.ID.Path(), varyKey)
+			if strings.EqualFold(oid.HashStr(), md.ID.HashStr()) {
+				clog.Warnf("discard %s but level1 id equal level2 id", md.ID.WPath(m.path))
+				continue
+			}
+			// discard leveled cache (vary,chunked)
+			_ = m.Discard(ctx, oid)
+		}
+	}
+
+	// 删除所有 slice 缓存文件
+	md.Chunks.Range(func(x uint32) {
+		wpath := md.ID.WPathSlice(m.path, x)
+		if err := os.Remove(wpath); err != nil && !errors.Is(err, os.ErrNotExist) {
+			log.Context(ctx).Errorf("failed to remove cached slice file %s: %v", wpath, err)
+		}
+	})
+
+	// 删除目录倒排索引
+	_ = m.sharedkv.Delete(ctx, []byte(fmt.Sprintf("ix/%s/%s", m.ID(), md.ID.Key())))
+
+	if u, err1 := url.Parse(md.ID.Path()); err1 == nil {
+		_, _ = m.sharedkv.Decr(ctx, []byte(fmt.Sprintf("if/domain/%s", u.Host)), 1)
+	}
+
+	return nil
 }
 
 // DiscardWithHash implements [storage.Bucket].
 func (m *memoryBucket) DiscardWithHash(ctx context.Context, hash object.IDHash) error {
-	panic("unimplemented")
+	id := hash[:]
+	wpath := hash.WPath(m.path)
+
+	md, err := m.indexdb.Get(ctx, id)
+	if err != nil {
+		return err
+	}
+
+	if log.Enabled(log.LevelDebug) {
+		log.Debugf("discard url=%s hash=%s ", md.ID.Key(), wpath)
+	}
+
+	return m.discard(ctx, md)
 }
 
 // DiscardWithMessage implements [storage.Bucket].
 func (m *memoryBucket) DiscardWithMessage(ctx context.Context, id *object.ID, msg string) error {
-	panic("unimplemented")
+	log.Context(ctx).Infof("discard %s [path=%s] with message %s", id, id.WPath(m.path), msg)
+	return m.Discard(ctx, id)
 }
 
 // DiscardWithMetadata implements [storage.Bucket].
 func (m *memoryBucket) DiscardWithMetadata(ctx context.Context, meta *object.Metadata) error {
-	panic("unimplemented")
+	return m.Discard(ctx, meta.ID)
 }
 
 // Exist implements [storage.Bucket].
@@ -115,12 +185,15 @@ func (m *memoryBucket) ID() string {
 
 // Iterate implements [storage.Bucket].
 func (m *memoryBucket) Iterate(ctx context.Context, fn func(*object.Metadata) error) error {
-	panic("unimplemented")
+	return m.indexdb.Iterate(ctx, nil, func(key []byte, val *object.Metadata) bool {
+		return fn(val) == nil
+	})
 }
 
 // Lookup implements [storage.Bucket].
 func (m *memoryBucket) Lookup(ctx context.Context, id *object.ID) (*object.Metadata, error) {
-	return nil, storage.ErrKeyNotFound
+	md, err := m.indexdb.Get(ctx, id.Bytes())
+	return md, err
 }
 
 // Path implements [storage.Bucket].
@@ -135,20 +208,64 @@ func (m *memoryBucket) Remove(ctx context.Context, id *object.ID) error {
 
 // Store implements [storage.Bucket].
 func (m *memoryBucket) Store(ctx context.Context, meta *object.Metadata) error {
+	if log.Enabled(log.LevelDebug) {
+		clog := log.Context(ctx)
+
+		now := time.Now()
+		defer func() {
+			cost := time.Since(now)
+
+			clog.Debugf("store metadata %s, cost %s", meta.ID.WPath(m.path), cost)
+		}()
+	}
+
+	meta.Headers.Del("X-Protocol")
+	meta.Headers.Del("X-Protocol-Cache")
+	meta.Headers.Del("X-Protocol-Request-Id")
+
+	if !m.cache.Has(meta.ID.Hash()) {
+		m.cache.Set(meta.ID.Hash(), storage.NewMark(meta.LastRefUnix, uint64(meta.Refs)))
+	}
+
+	if err := m.indexdb.Set(ctx, meta.ID.Bytes(), meta); err != nil {
+		return err
+	}
+
+	// 写入域名 counter
+	if u, err1 := url.Parse(meta.ID.Path()); err1 == nil {
+		if _, err1 = m.sharedkv.Incr(context.Background(), []byte(fmt.Sprintf("if/domain/%s", u.Host)), 1); err1 != nil {
+			log.Warnf("save kvstore domain %s failed", u.Host)
+		}
+	}
+	// 写入目录倒排索引
+	if err := m.sharedkv.Set(ctx, []byte(fmt.Sprintf("ix/%s/%s", m.ID(), meta.ID.Key())), meta.ID.Bytes()); err != nil {
+		// ignore sharedkv error to not affect main storage
+		_ = err
+	}
 
 	return nil
 }
 
-func (m *memoryBucket) WriteChunkFile(ctx context.Context, id *object.ID, index uint32) (io.WriteCloser, error) {
+func (m *memoryBucket) WriteChunkFile(ctx context.Context, id *object.ID, index uint32) (io.WriteCloser, string, error) {
 	wpath := id.WPathSlice(m.path, index)
 	_ = m.fs.MkdirAll(filepath.Dir(wpath), m.fileMode)
 
-	f, err := m.fs.OpenReadWrite(wpath, vfs.WriteCategoryUnspecified, vfs.RandomReadsOption)
+	log.Context(ctx).Infof("write inmemory chunk file %s", wpath)
+
+	f, err := m.fs.OpenReadWrite(wpath, vfs.WriteCategoryUnspecified)
 	if err != nil {
-		return nil, err
+		return nil, wpath, err
 	}
 
-	return iobuf.ChunkWriterCloser(f, _empty), nil
+	return iobuf.ChunkWriterCloser(f, _empty), wpath, nil
+}
+
+func (m *memoryBucket) ReadChunkFile(ctx context.Context, id *object.ID, index uint32) (storage.File, error) {
+	//wpath := id.WPathSlice(m.path, index)
+	// type vfs.File check failed.
+	// f, err := m.fs.Open(wpath)
+	//return f, err
+	return nil, os.ErrNotExist
 }
 
 // StoreType implements [storage.Bucket].

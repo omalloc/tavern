@@ -13,7 +13,8 @@ var ErrKeyNotFound = errors.New("key not found")
 
 const (
 	TypeInMemory = "inmemory"
-	TypeDisk     = "disk"
+	TypeNormal   = "normal"
+	TypeHot      = "hot"
 )
 
 type IterateFunc func(key []byte, val *object.Metadata) bool

@@ -57,6 +57,27 @@ func HandleAccessLog(opt *conf.ServerAccessLog, next http.HandlerFunc) http.Hand
 	}
 }
 
+func tickRotate(f *lumberjack.Logger) {
+	go func() {
+		// 初始计算到下一个整点的延迟
+		now := time.Now()
+		next := now.Truncate(time.Minute).Add(time.Minute)
+		timer := time.NewTimer(time.Until(next))
+		defer timer.Stop()
+
+		for {
+			select {
+			case <-timer.C:
+				_ = f.Rotate()
+				// 任务完成后，重新对齐到下一个整点，实现抗漂移
+				now = time.Now()
+				next = now.Truncate(time.Minute).Add(time.Minute)
+				timer.Reset(time.Until(next))
+			}
+		}
+	}()
+}
+
 func newAccessLog(path string) *zap.Logger {
 	// initialize log file path
 	_ = os.MkdirAll(filepath.Dir(path), 0o755)
@@ -64,11 +85,14 @@ func newAccessLog(path string) *zap.Logger {
 	f := &lumberjack.Logger{
 		Filename:   path,
 		MaxSize:    100,
-		MaxBackups: 3,
+		MaxBackups: 100,
 		MaxAge:     1,
 		LocalTime:  true,
 		Compress:   false,
 	}
+
+	// 按分钟 rotate
+	tickRotate(f)
 
 	cfg := zap.NewProductionConfig().EncoderConfig
 	cfg.ConsoleSeparator = " "

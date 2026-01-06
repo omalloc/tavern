@@ -7,6 +7,7 @@ import (
 	"github.com/omalloc/tavern/conf"
 	"github.com/omalloc/tavern/storage/bucket/disk"
 	"github.com/omalloc/tavern/storage/bucket/empty"
+	"github.com/omalloc/tavern/storage/bucket/memory"
 	_ "github.com/omalloc/tavern/storage/indexdb/pebble"
 )
 
@@ -21,7 +22,8 @@ type globalBucketOption struct {
 // implements storage.Bucket map.
 var bucketMap = map[string]func(opt *conf.Bucket, sharedkv storage.SharedKV) (storage.Bucket, error){
 	"empty":  empty.New,
-	"native": disk.New, // disk is an alias of native
+	"native": disk.New,   // disk is an alias of native
+	"memory": memory.New, // in-memory disk. restart as lost.
 }
 
 func NewBucket(opt *conf.Bucket, sharedkv storage.SharedKV) (storage.Bucket, error) {
