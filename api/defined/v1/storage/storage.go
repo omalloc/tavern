@@ -37,6 +37,8 @@ type Operation interface {
 	Iterate(ctx context.Context, fn func(*object.Metadata) error) error
 	// Expired if the object is expired callback.
 	Expired(ctx context.Context, id *object.ID, md *object.Metadata) bool
+	// WriteChunkFile open chunk file and returns io.WriteCloser
+	WriteChunkFile(ctx context.Context, id *object.ID, index uint32) (io.WriteCloser, error)
 }
 
 type Storage interface {

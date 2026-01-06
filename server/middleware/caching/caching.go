@@ -92,15 +92,15 @@ func Middleware(c *configv1.Middleware) (middleware.Middleware, func(), error) {
 		NewStateProcessor(),
 		// Cache Prefetch
 		NewPrefetchProcessor(),
-		// ETag/Last-Modified If-Match Validation
-		NewRevalidateProcessor(),
-		// ETag/Last-Modified/ContentLength Changed
-		NewFileChangedProcessor(),
 		// Vary
 		NewVaryProcessor(
 			WithVaryMaxLimit(opts.VaryLimit),
 			WithVaryIgnoreKeys(opts.VaryIgnoreKey...),
 		),
+		// ETag/Last-Modified If-Match Validation
+		NewRevalidateProcessor(),
+		// ETag/Last-Modified/ContentLength Changed
+		NewFileChangedProcessor(),
 		// Range fill
 		NewFillRangeProcessor(
 			WithFillRangePercent(int(opts.FillRangePercent)),
@@ -548,17 +548,13 @@ func (c *Caching) flushbufferSlice(respRange xhttp.ContentRange) (iobuf.EventSuc
 	}()
 
 	writerBuffer := func(buf []byte, index uint32, current uint64, eof bool) error {
-		wpath := c.id.WPathSlice(c.bucket.Path(), index)
-		_ = os.MkdirAll(filepath.Dir(wpath), 0o755)
-
-		tmpWPath := wpath + time.Now().Format("-tmp20060102150405")
-
-		c.log.Debugf("flushbuffer %s. isChunked=%t part=%d/%d", wpath, chunked, index, endPart)
-		f, err := os.OpenFile(tmpWPath, os.O_CREATE|os.O_RDWR, 0o755)
+		f, err := c.bucket.WriteChunkFile(context.Background(), c.id, index)
 		if err != nil {
-			return fmt.Errorf("writeBuffer open-file part[%d] failed err %w", index, err)
+			return err
 		}
 		defer f.Close()
+
+		c.log.Debugf("flushbuffer isChunked=%t fileChunk=%d/%d", chunked, index, endPart)
 
 		if chunked {
 			c.md.Size = current
@@ -574,10 +570,6 @@ func (c *Caching) flushbufferSlice(respRange xhttp.ContentRange) (iobuf.EventSuc
 
 		// save slice part
 		c.md.Chunks.Set(index)
-		// rename tmp file to final slice file
-		if err := os.Rename(tmpWPath, wpath); err != nil {
-			return fmt.Errorf("writeBuffer rename part[%d] failed err %w", index, err)
-		}
 
 		if eof {
 			if endPart == uint32(c.md.Chunks.Count()) {

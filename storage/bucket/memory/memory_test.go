@@ -1,39 +1,60 @@
-package memory
+package memory_test
 
 import (
-	"io"
-	"os"
-	"path/filepath"
+	"crypto/rand"
+	"runtime"
 	"testing"
 
-	"github.com/cockroachdb/pebble/v2/vfs"
+	"github.com/omalloc/tavern/api/defined/v1/storage"
+	"github.com/omalloc/tavern/api/defined/v1/storage/object"
+	"github.com/omalloc/tavern/conf"
+	"github.com/omalloc/tavern/storage/bucket/memory"
+	"github.com/omalloc/tavern/storage/sharedkv"
 	"github.com/stretchr/testify/assert"
+
+	// register indexdb
+	_ "github.com/omalloc/tavern/storage/indexdb/pebble"
 )
 
-func TestMemFs(t *testing.T) {
-	fs := vfs.NewMem()
-	err := fs.MkdirAll("/memory/f/2c/", 0o700)
+func TestMemoryBucket(t *testing.T) {
+	var m runtime.MemStats
+
+	bucket, err := memory.New(&conf.Bucket{
+		Path:   "inmemory",
+		DBType: storage.TypeInMemory,
+	}, sharedkv.NewMemSharedKV())
+
 	assert.NoError(t, err)
 
-	fp := filepath.Join("/memory/f/2c/aaaa")
+	runtime.ReadMemStats(&m)
+	t.Logf("Alloc = %v", m.Alloc)
+	t.Logf("TotalAlloc = %v", m.TotalAlloc)
+	t.Logf("Sys = %v", m.Sys)
+	t.Logf("NumGC = %v", m.NumGC)
 
-	file, err := fs.OpenReadWrite(fp, vfs.WriteCategoryUnspecified)
+	t.Logf("StoreType = %s", bucket.StoreType())
+
+	id := object.NewID("http://sendya.me.gslb.com/path/to/1.apk")
+	chunkFile, err := bucket.WriteChunkFile(t.Context(), id, 0)
+	if err != nil {
+		t.Fatal(err)
+		return
+	}
+
+	buf := make([]byte, 1<<20)
+	_, _ = rand.Read(buf)
+
+	n, err := chunkFile.Write(buf)
 	assert.NoError(t, err)
 
-	n, err := file.Write([]byte("hello, world"))
-	assert.NoError(t, err)
-	assert.Equal(t, n, 12)
+	assert.Equal(t, n, len(buf))
+	_ = chunkFile.Close()
 
-	assert.NoError(t, file.Close())
+	runtime.ReadMemStats(&m)
 
-	readFs, err := fs.Open(fp)
-	assert.NoError(t, err)
+	t.Logf("Alloc = %v", m.Alloc)
+	t.Logf("TotalAlloc = %v", m.TotalAlloc)
+	t.Logf("Sys = %v", m.Sys)
+	t.Logf("NumGC = %v", m.NumGC)
 
-	written, err := io.Copy(os.Stdout, readFs)
-	assert.NoError(t, err)
-	assert.Equal(t, written, int64(12))
-	assert.NoError(t, readFs.Close())
-
-	t.Log()
-	t.Log(fs.String())
 }

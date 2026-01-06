@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"net/url"
 	"os"
@@ -14,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/omalloc/tavern/pkg/iobuf"
 	"github.com/paulbellamy/ratecounter"
 
 	"github.com/omalloc/tavern/api/defined/v1/storage"
@@ -349,6 +351,21 @@ func (d *diskBucket) Objects() uint64 {
 
 func (d *diskBucket) Path() string {
 	return d.path
+}
+
+func (d *diskBucket) WriteChunkFile(ctx context.Context, id *object.ID, index uint32) (io.WriteCloser, error) {
+	wpath := id.WPathSlice(d.path, index)
+	_ = os.MkdirAll(filepath.Dir(wpath), d.fileMode)
+
+	tmpPath := wpath + time.Now().Format(".tmp20060102150405")
+	f, err := os.OpenFile(tmpPath, os.O_CREATE|os.O_RDWR, 0o755)
+	if err != nil {
+		return nil, fmt.Errorf("bucket open-file chunk[%d] failed err %w", index, err)
+	}
+
+	return iobuf.ChunkWriterCloser(f, func() error {
+		return os.Rename(tmpPath, wpath)
+	}), nil
 }
 
 // Close implements storage.Bucket.
