@@ -5,7 +5,7 @@ import (
 )
 
 type chunkWriter struct {
-	w      io.WriteCloser
+	w      io.ReadWriteCloser
 	closer func() error
 }
 
@@ -22,7 +22,7 @@ func (cw *chunkWriter) Write(p []byte) (n int, err error) {
 	return cw.w.Write(p)
 }
 
-func ChunkWriterCloser(file io.WriteCloser, closer func() error) io.WriteCloser {
+func ChunkWriterCloser(file io.ReadWriteCloser, closer func() error) io.WriteCloser {
 	return &chunkWriter{
 		w:      file,
 		closer: closer,

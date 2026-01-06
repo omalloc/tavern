@@ -27,7 +27,7 @@ type nativeStorage struct {
 	selector     storage.Selector
 	sharedkv     storage.SharedKV
 	nopBucket    storage.Bucket
-	memoryBucket []storage.Bucket
+	memoryBucket storage.Bucket
 	hotBucket    []storage.Bucket
 	normalBucket []storage.Bucket
 }
@@ -42,7 +42,7 @@ func New(config *conf.Storage, logger log.Logger) (storage.Storage, error) {
 		selector:     selector.New([]storage.Bucket{}, config.SelectionPolicy),
 		sharedkv:     sharedkv.NewMemSharedKV(),
 		nopBucket:    nopBucket,
-		memoryBucket: make([]storage.Bucket, 0, len(config.Buckets)),
+		memoryBucket: nil,
 		hotBucket:    make([]storage.Bucket, 0, len(config.Buckets)),
 		normalBucket: make([]storage.Bucket, 0, len(config.Buckets)),
 	}
@@ -77,12 +77,16 @@ func (n *nativeStorage) reinit(config *conf.Storage) error {
 		}
 
 		switch bucket.StoreType() {
-		case "normal":
+		case storage.TypeNormal:
 			n.normalBucket = append(n.normalBucket, bucket)
-		case "hot":
+		case storage.TypeHot:
 			n.hotBucket = append(n.hotBucket, bucket)
-		case "fastmemory":
-			n.memoryBucket = append(n.memoryBucket, bucket)
+		case storage.TypeInMemory:
+			if n.memoryBucket != nil {
+				return fmt.Errorf("only one inmemory bucket is allowed")
+			}
+
+			n.memoryBucket = bucket
 		}
 	}
 
@@ -90,6 +94,13 @@ func (n *nativeStorage) reinit(config *conf.Storage) error {
 	// load indexdb
 	// load lru
 	// load purge queue
+
+	if len(n.normalBucket) <= 0 {
+		// no normal bucket, use nop bucket
+		if n.memoryBucket != nil {
+			n.normalBucket = append(n.normalBucket, n.memoryBucket)
+		}
+	}
 
 	n.selector = selector.New(n.normalBucket, config.SelectionPolicy)
 
@@ -217,8 +228,8 @@ func (n *nativeStorage) Close() error {
 		errs = append(errs, bucket.Close())
 	}
 
-	for _, bucket := range n.memoryBucket {
-		errs = append(errs, bucket.Close())
+	if err := n.memoryBucket.Close(); err != nil {
+		errs = append(errs, err)
 	}
 
 	// memdb close

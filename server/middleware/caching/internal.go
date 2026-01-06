@@ -132,7 +132,7 @@ func getContents(c *Caching, reqChunks []uint32, from uint32) (reader io.ReadClo
 	}
 
 	// find the first existing chunk
-	f, err1 := getSliceChunkFile(c, idx)
+	f, err1 := c.bucket.ReadChunkFile(c.req.Context(), c.id, idx)
 	if err1 != nil {
 		return nil, 0, err1
 	}

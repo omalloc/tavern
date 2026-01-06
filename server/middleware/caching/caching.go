@@ -10,7 +10,6 @@ import (
 	"net/http/httputil"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strconv"
 	"time"
 
@@ -27,6 +26,7 @@ import (
 	xhttp "github.com/omalloc/tavern/pkg/x/http"
 	"github.com/omalloc/tavern/proxy"
 	"github.com/omalloc/tavern/server/middleware"
+	storagev1 "github.com/omalloc/tavern/storage"
 )
 
 const BYPASS = "BYPASS"
@@ -35,8 +35,6 @@ var keyMap = map[string]struct{}{
 	"Content-Range":  {},
 	"Content-Length": {},
 }
-
-var fileMode = os.O_RDONLY
 
 type Duration string
 
@@ -64,10 +62,6 @@ type cachingOption struct {
 
 func init() {
 	middleware.Register("caching", Middleware)
-
-	if runtime.GOOS == "linux" {
-		fileMode |= 0o1000000 // O_NOATIME
-	}
 }
 
 // Middleware initializes a middleware component based on the provided configuration and returns the middleware logic.
@@ -116,10 +110,11 @@ func Middleware(c *configv1.Middleware) (middleware.Middleware, func(), error) {
 	return func(origin http.RoundTripper) http.RoundTripper {
 
 		proxyClient := proxy.GetProxy()
+		store := storagev1.Current()
 
 		return middleware.RoundTripperFunc(func(req *http.Request) (resp *http.Response, err error) {
 			// find indexdb cache-key has hit/miss.
-			caching, err := processor.preCacheProcessor(proxyClient, opts, req)
+			caching, err := processor.preCacheProcessor(proxyClient, store, opts, req)
 
 			// TODO: object pool
 			// 	reuse (wrapper Body.Close() call object reset and put Pool.)
@@ -548,32 +543,32 @@ func (c *Caching) flushbufferSlice(respRange xhttp.ContentRange) (iobuf.EventSuc
 	}()
 
 	writerBuffer := func(buf []byte, index uint32, current uint64, eof bool) error {
-		f, err := c.bucket.WriteChunkFile(context.Background(), c.id, index)
+		f, wpath, err := c.bucket.WriteChunkFile(context.Background(), c.id, index)
 		if err != nil {
 			return err
 		}
 		defer f.Close()
 
-		c.log.Debugf("flushbuffer isChunked=%t fileChunk=%d/%d", chunked, index, endPart)
+		c.log.Debugf("flushBuffer wpath=%s isChunked=%t fileChunk=%d/%d", wpath, chunked, index+1, endPart)
 
 		if chunked {
 			c.md.Size = current
 			c.md.Headers.Set("Content-Length", fmt.Sprintf("%d", current))
 		} else if uint64(len(buf)) != c.md.BlockSize && current != respRange.ObjSize {
-			c.log.Debugf("writeBuffer part[%d] is not complete, want end-part [%d] ", index+1, endPart)
+			c.log.Debugf("writeBuffer chunk[%d] is not complete, want end chunk [%d] ", index+1, endPart)
 			return nil
 		}
 
 		if nn, err1 := f.Write(buf); err1 != nil || nn != len(buf) {
-			return fmt.Errorf("writeBuffer part[%d] failed err %w", index, err)
+			return fmt.Errorf("writeBuffer wpath[%s] chunk[%d] failed nn[%d] want[%d] err %v", wpath, index+1, nn, len(buf), err)
 		}
 
-		// save slice part
+		// save slice chunk
 		c.md.Chunks.Set(index)
 
 		if eof {
 			if endPart == uint32(c.md.Chunks.Count()) {
-				c.log.Debugf("file all part complete at %s", time.Now().Format(time.DateTime))
+				c.log.Debugf("file all chunk complete at %s", time.Now().Format(time.DateTime))
 
 				// trigger file crc check
 				c.opt.publish(context.Background(), &cacheCompleted{
@@ -588,14 +583,14 @@ func (c *Caching) flushbufferSlice(respRange xhttp.ContentRange) (iobuf.EventSuc
 				})
 			}
 		}
-
-		//c.log.Debugf("flushBuffer %s, curPart: %d endPart: %d, offset %d, write bufsize %d", wpath, bitIdx, endPart, offset, n)
 		return nil
 	}
 
 	return writerBuffer, func(eof bool) {
+		c.log.Infof("flushBuffer end; store metadata ing..")
 		_ = c.bucket.Store(c.req.Context(), c.md)
 	}
+
 }
 
 // flushFailed flush cache file to bucket failed callback

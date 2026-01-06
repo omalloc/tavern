@@ -12,6 +12,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 
@@ -38,6 +39,7 @@ type diskBucket struct {
 	sharedkv  storage.SharedKV
 	indexdb   storage.IndexDB
 	cache     *lru.Cache[object.IDHash, storage.Mark]
+	fileFlag  int
 	fileMode  fs.FileMode
 	stop      chan struct{}
 }
@@ -54,8 +56,14 @@ func New(config *conf.Bucket, sharedkv storage.SharedKV) (storage.Bucket, error)
 		weight:    100, // default weight
 		sharedkv:  sharedkv,
 		cache:     lru.New[object.IDHash, storage.Mark](config.MaxObjectLimit),
+		fileFlag:  os.O_RDONLY,
 		fileMode:  fs.FileMode(0o755),
 		stop:      make(chan struct{}, 1),
+	}
+
+	// hard code of check os.
+	if runtime.GOOS == "linux" {
+		bucket.fileFlag |= 0o1000000 // O_NOATIME
 	}
 
 	bucket.initWorkdir()
@@ -353,19 +361,25 @@ func (d *diskBucket) Path() string {
 	return d.path
 }
 
-func (d *diskBucket) WriteChunkFile(ctx context.Context, id *object.ID, index uint32) (io.WriteCloser, error) {
+func (d *diskBucket) WriteChunkFile(ctx context.Context, id *object.ID, index uint32) (io.WriteCloser, string, error) {
 	wpath := id.WPathSlice(d.path, index)
 	_ = os.MkdirAll(filepath.Dir(wpath), d.fileMode)
 
 	tmpPath := wpath + time.Now().Format(".tmp20060102150405")
 	f, err := os.OpenFile(tmpPath, os.O_CREATE|os.O_RDWR, 0o755)
 	if err != nil {
-		return nil, fmt.Errorf("bucket open-file chunk[%d] failed err %w", index, err)
+		return nil, wpath, fmt.Errorf("bucket open-file chunk[%d] failed err %w", index, err)
 	}
 
 	return iobuf.ChunkWriterCloser(f, func() error {
 		return os.Rename(tmpPath, wpath)
-	}), nil
+	}), wpath, nil
+}
+
+func (d *diskBucket) ReadChunkFile(ctx context.Context, id *object.ID, index uint32) (storage.File, error) {
+	wpath := id.WPathSlice(d.path, index)
+	f, err := os.OpenFile(wpath, d.fileFlag, d.fileMode)
+	return f, err
 }
 
 // Close implements storage.Bucket.

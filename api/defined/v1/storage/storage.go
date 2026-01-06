@@ -38,7 +38,9 @@ type Operation interface {
 	// Expired if the object is expired callback.
 	Expired(ctx context.Context, id *object.ID, md *object.Metadata) bool
 	// WriteChunkFile open chunk file and returns io.WriteCloser
-	WriteChunkFile(ctx context.Context, id *object.ID, index uint32) (io.WriteCloser, error)
+	WriteChunkFile(ctx context.Context, id *object.ID, index uint32) (io.WriteCloser, string, error)
+	// ReadChunkFile open chunk file and returns io.ReadCloser
+	ReadChunkFile(ctx context.Context, id *object.ID, index uint32) (File, error)
 }
 
 type Storage interface {

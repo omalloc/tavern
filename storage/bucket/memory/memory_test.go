@@ -35,11 +35,13 @@ func TestMemoryBucket(t *testing.T) {
 	t.Logf("StoreType = %s", bucket.StoreType())
 
 	id := object.NewID("http://sendya.me.gslb.com/path/to/1.apk")
-	chunkFile, err := bucket.WriteChunkFile(t.Context(), id, 0)
+	chunkFile, wpath, err := bucket.WriteChunkFile(t.Context(), id, 0)
 	if err != nil {
 		t.Fatal(err)
 		return
 	}
+
+	t.Logf("wpath = %s", wpath)
 
 	buf := make([]byte, 1<<20)
 	_, _ = rand.Read(buf)

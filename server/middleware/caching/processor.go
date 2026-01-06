@@ -10,10 +10,9 @@ import (
 	"strings"
 	"time"
 
-	storagev1 "github.com/omalloc/tavern/api/defined/v1/storage"
+	"github.com/omalloc/tavern/api/defined/v1/storage"
 	"github.com/omalloc/tavern/contrib/log"
 	"github.com/omalloc/tavern/proxy"
-	"github.com/omalloc/tavern/storage"
 )
 
 // Processor defines the interface for caching processor middleware.
@@ -82,7 +81,7 @@ func (pc *ProcessorChain) PostRequest(caching *Caching, req *http.Request, resp 
 	return resp, nil
 }
 
-func (pc *ProcessorChain) preCacheProcessor(proxyClient proxy.Proxy, opt *cachingOption, req *http.Request) (*Caching, error) {
+func (pc *ProcessorChain) preCacheProcessor(proxyClient proxy.Proxy, store storage.Storage, opt *cachingOption, req *http.Request) (*Caching, error) {
 	objectID, err := newObjectIDFromRequest(req, "", opt.IncludeQueryInCacheKey)
 	if err != nil {
 		return nil, fmt.Errorf("failed new object-objectID from request err: %w", err)
@@ -90,7 +89,7 @@ func (pc *ProcessorChain) preCacheProcessor(proxyClient proxy.Proxy, opt *cachin
 
 	// Select storage bucket by object ID
 	// hashring or diskhash
-	bucket := storage.Select(req.Context(), objectID)
+	bucket := store.Select(req.Context(), objectID)
 	// lookup cache with cache-key
 	md, _ := bucket.Lookup(req.Context(), objectID)
 
@@ -115,7 +114,7 @@ func (pc *ProcessorChain) preCacheProcessor(proxyClient proxy.Proxy, opt *cachin
 		req:         req,
 		md:          md,
 		processor:   pc,
-		cacheStatus: storagev1.CacheMiss,
+		cacheStatus: storage.CacheMiss,
 	}
 
 	hit, err := pc.Lookup(caching, req)
