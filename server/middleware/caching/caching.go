@@ -235,7 +235,7 @@ func (c *Caching) lazilyRespond(req *http.Request, start, end int64) (*http.Resp
 		i += count
 	}
 
-	in := iobuf.PartsReader(iobuf.AllCloser(readers), readers...)
+	in := iobuf.PartsReadCloser(iobuf.AllCloser(readers), readers...)
 
 	resp := buildNoBodyResponed(c, hasRangeRequest, start, end)
 	resp.Body = in

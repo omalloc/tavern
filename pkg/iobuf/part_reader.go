@@ -15,8 +15,8 @@ type partsReader struct {
 	index  int
 }
 
-// PartsReader combines multiple io.ReadCloser instances into a single io.ReadCloser, with optional final cleanup logic.
-func PartsReader(closer io.Closer, readers ...io.ReadCloser) io.ReadCloser {
+// PartsReadCloser combines multiple io.ReadCloser instances into a single io.ReadCloser, with optional final cleanup logic.
+func PartsReadCloser(closer io.Closer, readers ...io.ReadCloser) io.ReadCloser {
 	// if no more reader
 	if len(readers) <= 0 {
 		return nil
@@ -39,7 +39,8 @@ func (r *partsReader) Read(p []byte) (n int, err error) {
 		if err != io.EOF {
 			return size, err
 		}
-		// 分片响应异常时, 应立即停止响应后续分片, 否则客户端会获取到错乱的文件内容
+		// If a part response fails, next part responses should be stopped immediately;
+		// otherwise, the client will receive bad file content.
 		if closeErr := r.R[r.index].Close(); closeErr != nil {
 			return size, closeErr
 		}
@@ -97,7 +98,9 @@ func (r *partsReader) Close() error {
 	}
 
 	if r.closer != nil {
-		errs = append(errs, r.closer.Close())
+		if err := r.closer.Close(); err != nil {
+			errs = append(errs)
+		}
 	}
 
 	if len(errs) <= 0 {

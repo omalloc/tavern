@@ -118,8 +118,8 @@ func (e *emptyBucket) WriteChunkFile(ctx context.Context, id *object.ID, index u
 	return nil, "/dev/null", os.ErrNotExist
 }
 
-func (e *emptyBucket) ReadChunkFile(ctx context.Context, id *object.ID, index uint32) (storage.File, error) {
-	return nil, nil
+func (e *emptyBucket) ReadChunkFile(ctx context.Context, id *object.ID, index uint32) (storage.File, string, error) {
+	return nil, "discard", nil
 }
 
 func New(c *conf.Bucket, _ storage.SharedKV) (storage.Bucket, error) {

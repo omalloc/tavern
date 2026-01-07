@@ -366,7 +366,7 @@ func (d *diskBucket) WriteChunkFile(ctx context.Context, id *object.ID, index ui
 	_ = os.MkdirAll(filepath.Dir(wpath), d.fileMode)
 
 	tmpPath := wpath + time.Now().Format(".tmp20060102150405")
-	f, err := os.OpenFile(tmpPath, os.O_CREATE|os.O_RDWR, 0o755)
+	f, err := os.OpenFile(tmpPath, os.O_CREATE|os.O_RDWR, d.fileMode)
 	if err != nil {
 		return nil, wpath, fmt.Errorf("bucket open-file chunk[%d] failed err %w", index, err)
 	}
@@ -376,10 +376,10 @@ func (d *diskBucket) WriteChunkFile(ctx context.Context, id *object.ID, index ui
 	}), wpath, nil
 }
 
-func (d *diskBucket) ReadChunkFile(ctx context.Context, id *object.ID, index uint32) (storage.File, error) {
+func (d *diskBucket) ReadChunkFile(ctx context.Context, id *object.ID, index uint32) (storage.File, string, error) {
 	wpath := id.WPathSlice(d.path, index)
 	f, err := os.OpenFile(wpath, d.fileFlag, d.fileMode)
-	return f, err
+	return f, wpath, err
 }
 
 // Close implements storage.Bucket.

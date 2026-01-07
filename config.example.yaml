@@ -102,8 +102,8 @@ storage:
         wal_bytes_per_sync: 20480000
         wal_min_sync_interval: 5
         write_sync_mode: false
-    - path: /cache2
-      type: normal
+#    - path: inmemory
+#      driver: memory
 upstream:
   balancing: wrr
   address:

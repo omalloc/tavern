@@ -4,8 +4,6 @@ import "io"
 
 // limitedReadCloser is a structure that wraps an io.ReadCloser, imposing a maximum read limit and tracking read bytes.
 type limitedReadCloser struct {
-	io.Closer
-
 	R       io.ReadCloser
 	limited io.Reader
 	max     int64
