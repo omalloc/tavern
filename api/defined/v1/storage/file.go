@@ -3,6 +3,8 @@ package storage
 import (
 	"io"
 	"os"
+
+	"github.com/cockroachdb/pebble/v2/vfs"
 )
 
 // File is a readable, writable sequence of bytes.
@@ -32,4 +34,34 @@ type File interface {
 	// It can be used for specific functionality like Prefetch.
 	// Returns InvalidFd if not supported.
 	Fd() uintptr
+
+	Name() string
+}
+
+var _ File = (*vfsFile)(nil)
+
+// wrap vfs.File
+type vfsFile struct {
+	vfs.File
+	closed bool
+}
+
+func (v *vfsFile) Stat() (os.FileInfo, error) {
+	return v.File.Stat()
+}
+
+func (v *vfsFile) Name() string {
+	return "memoryfs"
+}
+
+func (v *vfsFile) Close() error {
+	if v.closed {
+		return nil
+	}
+	v.closed = true
+	return v.File.Close()
+}
+
+func WrapVFSFile(f vfs.File) File {
+	return &vfsFile{File: f, closed: false}
 }

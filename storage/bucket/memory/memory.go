@@ -260,12 +260,13 @@ func (m *memoryBucket) WriteChunkFile(ctx context.Context, id *object.ID, index 
 	return iobuf.ChunkWriterCloser(f, _empty), wpath, nil
 }
 
-func (m *memoryBucket) ReadChunkFile(ctx context.Context, id *object.ID, index uint32) (storage.File, error) {
-	//wpath := id.WPathSlice(m.path, index)
-	// type vfs.File check failed.
-	// f, err := m.fs.Open(wpath)
-	//return f, err
-	return nil, os.ErrNotExist
+func (m *memoryBucket) ReadChunkFile(_ context.Context, id *object.ID, index uint32) (storage.File, string, error) {
+	wpath := id.WPathSlice(m.path, index)
+	f, err := m.fs.Open(wpath)
+	if err != nil {
+		return nil, "", err
+	}
+	return storage.WrapVFSFile(f), wpath, err
 }
 
 // StoreType implements [storage.Bucket].

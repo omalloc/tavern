@@ -132,7 +132,8 @@ func getContents(c *Caching, reqChunks []uint32, from uint32) (reader io.ReadClo
 	}
 
 	// find the first existing chunk
-	f, err1 := c.bucket.ReadChunkFile(c.req.Context(), c.id, idx)
+	f, wpath, err1 := c.bucket.ReadChunkFile(c.req.Context(), c.id, idx)
+	c.log.Debugf("loading chunk from path: %s", wpath)
 	if err1 != nil {
 		return nil, 0, err1
 	}
@@ -154,7 +155,7 @@ func getContents(c *Caching, reqChunks []uint32, from uint32) (reader io.ReadClo
 			availableChunks[i] <= reqChunks[len(reqChunks)-1]
 	})
 
-	c.log.Debugf("find availabe chunk index %d, availableChunks: %v", index, availableChunks)
+	c.log.Debugf("find available chunk index %d, availableChunks: %v", index, availableChunks)
 	fromByte := uint64(reqChunks[from] * uint32(c.md.BlockSize))
 	if index < len(availableChunks) {
 		chunkFile, _ := getSliceChunkFile(c, availableChunks[index])
@@ -188,7 +189,7 @@ func getContents(c *Caching, reqChunks []uint32, from uint32) (reader io.ReadClo
 			return resp, err1
 		})
 
-		return iobuf.PartsReader(chunkFile /* io */, reader, chunkFile), int(availableChunks[index]-availableChunks[from]) + 1, nil
+		return iobuf.PartsReadCloser(chunkFile /* io */, reader, chunkFile), int(availableChunks[index]-availableChunks[from]) + 1, nil
 	}
 
 	// no more hit block, fill
@@ -218,10 +219,9 @@ func getContents(c *Caching, reqChunks []uint32, from uint32) (reader io.ReadClo
 	return reader, len(reqChunks) - int(from), nil
 }
 
-func getSliceChunkFile(c *Caching, from uint32) (*os.File, error) {
-	wpath := c.id.WPathSlice(c.bucket.Path(), from)
+func getSliceChunkFile(c *Caching, from uint32) (storage.File, error) {
+	f, wpath, err := c.bucket.ReadChunkFile(c.req.Context(), c.id, from)
 	c.log.Debugf("loading chunk slice from path: %s", wpath)
-	f, err := ropen(wpath)
 	if err == nil {
 		return f, nil
 	}
@@ -238,7 +238,7 @@ func getSliceChunkFile(c *Caching, from uint32) (*os.File, error) {
 	return nil, nil
 }
 
-func checkChunkSize(c *Caching, f *os.File, idx uint32) error {
+func checkChunkSize(c *Caching, f storage.File, idx uint32) error {
 	stat, err := f.Stat()
 	if err != nil {
 		c.log.Errorf("failed to stat chunk file %s: %s", f.Name(), err)
@@ -262,11 +262,6 @@ func checkChunkSize(c *Caching, f *os.File, idx uint32) error {
 	}
 
 	return nil
-}
-
-// ropen ReadOnly OpenFile
-func ropen(wpath string) (*os.File, error) {
-	return os.OpenFile(wpath, fileMode, 0o755)
 }
 
 // isTooManyFiles checks if the provided error is due to too many open files.

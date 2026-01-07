@@ -40,7 +40,7 @@ type Operation interface {
 	// WriteChunkFile open chunk file and returns io.WriteCloser
 	WriteChunkFile(ctx context.Context, id *object.ID, index uint32) (io.WriteCloser, string, error)
 	// ReadChunkFile open chunk file and returns io.ReadCloser
-	ReadChunkFile(ctx context.Context, id *object.ID, index uint32) (File, error)
+	ReadChunkFile(ctx context.Context, id *object.ID, index uint32) (File, string, error)
 }
 
 type Storage interface {
