@@ -1,6 +1,20 @@
-# Tavern Caching
+<h1 align="center">Tavern</h1>
 
-Tavern 是一个高性能的 HTTP 缓存代理服务器，旨在利用现代化的服务框架提供更灵活的架构、更强的扩展性以及更优秀的性能。
+<p align="center"><a href="https://tavern.omalloc.com/" target="_blank"><img src="https://www.omalloc.com/app_banner.webp?raw=true"></a></p>
+<p align="center">
+<a href="https://github.com/omalloc/tavern/actions"><img src="https://github.com/omalloc/tavern/actions/workflows/go.yml/badge.svg?branch=main" alt="Build Status"></a>
+<a href="https://pkg.go.dev/github.com/omalloc/tavern"><img src="https://pkg.go.dev/badge/github.com/omalloc/tavern" alt="GoDoc"></a>
+<a href="https://codecov.io/gh/omalloc/tavern"><img src="https://codecov.io/gh/omalloc/tavern/master/graph/badge.svg" alt="codeCov"></a>
+<a href="https://goreportcard.com/report/github.com/omalloc/tavern"><img src="https://goreportcard.com/badge/github.com/omalloc/tavern" alt="Report Card"></a>
+<a href="https://github.com/omalloc/tavern/blob/main/LICENSE"><img src="https://img.shields.io/github/license/omalloc/tavern" alt="License"></a>
+</p>
+
+<p align="center" x-desc="Sponsor">
+</p>
+
+<p align="center" x-desc="desc">
+Tavern 是一个 Go 实现的高性能的 HTTP 缓存代理服务器，旨在利用现代化的服务框架提供更灵活的架构、更强的扩展性以及更优秀的性能。
+</p>
 
 ## ✨ 特性 (Features)
 
@@ -88,3 +102,12 @@ make build
 ## 📝 License
 
 [MIT License](LICENSE)
+
+## 🙏 Acknowledgments
+
+本项目集成并参考了以下优秀开源项目的成果，在此表示衷心的感谢：
+
+- **[Kratos](https://github.com/go-kratos/kratos)**: 优秀的微服务框架思想，为本项目提供了现代化架构的灵感。
+- **[Pebble](https://github.com/cockroachdb/pebble)**: 由 CockroachDB 开发的高性能 Key-Value 存储引擎，驱动了 Tavern 的高效持久化缓存。
+- **[tableflip](https://github.com/cloudflare/tableflip)**: Cloudflare 开发的平滑升级方案，实现了服务的零停机重启。
+- **[Prometheus Go Client](https://github.com/prometheus/client_golang)**: 提供了强大的可观测性支持。
