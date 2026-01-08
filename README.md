@@ -16,6 +16,8 @@
 Tavern is a high-performance HTTP caching proxy server implemented in Go. It leverages a modern service framework to deliver a flexible architecture, strong extensibility, and excellent performance.
 </p>
 
+Other languages:  [简体中文](README.zh-CN.md) 
+
 ## ✨ Features
 
 - **Core Caching Capabilities**:
