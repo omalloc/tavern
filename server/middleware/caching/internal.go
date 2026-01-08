@@ -17,6 +17,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/omalloc/tavern/api/defined/v1/event"
 	"github.com/omalloc/tavern/api/defined/v1/storage"
 	"github.com/omalloc/tavern/api/defined/v1/storage/object"
 	"github.com/omalloc/tavern/contrib/log"
@@ -122,6 +123,45 @@ func (c *Caching) getAvailableChunks() (available []uint32) {
 		available = append(available, x)
 	})
 	return available
+}
+
+var _ event.CacheCompleted = (*cacheCompleted)(nil)
+
+type cacheCompleted struct {
+	storeUrl      string
+	storeKey      string
+	storePath     string
+	lastModified  string
+	contentLength int64
+	countCount    int
+}
+
+func (cc *cacheCompleted) Kind() event.Kind {
+	return "cache.completed"
+}
+
+func (cc *cacheCompleted) StoreUrl() string {
+	return cc.storeUrl
+}
+
+func (cc *cacheCompleted) StorePath() string {
+	return cc.storePath
+}
+
+func (cc *cacheCompleted) StoreKey() string {
+	return cc.storeKey
+}
+
+func (cc *cacheCompleted) ContentLength() int64 {
+	return cc.contentLength
+}
+
+func (cc *cacheCompleted) LastModified() string {
+	return cc.lastModified
+}
+
+func (cc *cacheCompleted) ChunkCount() int {
+	return cc.countCount
 }
 
 func getContents(c *Caching, reqChunks []uint32, from uint32) (reader io.ReadCloser, count int, err error) {

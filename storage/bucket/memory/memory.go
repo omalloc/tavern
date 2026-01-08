@@ -11,6 +11,10 @@ var _ storage.Bucket = (*memoryBucket)(nil)
 
 type memoryBucket struct{}
 
+func (r *memoryBucket) Objects() uint64 {
+	return 0
+}
+
 func New() (storage.Bucket, error) {
 	return &memoryBucket{}, nil
 }

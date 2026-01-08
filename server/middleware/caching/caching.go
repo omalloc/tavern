@@ -15,7 +15,7 @@ import (
 	"time"
 
 	"github.com/kelindar/bitmap"
-
+	"github.com/omalloc/tavern/api/defined/v1/event"
 	configv1 "github.com/omalloc/tavern/api/defined/v1/middleware"
 	"github.com/omalloc/tavern/api/defined/v1/storage"
 	"github.com/omalloc/tavern/api/defined/v1/storage/object"
@@ -57,6 +57,8 @@ type cachingOption struct {
 	VaryLimit                   int      `json:"vary_limit" yaml:"vary_limit"`
 	VaryIgnoreKey               []string `json:"vary_ignore_key" yaml:"vary_ignore_key"`
 	Hostname                    string   `json:"hostname" yaml:"hostname"`
+	// events.
+	publish func(ctx context.Context, payload event.CacheCompleted) `json:"-" yaml:"-"`
 }
 
 func init() {
@@ -104,6 +106,11 @@ func Middleware(c *configv1.Middleware) (middleware.Middleware, func(), error) {
 			WithChunkSize(opts.SliceSize),
 		),
 	).fill()
+
+	// register event.
+	opts.publish = event.NewPublish[event.CacheCompleted](
+		event.NewTopicKey[event.CacheCompleted](event.CacheCompletedKey),
+	)
 
 	return func(origin http.RoundTripper) http.RoundTripper {
 
@@ -564,8 +571,15 @@ func (c *Caching) flushbufferSlice(respRange xhttp.ContentRange) (iobuf.EventSuc
 			if endPart == uint32(c.md.Chunks.Count()) {
 				c.log.Debugf("file all part complete at %s", time.Now().Format(time.DateTime))
 
-				// TODO: trigger file crc check
-				// ...
+				// trigger file crc check
+				c.opt.publish(context.Background(), &cacheCompleted{
+					storeUrl:      c.id.Key(),
+					storeKey:      c.id.HashStr(),
+					storePath:     filepath.Dir(wpath),
+					lastModified:  c.md.Headers.Get("Last-Modified"),
+					contentLength: int64(c.md.Size),
+					countCount:    c.md.Chunks.Count(),
+				})
 			}
 		}
 

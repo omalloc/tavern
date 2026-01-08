@@ -80,8 +80,8 @@ plugin:
       log_path: ./logs/purge.log
   - name: verifier
     options:
-      endpoint: https://crc-svc.omalloc.com
-      interval: 60
+      endpoint: https://crc-svc.omalloc.com/receive
+      api_key: your_api_key_here
       timeout: 5
       report_ratio: 100
 storage:

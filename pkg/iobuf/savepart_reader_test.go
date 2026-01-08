@@ -50,7 +50,7 @@ func TestSavepartReaderWithRange(t *testing.T) {
 
 	r := iobuf.SavepartReader(
 		io.NopCloser(bytes.NewReader(fileBytes)),
-		0,
+		1024*1024,
 		1024*32,
 		flushBuffer(t, in), flushFailed(t), func(_ bool) {},
 	)
@@ -107,8 +107,8 @@ func TestSavepartReader(t *testing.T) {
 
 	r := iobuf.SavepartReader(
 		io.NopCloser(bytes.NewReader(fileBytes)),
+		1024*1024,
 		0,
-		1024*32,
 		flushBufferWithFile(t, f), flushFailed(t), func(_ bool) {
 			if f != nil {
 				_ = f.Close()
@@ -129,7 +129,7 @@ func TestSavepartReader(t *testing.T) {
 	}
 
 	h := md5.New()
-	bytes.NewReader(fileBytes).WriteTo(h)
+	_, _ = bytes.NewReader(fileBytes).WriteTo(h)
 	hash1 := hex.EncodeToString(h.Sum(nil))
 
 	h.Reset()
@@ -190,13 +190,13 @@ func TestSavepartReader_ReadError(t *testing.T) {
 }
 
 func TestSavepartReader_CallbackError(t *testing.T) {
-	data := []byte("hello world")
+	data := markbuf(1 << 20)
 	callbackErr := errors.New("callback error")
 
 	r := iobuf.SavepartReader(
 		io.NopCloser(bytes.NewReader(data)),
-		0,
-		5, // small block size to trigger flush
+		1024,
+		0, // small block size to trigger flush
 		func(buf []byte, bitIdx uint32, pos uint64, eof bool) error {
 			return callbackErr
 		},
