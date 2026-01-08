@@ -38,6 +38,7 @@ Tavern 是一个 Go 实现的高性能 HTTP 缓存代理服务器，旨在利用
   - [x] 头部重写 (Headers Rewrite)
   - [x] 支持 Multiple Range 请求
   - [x] 缓存HASH校验 (CRC checksum/EdgeMode)
+    - 你可能需要 [缓存校验中心](https://github.com/omalloc/trust-receive) 服务
 - **现代化架构**:
   - 基于 **Kratos** 框架，提供高扩展、模块复用能力
   - **插件系统 (Plugin System)**: 支持通过插件扩展核心业务逻辑
