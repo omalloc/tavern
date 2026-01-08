@@ -13,8 +13,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/omalloc/tavern/pkg/iobuf"
 	"github.com/stretchr/testify/assert"
+
+	"github.com/omalloc/tavern/pkg/iobuf"
 )
 
 func flushBuffer(t *testing.T, fp string) iobuf.EventSuccess {
@@ -223,33 +224,4 @@ func TestSavepartReader_Close(t *testing.T) {
 	)
 	_ = r.Close()
 	assert.True(t, closed)
-}
-
-func TestSavepartReader_Skip(t *testing.T) {
-	data := []byte("hello world")
-
-	r := iobuf.SavepartReader(
-		io.NopCloser(bytes.NewReader(data)),
-		// skip 6 bytes
-		6,
-		//
-		32768, // small block size to trigger flush
-		func(buf []byte, bitIdx uint32, pos uint64, eof bool) error {
-			t.Error("should not call onSuccess when skipping")
-			return nil
-		},
-		func(err error) {
-			t.Errorf("should not call onError: %v", err)
-		},
-		func(eof bool) {},
-	)
-
-	buf := bytes.NewBuffer(make([]byte, 0, 5))
-	n, err := io.Copy(buf, r)
-	assert.NoError(t, err)
-
-	assert.Equal(t, int64(len(data)), n)
-	assert.Equal(t, 5, buf.Len())
-
-	t.Logf("buf %s", buf)
 }

@@ -4,9 +4,11 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"hash"
+	"fmt"
 	"hash/crc32"
+	"net"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/omalloc/tavern/api/defined/v1/event"
@@ -31,7 +33,6 @@ type verifierOptions struct {
 type verifier struct {
 	reportClient *http.Client
 	opt          *verifierOptions
-	crc          hash.Hash32
 }
 
 func init() {
@@ -42,7 +43,7 @@ func NewVerifierPlugin(opts pluginv1.Option, log *log.Helper) (pluginv1.Plugin, 
 	opt := &verifierOptions{
 		Endpoint:    "http://verifier.default.svc.cluster.local:8080/report",
 		Timeout:     5,
-		ReportRatio: 1,
+		ReportRatio: 1, // percent 1%
 	}
 
 	if err := opts.Unmarshal(opt); err != nil {
@@ -52,9 +53,17 @@ func NewVerifierPlugin(opts pluginv1.Option, log *log.Helper) (pluginv1.Plugin, 
 	log.Debugf("load config %#+v", opt)
 
 	return &verifier{
-		reportClient: &http.Client{},
-		opt:          opt,
-		crc:          crc32.NewIEEE(),
+		reportClient: &http.Client{
+			Timeout: time.Second * time.Duration(opt.Timeout),
+			Transport: &http.Transport{
+				Proxy: http.ProxyFromEnvironment,
+				DialContext: (&net.Dialer{
+					Timeout:   time.Second * time.Duration(opt.Timeout),
+					KeepAlive: 30 * time.Second,
+				}).DialContext,
+			},
+		},
+		opt: opt,
 	}, nil
 }
 
@@ -70,7 +79,7 @@ func (v *verifier) HandleFunc(next http.HandlerFunc) http.HandlerFunc {
 // Start implements [plugin.Plugin].
 func (v *verifier) Start(context.Context) error {
 
-	go v.listen()
+	go v.handleEvent()
 
 	return nil
 }
@@ -80,7 +89,7 @@ func (v *verifier) Stop(context.Context) error {
 	return nil
 }
 
-func (v *verifier) listen() {
+func (v *verifier) handleEvent() {
 	topic := event.NewTopicKey[event.CacheCompleted]("cache.completed")
 
 	if err := event.Subscribe(topic, v.eventLoop); err != nil {
@@ -95,23 +104,52 @@ func (v *verifier) eventLoop(_ context.Context, payload event.CacheCompleted) {
 	hashCrc := crc32.ChecksumIEEE([]byte(payload.StoreKey()))
 	ratio := int(hashCrc % 100)
 
-	if ratio >= v.opt.ReportRatio {
+	upsRatio := payload.ReportRatio()
+
+	// disable report
+	if upsRatio == -1 {
+		log.Debugf("verifier report disabled for store key: %s", payload.StoreKey())
+		return
+	}
+
+	// use plugin config `ratio``
+	if upsRatio == 0 {
+		upsRatio = v.opt.ReportRatio
+	}
+
+	// check ratio has skip
+	if ratio >= upsRatio {
 		log.Debugf("skip report verifier for store key: %s", payload.StoreKey())
 		return
 	}
 
 	// calculate file md5 hash
-	reportPayload := ReportPayload{
+	hash, err := ReadAndSumHash(payload.StorePath(), payload.StoreKey(), payload.ChunkCount(), payload.ChunkSize())
+	if err != nil {
+		log.Errorf("check cache-file md5 failed %v", err)
+		return
+	}
+
+	reportData := ReportPayload{
 		Url:  payload.StoreUrl(),
 		Lm:   payload.LastModified(),
 		Cl:   uint64(payload.ContentLength()),
-		Hash: "CRC-32-PLACEHOLDER", // readFile() and calculate md5
+		Hash: hash,
 	}
 
-	buf, err := json.Marshal(reportPayload)
-	if err != nil {
-		log.Errorf("marshal report payload failed: %v", err)
+	if err := v.doReport(reportData); err != nil {
+		log.Errorf("report verifier failed: %v", err)
 		return
+	}
+
+	log.Infof("report verifier success for url: %s", payload.StoreUrl())
+}
+
+func (v *verifier) doReport(payload ReportPayload) error {
+
+	buf, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("marshal report payload failed: %w", err)
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second*time.Duration(v.opt.Timeout))
@@ -119,33 +157,37 @@ func (v *verifier) eventLoop(_ context.Context, payload event.CacheCompleted) {
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, v.opt.Endpoint, bytes.NewReader(buf))
 	if err != nil {
-		log.Errorf("create report request failed: %v", err)
-		return
+		return fmt.Errorf("create report request failed: %w", err)
 	}
 	defer req.Body.Close()
 
+	// add headers
 	req.Header.Set("Authorization", v.opt.ApiKey)
 	req.Header.Set("Content-Type", "application/json")
 
 	// do request to verifier center.
 	resp, err := v.reportClient.Do(req)
 	if err != nil {
-		log.Errorf("send report request failed: %v", err)
-		return
+		_metricVerifierRequestsTotal.WithLabelValues("0").Inc()
+		return fmt.Errorf("send report request failed: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() {
+		if resp.Body != nil {
+			_ = resp.Body.Close()
+		}
+
+		_metricVerifierRequestsTotal.WithLabelValues(strconv.Itoa(resp.StatusCode)).Inc()
+	}()
 
 	if resp.StatusCode == http.StatusConflict {
-		log.Errorf("report verifier CRC hash conflict: %s; PURGE ALL NODE", resp.Status)
-		return
+		return fmt.Errorf("report verifier CRC hash conflict: %s", resp.Status)
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		log.Errorf("report verifier result failed: %s", resp.Status)
-		return
+		return fmt.Errorf("report verifier result failed: %s", resp.Status)
 	}
 
-	log.Debugf("report verifier result success: %s", resp.Status)
+	return nil
 }
 
 type ReportPayload struct {

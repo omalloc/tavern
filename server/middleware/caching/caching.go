@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/kelindar/bitmap"
+
 	"github.com/omalloc/tavern/api/defined/v1/event"
 	configv1 "github.com/omalloc/tavern/api/defined/v1/middleware"
 	"github.com/omalloc/tavern/api/defined/v1/storage"
@@ -573,12 +574,14 @@ func (c *Caching) flushbufferSlice(respRange xhttp.ContentRange) (iobuf.EventSuc
 
 				// trigger file crc check
 				c.opt.publish(context.Background(), &cacheCompleted{
+					ratio:         0, // 0 = use verifier plugin ratio, 0 > = percent sampling, -1 = disable
 					storeUrl:      c.id.Key(),
 					storeKey:      c.id.HashStr(),
 					storePath:     filepath.Dir(wpath),
 					lastModified:  c.md.Headers.Get("Last-Modified"),
 					contentLength: int64(c.md.Size),
-					countCount:    c.md.Chunks.Count(),
+					chunkCount:    c.md.Chunks.Count(),
+					chunkSize:     c.md.BlockSize,
 				})
 			}
 		}
