@@ -196,7 +196,7 @@ func (c *Caching) lazilyRespond(req *http.Request, start, end int64) (*http.Resp
 
 	// HEAD reqeust fast check and return.
 	if req.Method == http.MethodHead {
-		resp := buildNoBodyResponed(c, hasRangeRequest, start, end)
+		resp := buildNoBodyRespond(c, hasRangeRequest, start, end)
 		return resp, nil
 	}
 
@@ -237,13 +237,13 @@ func (c *Caching) lazilyRespond(req *http.Request, start, end int64) (*http.Resp
 
 	in := iobuf.PartsReadCloser(iobuf.AllCloser(readers), readers...)
 
-	resp := buildNoBodyResponed(c, hasRangeRequest, start, end)
+	resp := buildNoBodyRespond(c, hasRangeRequest, start, end)
 	resp.Body = in
 
 	return resp, nil
 }
 
-func buildNoBodyResponed(c *Caching, hasRangeRequest bool, start, end int64) *http.Response {
+func buildNoBodyRespond(c *Caching, hasRangeRequest bool, start, end int64) *http.Response {
 	resp := &http.Response{
 		// 状态码可以统一在这里固定 200，由 PostRequest 阶段或 postCacheProcessor 统一处理
 		StatusCode:    c.md.Code, // http.StatusOK,
