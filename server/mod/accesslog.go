@@ -57,7 +57,7 @@ func HandleAccessLog(opt *conf.ServerAccessLog, next http.HandlerFunc) http.Hand
 	}
 }
 
-func tickRotate(f *lumberjack.Logger) {
+func tickRotate(f *lumberjack.Logger, stop <-chan struct{}) {
 	go func() {
 		// 初始计算到下一个整点的延迟
 		now := time.Now()
@@ -67,6 +67,8 @@ func tickRotate(f *lumberjack.Logger) {
 
 		for {
 			select {
+			case <-stop:
+				return
 			case <-timer.C:
 				_ = f.Rotate()
 				// 任务完成后，重新对齐到下一个整点，实现抗漂移
@@ -92,7 +94,9 @@ func newAccessLog(path string) *zap.Logger {
 	}
 
 	// 按分钟 rotate
-	tickRotate(f)
+	// TODO: Implement proper shutdown mechanism to close this channel
+	stop := make(chan struct{})
+	tickRotate(f, stop)
 
 	cfg := zap.NewProductionConfig().EncoderConfig
 	cfg.ConsoleSeparator = " "

@@ -116,7 +116,7 @@ func (m *memoryBucket) discard(ctx context.Context, md *object.Metadata) error {
 	// 删除所有 slice 缓存文件
 	md.Chunks.Range(func(x uint32) {
 		wpath := md.ID.WPathSlice(m.path, x)
-		if err := os.Remove(wpath); err != nil && !errors.Is(err, os.ErrNotExist) {
+		if err := m.fs.Remove(wpath); err != nil && !errors.Is(err, os.ErrNotExist) {
 			log.Context(ctx).Errorf("failed to remove cached slice file %s: %v", wpath, err)
 		}
 	})
