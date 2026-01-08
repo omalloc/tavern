@@ -2,6 +2,7 @@ package multirange
 
 import (
 	"context"
+	"errors"
 	"io"
 	"mime/multipart"
 	"net/http"
@@ -77,7 +78,9 @@ func Middleware(c *configv1.Middleware) (middleware.Middleware, func(), error) {
 						_ = pw.CloseWithError(err3)
 						return
 					}
-					if _, err3 = io.Copy(part, raResp.Body); err3 != nil {
+					if _, err3 = io.Copy(part, raResp.Body); err3 != nil &&
+						!errors.Is(err3, io.EOF) {
+
 						_ = pw.CloseWithError(err3)
 						return
 					}

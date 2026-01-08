@@ -193,9 +193,17 @@ func (c *Caching) lazilyRespond(req *http.Request, start, end int64) (*http.Resp
 	reqChunks := ioindexes.Build(uint64(start), uint64(end), psize)
 	startOffset := start % int64(psize)
 
+	hasRangeRequest := req.Header.Get("Range") != ""
+
 	c.md.LastRefUnix = time.Now().Unix()
 
 	c.log.Debugf("lazilyRespond %s %s start %d end %d", req.Method, c.id.Key(), start, end)
+
+	// HEAD reqeust fast check and return.
+	if req.Method == http.MethodHead {
+		resp := buildNoBodyResponed(c, hasRangeRequest, start, end)
+		return resp, nil
+	}
 
 	readers := make([]io.ReadCloser, 0, len(reqChunks))
 
@@ -233,17 +241,19 @@ func (c *Caching) lazilyRespond(req *http.Request, start, end int64) (*http.Resp
 	}
 
 	in := iobuf.PartsReader(iobuf.AllCloser(readers), readers...)
-	if req.Method == http.MethodHead {
-		in = nil
-		iobuf.AllCloser(readers).Close()
-	}
 
+	resp := buildNoBodyResponed(c, hasRangeRequest, start, end)
+	resp.Body = in
+
+	return resp, nil
+}
+
+func buildNoBodyResponed(c *Caching, hasRangeRequest bool, start, end int64) *http.Response {
 	resp := &http.Response{
 		// 状态码可以统一在这里固定 200，由 PostRequest 阶段或 postCacheProcessor 统一处理
 		StatusCode:    c.md.Code, // http.StatusOK,
 		ContentLength: int64(c.md.Size),
 		Header:        make(http.Header),
-		Body:          in,
 	}
 
 	xhttp.CopyHeader(resp.Header, c.md.Headers)
@@ -253,7 +263,7 @@ func (c *Caching) lazilyRespond(req *http.Request, start, end int64) (*http.Resp
 	}
 
 	// 206 Range 头处理
-	if req.Header.Get("Range") != "" {
+	if hasRangeRequest {
 		resp.StatusCode = http.StatusPartialContent
 		resp.Header.Set("Content-Range", fmt.Sprintf("bytes %d-%d/%d", start, end, c.md.Size))
 	}
@@ -262,7 +272,8 @@ func (c *Caching) lazilyRespond(req *http.Request, start, end int64) (*http.Resp
 	cl := end - start + 1
 	resp.ContentLength = cl
 	resp.Header.Set("Content-Length", strconv.FormatInt(cl, 10))
-	return resp, nil
+
+	return resp
 }
 
 func (c *Caching) getUpstreamReader(fromByte, toByte uint64, async bool) (io.ReadCloser, error) {

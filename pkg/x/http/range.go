@@ -34,6 +34,13 @@ type Range struct {
 	Start, End int64
 }
 
+func NewRequestRange(start, end int64) *Range {
+	return &Range{
+		Start: start,
+		End:   end,
+	}
+}
+
 func (r *Range) Length() int64 {
 	return r.End - r.Start + 1
 }
