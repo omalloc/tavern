@@ -250,7 +250,9 @@ func (m *memoryBucket) WriteChunkFile(ctx context.Context, id *object.ID, index 
 	wpath := id.WPathSlice(m.path, index)
 	_ = m.fs.MkdirAll(filepath.Dir(wpath), m.fileMode)
 
-	log.Context(ctx).Infof("write inmemory chunk file %s", wpath)
+	if log.Enabled(log.LevelDebug) {
+		log.Context(ctx).Infof("write inmemory chunk file %s", wpath)
+	}
 
 	f, err := m.fs.OpenReadWrite(wpath, vfs.WriteCategoryUnspecified)
 	if err != nil {
@@ -264,7 +266,7 @@ func (m *memoryBucket) ReadChunkFile(_ context.Context, id *object.ID, index uin
 	wpath := id.WPathSlice(m.path, index)
 	f, err := m.fs.Open(wpath)
 	if err != nil {
-		return nil, "", err
+		return nil, wpath, err
 	}
 	return storage.WrapVFSFile(f), wpath, err
 }
