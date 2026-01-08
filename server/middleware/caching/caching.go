@@ -587,7 +587,6 @@ func (c *Caching) flushbufferSlice(respRange xhttp.ContentRange) (iobuf.EventSuc
 	}
 
 	return writerBuffer, func(eof bool) {
-		c.log.Infof("flushBuffer end; store metadata ing..")
 		_ = c.bucket.Store(c.req.Context(), c.md)
 	}
 
