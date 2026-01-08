@@ -228,8 +228,10 @@ func (n *nativeStorage) Close() error {
 		errs = append(errs, bucket.Close())
 	}
 
-	if err := n.memoryBucket.Close(); err != nil {
-		errs = append(errs, err)
+	if n.memoryBucket != nil {
+		if err := n.memoryBucket.Close(); err != nil {
+			errs = append(errs, err)
+		}
 	}
 
 	// memdb close

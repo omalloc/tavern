@@ -99,7 +99,7 @@ func (r *partsReader) Close() error {
 
 	if r.closer != nil {
 		if err := r.closer.Close(); err != nil {
-			errs = append(errs)
+			errs = append(errs, err)
 		}
 	}
 
