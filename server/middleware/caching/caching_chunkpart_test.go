@@ -1,18 +1,18 @@
 package caching
 
 import (
+	"context"
 	"crypto/rand"
 	"io"
 	"net/http"
-	"os"
-	"path/filepath"
 	"testing"
 
 	"github.com/kelindar/bitmap"
 	"github.com/omalloc/tavern/api/defined/v1/storage/object"
 	"github.com/omalloc/tavern/conf"
 	"github.com/omalloc/tavern/contrib/log"
-	"github.com/omalloc/tavern/storage/bucket/empty"
+	"github.com/omalloc/tavern/proxy"
+	"github.com/omalloc/tavern/storage/bucket/memory"
 	"github.com/omalloc/tavern/storage/sharedkv"
 	"github.com/stretchr/testify/assert"
 )
@@ -27,21 +27,10 @@ func makebuf(size int) []byte {
 	return buf
 }
 
-func mockStoreFiles(basepath string, c *Caching, indexes ...uint32) {
-	_ = os.MkdirAll(filepath.Dir(c.id.WPathSlice(basepath, 0)), 0o755)
-
-	for _, index := range indexes {
-		mbytes := makebuf(1048576)
-		_ = os.WriteFile(c.id.WPathSlice(basepath, index), mbytes, 0o755)
-	}
-}
-
 func Test_getContents(t *testing.T) {
-	basepath := t.TempDir()
+	memoryBucket, _ := memory.New(&conf.Bucket{}, sharedkv.NewEmpty())
 
-	emptyBucket, _ := empty.New(&conf.Bucket{Path: basepath}, sharedkv.NewEmpty())
-
-	req, _ := http.NewRequest(http.MethodGet, "http://www.example.com/path/to/1.apk", nil)
+	req, _ := http.NewRequestWithContext(t.Context(), http.MethodGet, "http://www.example.com/path/to/1.apk", nil)
 	objectID, _ := newObjectIDFromRequest(req, "", true)
 	c := &Caching{
 		log:       log.NewHelper(log.GetLogger()),
@@ -53,16 +42,29 @@ func Test_getContents(t *testing.T) {
 		},
 		md: &object.Metadata{
 			ID:        objectID,
-			BlockSize: 1048576, // 1MB 块大小
+			BlockSize: 524288,
 			Chunks:    bitmap.Bitmap{},
 		},
-		bucket: emptyBucket,
+		bucket:      memoryBucket,
+		proxyClient: proxy.New(),
 	}
 
 	// 模拟已有的块：0, 2
 	c.md.Chunks.Set(0)
 	c.md.Chunks.Set(2)
-	mockStoreFiles(basepath, c, 0, 2)
+
+	c.md.Chunks.Range(func(x uint32) {
+		f, wpath, err := memoryBucket.WriteChunkFile(context.Background(), objectID, x)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		t.Logf("write chunk file %s", wpath)
+
+		buf := makebuf(1 << 19)
+		_, _ = f.Write(buf)
+		_ = f.Close()
+	})
 
 	reqChunks := []uint32{1, 2}
 

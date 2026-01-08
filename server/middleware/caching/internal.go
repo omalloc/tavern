@@ -124,7 +124,7 @@ func (c *Caching) getAvailableChunks() (available []uint32) {
 	return available
 }
 
-func getContents(c *Caching, reqChunks []uint32, from uint32) (reader io.ReadCloser, count int, err error) {
+func getContents(c *Caching, reqChunks []uint32, from uint32) (io.ReadCloser, int, error) {
 	idx := reqChunks[from]
 	partSize := c.opt.SliceSize
 	if c.md.BlockSize > 0 {
@@ -132,15 +132,14 @@ func getContents(c *Caching, reqChunks []uint32, from uint32) (reader io.ReadClo
 	}
 
 	// find the first existing chunk
-	f, wpath, err1 := c.bucket.ReadChunkFile(c.req.Context(), c.id, idx)
-	c.log.Debugf("loading chunk from path: %s", wpath)
+	f, err1 := getSliceChunkFile(c, idx)
 	if err1 != nil {
 		return nil, 0, err1
 	}
 
 	if f != nil {
 		// check file size
-		if err = checkChunkSize(c, f, idx); err == nil {
+		if err := checkChunkSize(c, f, idx); err == nil {
 			return f, 1, nil
 		}
 	}
@@ -178,7 +177,7 @@ func getContents(c *Caching, reqChunks []uint32, from uint32) (reader io.ReadClo
 			resp, err1 := c.doProxy(req, true)
 			c.log.Debugf("doProxy[middle]: timeCost: %s, Range: %s, from index%d", time.Since(now), newRange, index)
 			if err1 != nil {
-				return nil, err
+				return nil, err1
 			}
 
 			// 发起的是 206 请求，但是返回的非 206
@@ -189,7 +188,7 @@ func getContents(c *Caching, reqChunks []uint32, from uint32) (reader io.ReadClo
 			return resp, err1
 		})
 
-		return iobuf.PartsReadCloser(chunkFile /* io */, reader, chunkFile), int(availableChunks[index]-availableChunks[from]) + 1, nil
+		return iobuf.PartsReadCloser(reader, chunkFile), int(availableChunks[index]-reqChunks[from]) + 1, nil
 	}
 
 	// no more hit block, fill
@@ -204,14 +203,14 @@ func getContents(c *Caching, reqChunks []uint32, from uint32) (reader io.ReadClo
 	req := c.req.Clone(context.Background())
 	req.Header.Set("Range", newRange)
 
-	reader = iobuf.AsyncReadCloser(func() (*http.Response, error) {
+	reader := iobuf.AsyncReadCloser(func() (*http.Response, error) {
 		now := time.Now()
 		c.log.Debugf("doProxy[tail]: begin: %s, rawRange: %s, newRange: %s", now, rawRange, newRange)
 		resp, err1 := c.doProxy(req, true)
 		c.log.Debugf("doProxy[tail]: timeCost: %s, rawRange: %s, newRange: %s", time.Since(now), rawRange, newRange)
 
 		if err1 != nil {
-			return nil, err
+			return nil, err1
 		}
 		return resp, err1
 	})
