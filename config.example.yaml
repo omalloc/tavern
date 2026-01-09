@@ -86,7 +86,8 @@ plugin:
       report_ratio: 100
 storage:
   driver: native # native, custom-driver
-  db_type: pebble # boltdb, badgerdb, pebble
+  db_type: pebble # ready [ pebble, nutsdb ], not implements [ boltdb, badgerdb ]
+  db_path: .indexdb # path to the index database, for absolute path, please use /absolute/path/to/db
   async_load: true
   eviction_policy: fifo # fifo, lru, lfu
   selection_policy: hashring # hashring, roundrobin

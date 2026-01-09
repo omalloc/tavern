@@ -68,6 +68,7 @@ func (n *nativeStorage) reinit(config *conf.Storage) error {
 		SelectionPolicy: config.SelectionPolicy,
 		Driver:          config.Driver,
 		DBType:          config.DBType,
+		DBPath:          config.DBPath,
 	}
 
 	for _, c := range config.Buckets {

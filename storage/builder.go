@@ -2,12 +2,14 @@ package storage
 
 import (
 	"errors"
+	"path"
 
 	"github.com/omalloc/tavern/api/defined/v1/storage"
 	"github.com/omalloc/tavern/conf"
 	"github.com/omalloc/tavern/storage/bucket/disk"
 	"github.com/omalloc/tavern/storage/bucket/empty"
 	"github.com/omalloc/tavern/storage/bucket/memory"
+	_ "github.com/omalloc/tavern/storage/indexdb/nutsdb"
 	_ "github.com/omalloc/tavern/storage/indexdb/pebble"
 )
 
@@ -17,6 +19,7 @@ type globalBucketOption struct {
 	SelectionPolicy string
 	Driver          string
 	DBType          string
+	DBPath          string
 }
 
 // implements storage.Bucket map.
@@ -31,7 +34,6 @@ func NewBucket(opt *conf.Bucket, sharedkv storage.SharedKV) (storage.Bucket, err
 	if !exist {
 		return nil, errors.New("bucket factory not found")
 	}
-
 	return factory(opt, sharedkv)
 }
 
@@ -42,6 +44,7 @@ func mergeConfig(global *globalBucketOption, bucket *conf.Bucket) *conf.Bucket {
 		Driver:         bucket.Driver,
 		Type:           bucket.Type,
 		DBType:         bucket.DBType,
+		DBPath:         bucket.DBPath,
 		MaxObjectLimit: bucket.MaxObjectLimit,
 		DBConfig:       bucket.DBConfig, // custom db config
 	}
@@ -58,5 +61,14 @@ func mergeConfig(global *globalBucketOption, bucket *conf.Bucket) *conf.Bucket {
 	if copied.MaxObjectLimit <= 0 {
 		copied.MaxObjectLimit = 10_000_000 // default 10 million objects
 	}
+
+	// set default db_path
+	if copied.DBPath == "" {
+		copied.DBPath = global.DBPath
+	}
+	if !path.IsAbs(copied.DBPath) {
+		copied.DBPath = path.Join(bucket.Path, copied.DBPath)
+	}
+
 	return copied
 }

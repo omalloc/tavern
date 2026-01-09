@@ -10,7 +10,6 @@ import (
 	"io/fs"
 	"net/url"
 	"os"
-	"path"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -45,11 +44,9 @@ type diskBucket struct {
 }
 
 func New(config *conf.Bucket, sharedkv storage.SharedKV) (storage.Bucket, error) {
-	dbPath := path.Join(config.Path, ".indexdb/")
-
 	bucket := &diskBucket{
 		path:      config.Path,
-		dbPath:    dbPath,
+		dbPath:    config.DBPath,
 		driver:    config.Driver,
 		storeType: config.Type,
 		asyncLoad: config.AsyncLoad,
@@ -70,7 +67,7 @@ func New(config *conf.Bucket, sharedkv storage.SharedKV) (storage.Bucket, error)
 
 	// create indexdb
 	db, err := indexdb.Create(config.DBType,
-		indexdb.NewOption(dbPath, indexdb.WithType("pebble"), indexdb.WithDBConfig(config.DBConfig)))
+		indexdb.NewOption(config.DBPath, indexdb.WithType("pebble"), indexdb.WithDBConfig(config.DBConfig)))
 	if err != nil {
 		log.Errorf("failed to create %s indexdb %v", config.DBType, err)
 		return nil, err
