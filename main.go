@@ -6,14 +6,15 @@ import (
 	stdlog "log"
 	"net/url"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/cloudflare/tableflip"
 	"github.com/omalloc/proxy/selector"
 	"github.com/omalloc/proxy/selector/once"
-	"github.com/omalloc/tavern/metrics"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/collectors"
 	"gopkg.in/natefinch/lumberjack.v2"
@@ -25,6 +26,7 @@ import (
 	"github.com/omalloc/tavern/contrib/kratos"
 	"github.com/omalloc/tavern/contrib/log"
 	"github.com/omalloc/tavern/contrib/transport"
+	"github.com/omalloc/tavern/metrics"
 	"github.com/omalloc/tavern/pkg/encoding"
 	"github.com/omalloc/tavern/pkg/encoding/json"
 	"github.com/omalloc/tavern/pkg/x/runtime"
@@ -146,17 +148,63 @@ func newApp(bc *conf.Bootstrap, logger log.Logger) (*kratos.App, error) {
 		servers = append(servers, p)
 	}
 
-	return kratos.New(
+	app := kratos.New(
 		kratos.ID(id),
 		kratos.Name("tavern"),
 		kratos.Version(runtime.BuildInfo.VcsRevision),
 		kratos.StopTimeout(stopTimeout),
 		kratos.Logger(logger),
 		kratos.Server(servers...),
-		kratos.BeforeStop(func(_ context.Context) error {
+		kratos.BeforeStart(func(ctx context.Context) error {
+			log.Debug("tavern starting")
 			return nil
 		}),
-	), nil
+		kratos.AfterStart(func(ctx context.Context) error {
+			time.Sleep(time.Second)
+			log.Infof("tavern ready %s", time.Now().Format(time.DateTime))
+			if err := flip.Ready(); err != nil {
+				panic(err)
+			}
+			log.Infof("tavern started with pid %d", os.Getpid())
+			return nil
+		}),
+		kratos.AfterStop(func(ctx context.Context) error {
+			log.Infof("tavern stopped with pid %d", os.Getpid())
+			return nil
+		}),
+	)
+
+	// graceful SIGUSR2 event
+	go func() {
+		sig := make(chan os.Signal, 1)
+		signal.Notify(sig, syscall.SIGUSR2)
+		for range sig {
+			now := time.Now()
+			log.Info("tavern sig event SIGUSR2")
+
+			// close all db
+			if err := st.Close(); err != nil {
+				log.Errorf("failed to close storage: %s", err)
+			}
+
+			if err := flip.Upgrade(); err != nil {
+				log.Errorf("failed to grace upgrade: %s", err)
+			}
+
+			log.Infof("tavern upgrade success. cost %s", time.Since(now))
+		}
+	}()
+
+	// graceful handle new process Ready event.
+	go func() {
+		<-flip.Exit()
+		log.Infof("tavern graceful stopping pid %d", os.Getpid())
+		if err := app.Stop(); err != nil {
+			log.Errorf("failed to stop tavern: %s", err)
+		}
+	}()
+
+	return app, nil
 }
 
 func newLogger(cl *conf.Logger) log.Logger {
