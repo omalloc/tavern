@@ -104,17 +104,20 @@ func Middleware(c *configv1.Middleware) (middleware.Middleware, func(), error) {
 
 // 发起 HEAD 请求获取资源信息; content-type, content-length
 func prefetchResource(req *http.Request, next http.RoundTripper) (*http.Response, error) {
-	newreq := req.Clone(context.Background())
+	newreq := req.Clone(req.Context())
 	newreq.Header.Del("Range")
 	newreq.Method = http.MethodHead
 	head, err1 := next.RoundTrip(newreq)
 	if err1 != nil {
-		backoff := func(oldr *http.Request) (*http.Response, error) {
-			nreq := oldr.Clone(context.Background())
-			nreq.Method = http.MethodGet
-			return next.RoundTrip(newreq)
-		}
-		return backoff(req)
+		return backoff(req, next)
 	}
+
 	return head, err1
+}
+
+func backoff(oldReq *http.Request, next http.RoundTripper) (*http.Response, error) {
+	nreq := oldReq.Clone(oldReq.Context())
+	nreq.Method = http.MethodGet
+	nreq.Header.Set("Range", "bytes=0-0") // 取一个字节
+	return next.RoundTrip(nreq)
 }

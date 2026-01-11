@@ -15,4 +15,8 @@ var (
 
 func init() {
 	prometheus.MustRegister(_metricVerifierRequestsTotal)
+
+	_metricVerifierRequestsTotal.WithLabelValues("409")
+	_metricVerifierRequestsTotal.WithLabelValues("200")
+	_metricVerifierRequestsTotal.WithLabelValues("0")
 }
