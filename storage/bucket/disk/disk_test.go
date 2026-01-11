@@ -3,6 +3,7 @@ package disk_test
 import (
 	"context"
 	"net/http"
+	"path"
 	"testing"
 	"time"
 
@@ -21,6 +22,7 @@ func newTestBucket(t *testing.T, basepath string) storagev1.Bucket {
 		Driver:    "native",
 		Type:      "normal",
 		DBType:    "pebble",
+		DBPath:    path.Join(basepath, ".indexdb"),
 		AsyncLoad: false,
 	}, sharedkv.NewEmpty())
 
