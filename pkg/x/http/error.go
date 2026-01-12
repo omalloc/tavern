@@ -4,6 +4,13 @@ import (
 	"net/http"
 )
 
+type BizError interface {
+	error
+
+	Code() int
+	Headers() http.Header
+}
+
 type bizError struct {
 	code    int
 	headers http.Header
@@ -32,7 +39,7 @@ func (e *bizError) Headers() http.Header {
 	return e.headers
 }
 
-func IsBizError(err error) bool {
-	_, ok := err.(*bizError)
-	return ok
+func ParseBizError(err error) (BizError, bool) {
+	e, ok := err.(*bizError)
+	return e, ok
 }

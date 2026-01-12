@@ -13,13 +13,13 @@ import (
 	"time"
 
 	"github.com/cockroachdb/pebble/v2/vfs"
-	"github.com/omalloc/tavern/pkg/iobuf"
 
 	"github.com/omalloc/tavern/api/defined/v1/storage"
 	"github.com/omalloc/tavern/api/defined/v1/storage/object"
 	"github.com/omalloc/tavern/conf"
 	"github.com/omalloc/tavern/contrib/log"
 	"github.com/omalloc/tavern/pkg/algorithm/lru"
+	"github.com/omalloc/tavern/pkg/iobuf"
 	"github.com/omalloc/tavern/storage/indexdb"
 )
 
@@ -38,6 +38,7 @@ type memoryBucket struct {
 	fileFlag  int
 	fileMode  fs.FileMode
 	maxSize   uint64
+	closed    bool
 	stop      chan struct{}
 }
 
@@ -74,6 +75,11 @@ func (m *memoryBucket) Allow() int {
 
 // Close implements [storage.Bucket].
 func (m *memoryBucket) Close() error {
+	if m.closed {
+		return nil
+	}
+
+	m.closed = true
 	return m.indexdb.Close()
 }
 

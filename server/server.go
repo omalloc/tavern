@@ -15,7 +15,6 @@ import (
 
 	"dario.cat/mergo"
 	"github.com/cloudflare/tableflip"
-	"github.com/omalloc/tavern/storage"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 
@@ -31,6 +30,7 @@ import (
 	_ "github.com/omalloc/tavern/server/middleware/recovery"
 	_ "github.com/omalloc/tavern/server/middleware/rewrite"
 	"github.com/omalloc/tavern/server/mod"
+	"github.com/omalloc/tavern/storage"
 )
 
 var localMatcher = map[string]struct{}{
@@ -127,7 +127,7 @@ func (s *HTTPServer) Start(ctx context.Context) error {
 		return err
 	}
 
-	log.Infof("HTTP Cache server listening on %s", s.config.Server.Addr)
+	log.Infof("HTTP Cache server listening on %s", s.listener.Addr().String())
 
 	if err := s.Serve(s.listener); err != nil &&
 		!errors.Is(err, http.ErrServerClosed) {
@@ -143,10 +143,12 @@ func (s *HTTPServer) Stop(ctx context.Context) error {
 	if err := s.Shutdown(ctx); err != nil {
 		errs = append(errs, err)
 	}
+
 	// Call all middleware cleanup.
 	for _, cleanup := range s.cleanups {
 		cleanup()
 	}
+
 	// close storage.
 	if err := storage.Close(); err != nil {
 		errs = append(errs, err)
@@ -155,6 +157,7 @@ func (s *HTTPServer) Stop(ctx context.Context) error {
 	if len(errs) > 0 {
 		return errors.Join(errs...)
 	}
+
 	return nil
 }
 
@@ -222,6 +225,16 @@ func (s *HTTPServer) buildHandler(tripper http.RoundTripper) http.HandlerFunc {
 		resp, err = tripper.RoundTrip(req)
 		if err != nil {
 			clog.Errorf("request %s %s failed: %s", req.Method, req.URL.Path, err)
+
+			if e, ok := xhttp.ParseBizError(err); ok {
+				xhttp.CopyHeader(w.Header(), e.Headers())
+
+				w.Header().Set("X-Content-Type-Options", "nosniff")
+				w.WriteHeader(e.Code())
+				_, _ = w.Write([]byte(http.StatusText(e.Code())))
+				_metricRequestsTotal.WithLabelValues(req.Proto, strconv.Itoa(e.Code())).Inc()
+				return
+			}
 
 			// 如果上游没返回业务错误，则直接响应 500
 			w.Header().Set("Content-Type", "text/plain; charset=utf-8")

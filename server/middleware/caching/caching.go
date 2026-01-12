@@ -79,7 +79,7 @@ func Middleware(c *configv1.Middleware) (middleware.Middleware, func(), error) {
 		return nil, middleware.EmptyCleanup, err
 	}
 
-	log.Infof("middleware.caching inited %v", opts.SliceSize)
+	log.Infof("middleware.caching init slice_size %d", opts.SliceSize)
 
 	processor := NewProcessorChain(
 		// Cache-State
@@ -371,9 +371,6 @@ func (c *Caching) doProxy(req *http.Request, subRequest bool) (*http.Response, e
 		c.noContentLen = true
 	}
 
-	// parsed cache-control header
-	expiredAt, cacheable := xhttp.ParseCacheTime("", resp.Header)
-
 	now := time.Now()
 	if c.md == nil {
 		c.md = &object.Metadata{
@@ -388,11 +385,14 @@ func (c *Caching) doProxy(req *http.Request, subRequest bool) (*http.Response, e
 		}
 	}
 
-	c.cacheable = cacheable
+	// parsed cache-control header
+	expiredAt, cacheable := xhttp.ParseCacheTime(req.Header.Get(constants.CacheTime), resp.Header)
+
 	// expire time
 	c.md.ExpiresAt = now.Add(expiredAt).Unix()
 	c.md.RespUnix = now.Unix()
 	c.md.LastRefUnix = now.Unix()
+	c.cacheable = cacheable
 
 	// file changed.
 	if !notModified {
@@ -407,17 +407,22 @@ func (c *Caching) doProxy(req *http.Request, subRequest bool) (*http.Response, e
 		c.md.Size = respRange.ObjSize
 
 		// error code cache feature.
-		if statusCode >= http.StatusBadRequest {
+		if statusCode >= http.StatusBadRequest &&
+			req.Header.Get(constants.InternalCacheErrCode) != "1" {
 			copiedHeaders := make(http.Header)
 			xhttp.CopyHeader(copiedHeaders, resp.Header)
 			c.md.Headers = copiedHeaders
 		}
 
-		// flushbuffer 文件从这里写出到 bucket / disk
-		flushBuffer, cleanup := c.flushbufferSlice(respRange)
+		// `cacheable` means can write to cache storage
+		if c.cacheable {
+			// flushbuffer 文件从这里写出到 bucket / disk
+			flushBuffer, cleanup := c.flushbufferSlice(respRange)
 
-		// save body stream to bucket(disk).
-		resp.Body = iobuf.SavepartAsyncReader(resp.Body, c.md.BlockSize, uint(respRange.Start), flushBuffer, c.flushFailed, cleanup, 8)
+			// save body stream to bucket(disk).
+			resp.Body = iobuf.SavepartAsyncReader(resp.Body, c.md.BlockSize, uint(respRange.Start), flushBuffer, c.flushFailed, cleanup, 8)
+		}
+
 	}
 
 	resp, err = c.processor.PostRequest(c, proxyReq, resp)
@@ -571,6 +576,11 @@ func (c *Caching) flushbufferSlice(respRange xhttp.ContentRange) (iobuf.EventSuc
 				c.log.Debugf("file all chunk complete at %s", time.Now().Format(time.DateTime))
 
 				// trigger file crc check
+				// has InMemory store type skip crc check
+				if c.bucket.StoreType() == storage.TypeInMemory {
+					return nil
+				}
+
 				c.opt.publish(context.Background(), &cacheCompleted{
 					ratio:         0, // 0 = use verifier plugin ratio, 0 > = percent sampling, -1 = disable
 					storeUrl:      c.id.Key(),

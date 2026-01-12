@@ -160,11 +160,12 @@ func newApp(bc *conf.Bootstrap, logger log.Logger) (*kratos.App, error) {
 			return nil
 		}),
 		kratos.AfterStart(func(ctx context.Context) error {
-			time.Sleep(time.Second)
+			time.Sleep(time.Millisecond * 300) // wait for listener ready
 			log.Infof("tavern ready %s", time.Now().Format(time.DateTime))
 			if err := flip.Ready(); err != nil {
 				panic(err)
 			}
+
 			log.Infof("tavern started with pid %d", os.Getpid())
 			return nil
 		}),
