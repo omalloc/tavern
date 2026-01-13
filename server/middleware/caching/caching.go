@@ -469,7 +469,7 @@ func (c *Caching) flushbufferSlice(respRange xhttp.ContentRange) (iobuf.EventSuc
 		// save slice chunk
 		c.md.Chunks.Set(index)
 		if !c.opt.AsyncFlushChunk {
-			c.log.Debugf("flush sync metadata at chunk %d/%d", index+1, endPart)
+			c.log.Debugf("flush sync metadata at chunk %d/%d(chunks %d)", index+1, endPart, c.md.Chunks.Count())
 			// store chunk now.
 			_ = c.bucket.Store(c.req.Context(), c.md)
 		}

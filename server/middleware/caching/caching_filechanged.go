@@ -49,7 +49,7 @@ func (r *FileChangedProcessor) PostRequest(c *Caching, req *http.Request, resp *
 			flag = false
 			c.fileChanged = true
 			c.log.Warnf("FileChangedProcessor: cl not match, old: %d, new: %d, id: %s", obj.Size, rr.ObjSize, c.id.String())
-			_ = c.bucket.DiscardWithMessage(req.Context(), c.id, "file changed with cl not match")
+			_ = c.bucket.DiscardWithMessage(c.req.Context(), c.id, "file changed with cl not match")
 		}
 
 		oldEtag := strings.ToLower(obj.Headers.Get("ETag"))
@@ -59,7 +59,7 @@ func (r *FileChangedProcessor) PostRequest(c *Caching, req *http.Request, resp *
 			flag = false
 			c.fileChanged = true
 			c.log.Warnf("FileChangedProcessor: etag not match, old: %q, new: %q, id: %s", oldEtag, newEtag, c.id.String())
-			_ = c.bucket.DiscardWithMessage(req.Context(), c.id, "file changed with etag not match")
+			_ = c.bucket.DiscardWithMessage(c.req.Context(), c.id, "file changed with etag not match")
 		}
 
 		objLastModified := obj.Headers.Get("Last-Modified")
@@ -70,8 +70,14 @@ func (r *FileChangedProcessor) PostRequest(c *Caching, req *http.Request, resp *
 			if err1 != nil || err2 != nil || !oldLm.Equal(newLm) {
 				c.fileChanged = true
 				c.log.Warnf("FileChangedProcessor: last-modified not match, old: %s, new: %s, id: %s", oldLm, newLm, c.id.String())
-				_ = c.bucket.DiscardWithMessage(req.Context(), c.id, "file changed with last-modified not match")
+				_ = c.bucket.DiscardWithMessage(c.req.Context(), c.id, "file changed with last-modified not match")
 			}
+		}
+	}
+
+	if c.fileChanged {
+		if c.rootmd == nil {
+			c.md.Chunks.Clear()
 		}
 	}
 

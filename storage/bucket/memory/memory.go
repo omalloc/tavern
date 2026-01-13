@@ -225,19 +225,21 @@ func (m *memoryBucket) Store(ctx context.Context, meta *object.Metadata) error {
 		}()
 	}
 
-	m.cache.Set(meta.ID.Hash(), storage.NewMark(meta.LastRefUnix, uint64(meta.Refs)))
-
+	// before save metadata
 	if err := m.indexdb.Set(ctx, meta.ID.Bytes(), meta); err != nil {
 		return err
 	}
 
-	// 写入域名 counter
+	// update lru
+	m.cache.Set(meta.ID.Hash(), storage.NewMark(meta.LastRefUnix, uint64(meta.Refs)))
+
+	// save domains counter
 	if u, err1 := url.Parse(meta.ID.Path()); err1 == nil {
 		if _, err1 = m.sharedkv.Incr(context.Background(), []byte(fmt.Sprintf("if/domain/%s", u.Host)), 1); err1 != nil {
 			log.Warnf("save kvstore domain %s failed", u.Host)
 		}
 	}
-	// 写入目录倒排索引
+	// save directory tree index
 	if err := m.sharedkv.Set(ctx, []byte(fmt.Sprintf("ix/%s/%s", m.ID(), meta.ID.Key())), meta.ID.Bytes()); err != nil {
 		// ignore sharedkv error to not affect main storage
 		_ = err

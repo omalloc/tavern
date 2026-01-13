@@ -1,8 +1,8 @@
 strict: true
 pidfile: /tmp/tavern.pid
 logger:
-  level: debug
-  caller: true
+  level: info
+  caller: false
   traceid: true
   nopid: false
   max_size: 10 # is the maximum size in megabytes of the log file before it gets rotated.

@@ -10,6 +10,10 @@ import (
 	xhttp "github.com/omalloc/tavern/pkg/x/http"
 )
 
+func init() {
+	e2e.SetLocalAddr("/tmp/tavern.sock")
+}
+
 func TestContengLenChanged(t *testing.T) {
 	f := e2e.GenFile(t, 1<<20)
 	f2 := e2e.GenFile(t, 2<<20)
@@ -55,6 +59,7 @@ func TestContengLenChanged(t *testing.T) {
 		})
 
 		hashBody := e2e.HashBody(resp)
+
 		hashFile := e2e.HashFile(f2.Path, int(rr.Start), int(f.Size-int(rr.Start)))
 
 		assert.NoError(t, err, "response should not error")
@@ -152,12 +157,12 @@ func TestContentLenShorter(t *testing.T) {
 		assert.Equal(t, http.StatusPartialContent, resp.StatusCode, "response should be code 206")
 
 		// Content-Range: bytes 600000-1048569/1048570
-		// Content-Range: bytes 600000-1048575/1048575
+		// Content-Range: bytes 600000-1048575/1048576
 		assert.Equal(t, rr.ContentRange(uint64(f.Size)), resp.Header.Get("Content-Range"), "response should be Content-Range")
 
 		assert.Equal(t, "old-file", resp.Header.Get("X-Case"), "response should be X-Case old-file")
 
-		assert.Equal(t, n, rr.RangeLength(int64(f2.Size)), "response should be Content-Length")
+		assert.Equal(t, n, int(rr.RangeLength(int64(f2.Size))), "response should be Content-Length")
 	})
 
 	t.Run("test content-length shorter whole file", func(t *testing.T) {
@@ -169,6 +174,7 @@ func TestContentLenShorter(t *testing.T) {
 		resp, err := case1.Do(func(r *http.Request) {
 			r.Header.Set("Range", rr.String())
 		})
+
 		assert.NoError(t, err, "response should not error")
 
 		hashBody := e2e.HashBody(resp)

@@ -110,7 +110,7 @@ func (e *E2E) Do(rewrite func(r *http.Request)) (*http.Response, error) {
 	}
 
 	// wait for a while to let the connection close properly
-	time.Sleep(time.Millisecond * 200)
+	time.Sleep(time.Millisecond * 300)
 
 	return resp, err
 }
