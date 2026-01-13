@@ -31,10 +31,13 @@ func NewNutsDB(path string, option storage.Option) (storage.IndexDB, error) {
 	if err := option.Unmarshal(&opts); err != nil {
 		return nil, err
 	}
+	options := nutsdb.DefaultOptions
+	options.SyncEnable = false
+	options.RWMode = nutsdb.MMap
 
 	db, err := nutsdb.Open(
-		nutsdb.DefaultOptions,
-		nutsdb.WithDir("/tmp/nutsdb"),
+		options,
+		nutsdb.WithDir(path),
 	)
 	if err != nil {
 		return nil, err
@@ -43,8 +46,14 @@ func NewNutsDB(path string, option storage.Option) (storage.IndexDB, error) {
 	n := &NutsDB{
 		codec:  option.Codec(),
 		db:     db,
-		bucket: "",
+		bucket: "default",
 	}
+
+	_ = db.Update(func(tx *nutsdb.Tx) error {
+		_ = tx.NewBucket(nutsdb.DataStructureBTree, n.bucket)
+		return nil
+	})
+
 	return n, nil
 }
 

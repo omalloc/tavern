@@ -6,8 +6,14 @@ import (
 	"fmt"
 	"path/filepath"
 
+	"github.com/fxamacker/cbor/v2"
 	"github.com/goccy/go-json"
 )
+
+var _ json.Marshaler = (*ID)(nil)
+var _ json.Unmarshaler = (*ID)(nil)
+var _ cbor.Marshaler = (*ID)(nil)
+var _ cbor.Unmarshaler = (*ID)(nil)
 
 // IdHashSize is the size of the byte array that contains the object hash.
 const IdHashSize = sha1.Size
@@ -56,10 +62,6 @@ func (id *ID) Bytes() []byte {
 	return id.hash[:]
 }
 
-func (id *ID) MarshalJSON() ([]byte, error) {
-	return json.Marshal([]string{id.path, id.ext})
-}
-
 func (id *ID) unmarshal(data []string) error {
 	if len(data) < 1 || data[0] == "" {
 		return fmt.Errorf("invalid object-id %v", data)
@@ -74,14 +76,29 @@ func (id *ID) unmarshal(data []string) error {
 }
 
 func (id *ID) UnmarshalJSON(buf []byte) error {
-	var (
-		data []string
-		err  error
-	)
-	if err = json.Unmarshal(buf, &data); err != nil {
+	var data []string
+	if err := json.Unmarshal(buf, &data); err != nil {
 		return err
 	}
 	return id.unmarshal(data)
+}
+
+// UnmarshalCBOR implements [cbor.Unmarshaler].
+func (id *ID) UnmarshalCBOR(buf []byte) error {
+	var data []string
+	if err := cbor.Unmarshal(buf, &data); err != nil {
+		return err
+	}
+	return id.unmarshal(data)
+}
+
+func (id *ID) MarshalJSON() ([]byte, error) {
+	return json.Marshal([]string{id.path, id.ext})
+}
+
+// MarshalCBOR implements [cbor.Marshaler].
+func (id *ID) MarshalCBOR() ([]byte, error) {
+	return cbor.Marshal([]string{id.path, id.ext})
 }
 
 // WPath returns the read/write path of the object ID.

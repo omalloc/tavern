@@ -173,6 +173,11 @@ func (f *fillRange) fill(c *Caching, req *http.Request, rawRange string) *http.R
 		fill.flag = true
 	}
 
+	// TODO: remove after debug
+	if objSize == math.MaxInt64 {
+		objSize = 0
+	}
+
 	c.log.Debugf("fill-mode objSize=%d, rawRange=%v, fillRange=%s", objSize, rng, newRange)
 
 	return req.WithContext(context.WithValue(req.Context(), fillRangeKey{}, fill))

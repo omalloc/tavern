@@ -224,7 +224,7 @@ func newLogger(cl *conf.Logger) log.Logger {
 	}
 	// append option
 	opts := make([]interface{}, 0, 8)
-	opts = append(opts, "ts", log.Timestamp(time.RFC3339))
+	opts = append(opts, "ts", log.Timestamp(time.RFC3339Nano))
 	if !cl.NoPid {
 		opts = append(opts, "pid", os.Getpid())
 	}

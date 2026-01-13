@@ -225,13 +225,7 @@ func (m *memoryBucket) Store(ctx context.Context, meta *object.Metadata) error {
 		}()
 	}
 
-	meta.Headers.Del("X-Protocol")
-	meta.Headers.Del("X-Protocol-Cache")
-	meta.Headers.Del("X-Protocol-Request-Id")
-
-	if !m.cache.Has(meta.ID.Hash()) {
-		m.cache.Set(meta.ID.Hash(), storage.NewMark(meta.LastRefUnix, uint64(meta.Refs)))
-	}
+	m.cache.Set(meta.ID.Hash(), storage.NewMark(meta.LastRefUnix, uint64(meta.Refs)))
 
 	if err := m.indexdb.Set(ctx, meta.ID.Bytes(), meta); err != nil {
 		return err

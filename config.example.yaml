@@ -49,6 +49,7 @@ server:
         fill_range_percent: 100
         object_pool_enabled: true
         object_pool_size: 20000
+        async_flush_chunk: true
         vary_limit: 100
         vary_ignore_key:
           - "Cookie"
