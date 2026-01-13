@@ -1,7 +1,6 @@
 package caching
 
 import (
-	"bufio"
 	"context"
 	"errors"
 	"fmt"
@@ -10,7 +9,6 @@ import (
 	"net/http/httputil"
 	"os"
 	"path/filepath"
-	"strconv"
 	"time"
 
 	"github.com/kelindar/bitmap"
@@ -56,6 +54,7 @@ type cachingOption struct {
 	VaryLimit                   int      `json:"vary_limit" yaml:"vary_limit"`
 	VaryIgnoreKey               []string `json:"vary_ignore_key" yaml:"vary_ignore_key"`
 	Hostname                    string   `json:"hostname" yaml:"hostname"`
+	AsyncFlushChunk             bool     `json:"async_flush_chunk" yaml:"async_flush_chunk"`
 	// events.
 	publish func(ctx context.Context, payload event.CacheCompleted) `json:"-" yaml:"-"`
 }
@@ -74,6 +73,7 @@ func Middleware(c *configv1.Middleware) (middleware.Middleware, func(), error) {
 		ObjectPollSize:    20000,
 		SliceSize:         1048576, // 切片大小 默认1MB, 从配置文件 storage.slice_size 配置
 		FillRangePercent:  100,     // Range 默认填充百分比, 参考 fillRange 处理器对百分比的计算
+		AsyncFlushChunk:   false,   // 即刻写出chunk索引 功能（会增加 indexdb io）
 	}
 	if err := c.Unmarshal(opts); err != nil {
 		return nil, middleware.EmptyCleanup, err
@@ -250,34 +250,6 @@ func (c *Caching) lazilyRespond(req *http.Request, start, end int64) (*http.Resp
 	return resp, nil
 }
 
-func buildNoBodyRespond(c *Caching, hasRangeRequest bool, start, end int64) *http.Response {
-	resp := &http.Response{
-		// 状态码可以统一在这里固定 200，由 PostRequest 阶段或 postCacheProcessor 统一处理
-		StatusCode:    c.md.Code, // http.StatusOK,
-		ContentLength: int64(c.md.Size),
-		Header:        make(http.Header),
-	}
-
-	xhttp.CopyHeader(resp.Header, c.md.Headers)
-
-	for k := range keyMap {
-		resp.Header.Del(k)
-	}
-
-	// 206 Range 头处理
-	if hasRangeRequest {
-		resp.StatusCode = http.StatusPartialContent
-		resp.Header.Set("Content-Range", fmt.Sprintf("bytes %d-%d/%d", start, end, c.md.Size))
-	}
-
-	// 计算真实 CL, 这里主要防止出现 0 body size 的情况
-	cl := end - start + 1
-	resp.ContentLength = cl
-	resp.Header.Set("Content-Length", strconv.FormatInt(cl, 10))
-
-	return resp
-}
-
 func (c *Caching) getUpstreamReader(fromByte, toByte uint64, async bool) (io.ReadCloser, error) {
 	// get from origin request header
 	rawRange := c.req.Header.Get("Range")
@@ -286,14 +258,15 @@ func (c *Caching) getUpstreamReader(fromByte, toByte uint64, async bool) (io.Rea
 	req.Header.Set("Range", newRange)
 	// add request-id [range]
 	// req.Header.Set("X-Request-ID", fmt.Sprintf("%s-%d", req.Header.Get(appctx.ProtocolRequestIDKey), fromByte)) // 附加 Request-ID suffix
-	// TODO: remove all internal header
+
+	// remove all internal header
 	req.Header.Del(constants.ProtocolCacheStatusKey)
 
 	doSubRequest := func() (*http.Response, error) {
 		now := time.Now()
-		c.log.Debugf("getUpstreamReader doProxy[part]: begin: %s, rawRange: %s, newRange: %s", now, rawRange, newRange)
+		c.log.Debugf("getUpstreamReader doProxy[chunk]: begin: %s, rawRange: %s, newRange: %s", now, rawRange, newRange)
 		resp, err := c.doProxy(req, true)
-		c.log.Infof("getUpstreamReader doProxy[part]: timeCost: %s, rawRange: %s, newRange: %s", time.Since(now), rawRange, newRange)
+		c.log.Infof("getUpstreamReader doProxy[chunk]: timeCost: %s, rawRange: %s, newRange: %s", time.Since(now), rawRange, newRange)
 		if err != nil {
 			closeBody(resp)
 			return nil, err
@@ -302,7 +275,7 @@ func (c *Caching) getUpstreamReader(fromByte, toByte uint64, async bool) (io.Rea
 		c.cacheStatus = storage.CachePartHit
 		// 发起的是 206 请求，但是返回的非 206
 		if resp.StatusCode != http.StatusPartialContent {
-			c.log.Warnf("getUpstreamReader doProxy[part]: status code: %d, bod size: %d", resp.StatusCode, resp.ContentLength)
+			c.log.Warnf("getUpstreamReader doProxy[chunk]: status code: %d, bod size: %d", resp.StatusCode, resp.ContentLength)
 			return resp, xhttp.NewBizError(resp.StatusCode, resp.Header)
 		}
 		return resp, nil
@@ -449,97 +422,13 @@ func (c *Caching) doProxy(req *http.Request, subRequest bool) (*http.Response, e
 		xhttp.CopyHeader(c.md.Headers, resp.Header)
 	}
 
+	// drop internal header
+	c.md.Headers.Del("X-Protocol")
+	c.md.Headers.Del("X-Protocol-Cache")
+	c.md.Headers.Del("X-Protocol-Request-Id")
+
 	c.log.Debugf("doProxy end %s %q code: %d %s", proxyReq.Method, proxyReq.URL.String(), resp.StatusCode, respRange.String())
 	return resp, proxyErr
-}
-
-// flushbuffer returns flush cache file to bucket callback
-func (c *Caching) flushbuffer(respRange xhttp.ContentRange) (iobuf.EventSuccess, iobuf.EventClose) {
-	// is chunked encoding
-	// chunked encoding when object size unknown, waiting for Read io.EOF
-	chunked := respRange.ObjSize <= 0
-
-	// MAX_FILE_SIZE / PART_SIZE
-	// PART_SIZE -> bitmap block_size
-
-	endPart := func() uint32 {
-		epart := uint32(respRange.ObjSize / iobuf.BitBlock)
-		if respRange.ObjSize%iobuf.BitBlock > 0 {
-			epart++
-		}
-		return epart
-	}()
-
-	getOffset := func(partIdx uint32) int64 {
-		point := partIdx * iobuf.BitBlock
-		if partIdx == 0 {
-			point = 0
-		}
-		return int64(point)
-	}
-
-	c.log.Debugf("flushbuffer now. chunked %t", chunked)
-
-	wpath := c.id.WPath(c.bucket.Path())
-
-	if err := os.MkdirAll(filepath.Dir(wpath), 0o755); err != nil {
-		c.log.Debugf("mkdir fail %s", err)
-	}
-
-	w := bufio.NewWriter(io.Discard)
-	f, err := os.OpenFile(wpath, os.O_CREATE|os.O_RDWR, 0o755)
-	if err == nil {
-		w = bufio.NewWriter(f)
-	} else {
-		log.Warnf("open-file failed err %s", err)
-	}
-
-	cleanup := func(eof bool) {
-		_ = c.bucket.Store(c.req.Context(), c.md)
-	}
-
-	// TODO: global resource lock.
-	// c.Lock()
-	// defer c.Unlock()
-
-	// write file.
-	writeBuffer := func(buf []byte, bitIdx uint32, current uint64, eof bool) error {
-		if chunked {
-			c.md.Size = current
-			c.md.Headers.Set("Content-Length", fmt.Sprintf("%d", current))
-		} else if uint64(len(buf)) != iobuf.BitBlock && current != respRange.ObjSize {
-			c.log.Debugf("part[%d] is not complete, want end-part [%d] ", bitIdx+1, endPart)
-			return nil
-		}
-
-		offset := getOffset(bitIdx)
-		if offset > 0 {
-			// write buf to `wpath` file at offset
-			if _, err = f.Seek(offset, io.SeekStart); err != nil {
-				return err
-			}
-		}
-
-		if nn, err1 := w.Write(buf); err1 != nil || nn != len(buf) {
-			return fmt.Errorf("writeBuffer part[%d] failed err %w", bitIdx, err)
-		}
-		c.md.Parts.Set(bitIdx)
-
-		if eof {
-			if endPart == uint32(c.md.Parts.Count()) {
-				c.log.Debugf("file all part complete at %s", time.Now().Format(time.DateTime))
-				_ = w.Flush()
-
-				// TODO: trigger file crc check
-				// ...
-			}
-		}
-
-		//c.log.Debugf("flushBuffer %s, curPart: %d endPart: %d, offset %d, write bufsize %d", wpath, bitIdx, endPart, offset, n)
-		return nil
-	}
-
-	return writeBuffer, cleanup
 }
 
 func (c *Caching) flushbufferSlice(respRange xhttp.ContentRange) (iobuf.EventSuccess, iobuf.EventClose) {
@@ -557,7 +446,7 @@ func (c *Caching) flushbufferSlice(respRange xhttp.ContentRange) (iobuf.EventSuc
 	}()
 
 	writerBuffer := func(buf []byte, index uint32, current uint64, eof bool) error {
-		f, wpath, err := c.bucket.WriteChunkFile(context.Background(), c.id, index)
+		f, wpath, err := c.bucket.WriteChunkFile(c.req.Context(), c.id, index)
 		if err != nil {
 			return err
 		}
@@ -579,6 +468,11 @@ func (c *Caching) flushbufferSlice(respRange xhttp.ContentRange) (iobuf.EventSuc
 
 		// save slice chunk
 		c.md.Chunks.Set(index)
+		if !c.opt.AsyncFlushChunk {
+			c.log.Debugf("flush sync metadata at chunk %d/%d", index+1, endPart)
+			// store chunk now.
+			_ = c.bucket.Store(c.req.Context(), c.md)
+		}
 
 		if eof {
 			if endPart == uint32(c.md.Chunks.Count()) {
@@ -606,7 +500,11 @@ func (c *Caching) flushbufferSlice(respRange xhttp.ContentRange) (iobuf.EventSuc
 	}
 
 	return writerBuffer, func(eof bool) {
-		_ = c.bucket.Store(c.req.Context(), c.md)
+		if c.opt.AsyncFlushChunk {
+			c.log.Debug("flush async metadata at eof")
+			// store chunk with last eof event.
+			_ = c.bucket.Store(c.req.Context(), c.md)
+		}
 	}
 
 }

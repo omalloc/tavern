@@ -15,7 +15,6 @@ import (
 	"strings"
 	"sync"
 	"syscall"
-	"time"
 
 	"github.com/omalloc/proxy/selector"
 	"github.com/omalloc/tavern/api/defined/v1/storage"
@@ -125,6 +124,34 @@ func (c *Caching) getAvailableChunks() (available []uint32) {
 	return available
 }
 
+func buildNoBodyRespond(c *Caching, hasRangeRequest bool, start, end int64) *http.Response {
+	resp := &http.Response{
+		// 状态码可以统一在这里固定 200，由 PostRequest 阶段或 postCacheProcessor 统一处理
+		StatusCode:    c.md.Code, // http.StatusOK,
+		ContentLength: int64(c.md.Size),
+		Header:        make(http.Header),
+	}
+
+	xhttp.CopyHeader(resp.Header, c.md.Headers)
+
+	for k := range keyMap {
+		resp.Header.Del(k)
+	}
+
+	// 206 Range 头处理
+	if hasRangeRequest {
+		resp.StatusCode = http.StatusPartialContent
+		resp.Header.Set("Content-Range", fmt.Sprintf("bytes %d-%d/%d", start, end, c.md.Size))
+	}
+
+	// 计算真实 CL, 这里主要防止出现 0 body size 的情况
+	cl := end - start + 1
+	resp.ContentLength = cl
+	resp.Header.Set("Content-Length", strconv.FormatInt(cl, 10))
+
+	return resp
+}
+
 func getContents(c *Caching, reqChunks []uint32, from uint32) (io.ReadCloser, int, error) {
 	idx := reqChunks[from]
 	partSize := c.opt.SliceSize
@@ -172,22 +199,10 @@ func getContents(c *Caching, reqChunks []uint32, from uint32) (io.ReadCloser, in
 		newRange := fmt.Sprintf("bytes=%d-%d", fromByte, toByte)
 		req.Header.Set("Range", newRange)
 
-		reader := iobuf.AsyncReadCloser(func() (*http.Response, error) {
-			now := time.Now()
-			c.log.Debugf("doProxy[middle]: begin: %s, Range: %s, from index %d", now, newRange, index)
-			resp, err1 := c.doProxy(req, true)
-			c.log.Debugf("doProxy[middle]: timeCost: %s, Range: %s, from index%d", time.Since(now), newRange, index)
-			if err1 != nil {
-				return nil, err1
-			}
-
-			// 发起的是 206 请求，但是返回的非 206
-			if resp.StatusCode != http.StatusPartialContent {
-				c.log.Warnf("doProxy[middle]: status code: %d, bod size: %d", resp.StatusCode, resp.ContentLength)
-				return resp, xhttp.NewBizError(resp.StatusCode, resp.Header)
-			}
-			return resp, err1
-		})
+		reader, err := c.getUpstreamReader(fromByte, toByte, true)
+		if err != nil {
+			return nil, 0, err
+		}
 
 		return iobuf.PartsReadCloser(reader, chunkFile), int(availableChunks[index]-reqChunks[from]) + 1, nil
 	}
@@ -204,17 +219,10 @@ func getContents(c *Caching, reqChunks []uint32, from uint32) (io.ReadCloser, in
 	req := c.req.Clone(context.Background())
 	req.Header.Set("Range", newRange)
 
-	reader := iobuf.AsyncReadCloser(func() (*http.Response, error) {
-		now := time.Now()
-		c.log.Debugf("doProxy[tail]: begin: %s, rawRange: %s, newRange: %s", now, rawRange, newRange)
-		resp, err1 := c.doProxy(req, true)
-		c.log.Debugf("doProxy[tail]: timeCost: %s, rawRange: %s, newRange: %s", time.Since(now), rawRange, newRange)
-
-		if err1 != nil {
-			return nil, err1
-		}
-		return resp, err1
-	})
+	reader, err := c.getUpstreamReader(fromByte, toByte, true)
+	if err != nil {
+		return nil, 0, err
+	}
 
 	return reader, len(reqChunks) - int(from), nil
 }
@@ -293,6 +301,7 @@ func cloneRequest(req *http.Request) *http.Request {
 	xhttp.CopyHeader(proxyReq.Header, req.Header)
 	xhttp.RemoveHopByHopHeaders(proxyReq.Header)
 
+	log.Context(req.Context()).Debugf("load upstream addr %s", req.Header.Get(constants.InternalUpstreamAddr))
 	// custom upstream addr
 	if upsAddr := req.Header.Get(constants.InternalUpstreamAddr); upsAddr != "" {
 		proxyReq = proxyReq.WithContext(
