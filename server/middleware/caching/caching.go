@@ -409,6 +409,8 @@ func (c *Caching) doProxy(req *http.Request, subRequest bool) (*http.Response, e
 		// error code cache feature.
 		if statusCode >= http.StatusBadRequest &&
 			req.Header.Get(constants.InternalCacheErrCode) != "1" {
+			c.cacheable = false // 禁止缓存错误码缓存
+
 			copiedHeaders := make(http.Header)
 			xhttp.CopyHeader(copiedHeaders, resp.Header)
 			c.md.Headers = copiedHeaders
