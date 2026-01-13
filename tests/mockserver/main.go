@@ -1,16 +1,20 @@
 package main
 
 import (
+	"bytes"
 	"compress/gzip"
 	"crypto/rand"
 	"flag"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"os"
 	"strings"
 
 	"github.com/andybalholm/brotli"
+
+	"github.com/omalloc/tavern/pkg/iobuf"
 	"github.com/omalloc/tavern/tests/mockserver/middleware/cachecontrol"
 	"github.com/omalloc/tavern/tests/mockserver/middleware/logging"
 )
@@ -50,7 +54,9 @@ func main() {
 			nw := gzip.NewWriter(w)
 			defer nw.Close()
 
-			_, _ = nw.Write(buf)
+			r := iobuf.NewRateLimitReader(io.NopCloser(bytes.NewReader(buf)), 100)
+			_, _ = io.Copy(nw, r)
+
 			return
 		}
 
@@ -59,12 +65,13 @@ func main() {
 			nw := brotli.NewWriter(w)
 			defer nw.Close()
 
-			_, _ = nw.Write(buf)
+			r := iobuf.NewRateLimitReader(io.NopCloser(bytes.NewReader(buf)), 100)
+			_, _ = io.Copy(nw, r)
+
 			return
 		}
 
 		_, _ = w.Write([]byte("hello world"))
-		return
 	}))
 
 	mux.Handle("/varytest/normal", http.StripPrefix("/varytest/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/kelindar/bitmap"
+
 	"github.com/omalloc/tavern/api/defined/v1/storage/object"
 	"github.com/omalloc/tavern/contrib/log"
 	xhttp "github.com/omalloc/tavern/pkg/x/http"
@@ -270,7 +271,8 @@ func (v *VaryProcessor) handleResponseVary(caching *Caching, resp *http.Response
 // upgrade converts a normal cache object to a Vary-aware cache structure.
 // It creates a new Vary metadata entry and updates the cache flags.
 func (v *VaryProcessor) upgrade(c *Caching, resp *http.Response, id *object.ID, varyData string) (*object.Metadata, error) {
-	virtualKey := append(c.md.VirtualKey, varyData)
+	virtualKey := varycontrol.Clean(append(c.md.VirtualKey, varyData)...)
+
 	if len(virtualKey) > v.maxLimit {
 		c.log.Errorf("Vary version limit exceeded: %d", len(c.md.VirtualKey))
 		return nil, ErrVarySizeLimited
