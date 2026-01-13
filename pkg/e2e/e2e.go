@@ -14,8 +14,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/omalloc/tavern/internal/constants"
 	"github.com/stretchr/testify/assert"
+
+	"github.com/omalloc/tavern/internal/constants"
 )
 
 var (
@@ -109,7 +110,7 @@ func (e *E2E) Do(rewrite func(r *http.Request)) (*http.Response, error) {
 	}
 
 	// wait for a while to let the connection close properly
-	// time.Sleep(time.Millisecond * 200)
+	time.Sleep(time.Millisecond * 200)
 
 	return resp, err
 }
