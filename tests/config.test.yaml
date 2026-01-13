@@ -1,0 +1,117 @@
+strict: true
+pidfile: /tmp/tavern.pid
+logger:
+  level: debug
+  caller: true
+  traceid: true
+  nopid: false
+  max_size: 10 # is the maximum size in megabytes of the log file before it gets rotated.
+  max_backups: 10
+  max_age: # is the maximum number of days to retain old log files
+  compress: false # should be compressed using gzip.
+server:
+  addr: "/tmp/tavern.sock"
+  read_timeout: 60s
+  write_timeout: 60s
+  idle_timeout: 90s
+  read_header_timeout: 30s
+  max_header_bytes: 1048576 # 1MB=1048576
+  server_via_tokens: true`
+  pprof:
+    username: "admin"
+    password: "password"
+  middleware:
+    - name: recovery
+      options:
+        fail_count_threshold: 20
+        fail_window: 60
+    - name: rewrite
+      options:
+        request_headers_rewrite:
+        response_headers_rewrite:
+          set:
+            X-Frame-Options: "DENY"
+            X-Content-Type-Options: "nosniff"
+            Referrer-Policy: "no-referrer"
+          add:
+            X-XSS-Protection: "1; mode=block"
+          remove:
+            - "Server"
+    - name: multirange
+      options:
+        merge: false
+    - name: caching
+      options:
+        fuzzy_refresh: true
+        fuzzy_refresh_rate: 0.1
+        collapsed_request: true
+        collapsed_request_wait_timeout: 100ms
+        include_query_in_cache_key: true
+        vary_limit: 100
+        vary_ignore_key:
+          - "Cookie"
+          - "Access-Control-Request-Headers"
+          - "Access-Control-Request-Method"
+  access_log:
+    enabled: true
+    encrypt:
+      enabled: false
+      secret: "123"
+    path: ./logs/access.log
+plugin:
+  - name: example-plugin
+    options:
+      option1: value1
+      option2: 2
+  - name: purge
+    options:
+      threshold: 60
+      max_queue_size: 1000
+      allow_hosts:
+        - "127.0.0.1"
+        - "127.1"
+        - "localhost"
+        - "@"
+      log_path: ./logs/purge.log
+  - name: watchdog
+    options:
+      check_interval: 1s
+      timeout_threshold: 3
+  - name: verifier
+    options:
+      endpoint: https://crc-svc.omalloc.com/receive
+      timeout: 5
+      report_ratio: 100
+storage:
+  driver: native # native, custom-driver
+  db_type: pebble # boltdb, badgerdb, pebble, nustdb
+  db_path: index
+  async_load: true
+  eviction_policy: fifo # fifo, lru, lfu
+  selection_policy: hashring # hashring, roundrobin
+  slice_size: 524288 # 1MB
+  buckets:
+    - path: inmemory
+      driver: memory
+  #  - path: /cache1
+  #    type: normal
+  #    max_object_limit: 10000000
+  #    db_config:
+  #      cache_size: 1024000000
+  #      mem_table_size: 256000000
+  #      bytes_per_sync: 10240000
+  #      wal_bytes_per_sync: 20480000
+  #      wal_min_sync_interval: 5
+  #      write_sync_mode: false
+upstream:
+  balancing: wrr
+  address:
+    - http://127.0.0.1:8000
+    # - unix:///tmp/run/tavern.sock
+  max_idle_conns: 1000
+  max_idle_conns_per_host: 500
+  max_connections_per_server: 100
+  insecure_skip_verify: true
+  resolve_addresses: false
+  features:
+    limit_rate_by_fd: true
