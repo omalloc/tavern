@@ -131,42 +131,42 @@ func IsChunked(h http.Header) bool {
 //
 // It returns the parsed cache duration and a boolean indicating whether caching is allowed.
 func ParseCacheTime(withKey string, src http.Header) (time.Duration, bool) {
-	if withKey == "" {
-		hcc := src.Get("Cache-Control")
-		expire := src.Get("Expires")
 
-		if hcc == "" && expire == "" {
-			return DefaultProtocolCacheTime, true
-		}
+	if str := src.Get(withKey); str != "" {
 
-		ctrl := cachecontrol.Parse(hcc)
-
-		if ctrl.MaxAge() > 0 {
-			return ctrl.MaxAge(), true
-		}
-
-		if expire != "" {
-			if t, err := time.Parse(time.RFC1123, expire); err == nil {
-				// use the server time from the Date header to calculate
-				return time.Until(t), true
-			}
-		}
-
-		if !ctrl.Cacheable() {
+		ct, _ := strconv.Atoi(str)
+		// No-Cache
+		if ct <= 0 {
 			return 0, false
 		}
 
-		// default cache time
+		return time.Duration(ct) * time.Second, true
+	}
+
+	hcc := src.Get("Cache-Control")
+	expire := src.Get("Expires")
+
+	if hcc == "" && expire == "" {
 		return DefaultProtocolCacheTime, true
 	}
 
-	str := src.Get(withKey)
+	ctrl := cachecontrol.Parse(hcc)
 
-	ct, _ := strconv.Atoi(str)
-	// No-Cache
-	if ct <= 0 {
+	if ctrl.MaxAge() > 0 {
+		return ctrl.MaxAge(), true
+	}
+
+	if expire != "" {
+		if t, err := time.Parse(time.RFC1123, expire); err == nil {
+			// use the server time from the Date header to calculate
+			return time.Until(t), true
+		}
+	}
+
+	if !ctrl.Cacheable() {
 		return 0, false
 	}
 
-	return time.Duration(ct) * time.Second, true
+	// default cache time
+	return DefaultProtocolCacheTime, true
 }

@@ -40,14 +40,14 @@ func SumMD5(buf []byte) string {
 	return hex.EncodeToString(h.Sum(nil))
 }
 
-func DiscardBody(resp *http.Response) int64 {
+func DiscardBody(resp *http.Response) int {
 	if resp == nil || resp.Body == nil {
 		return 0
 	}
 
 	n, _ := io.Copy(io.Discard, resp.Body)
-	resp.Body.Close()
-	return n
+	_ = resp.Body.Close()
+	return int(n)
 }
 
 func HashBody(resp *http.Response) string {

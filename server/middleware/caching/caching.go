@@ -386,7 +386,7 @@ func (c *Caching) doProxy(req *http.Request, subRequest bool) (*http.Response, e
 	}
 
 	// parsed cache-control header
-	expiredAt, cacheable := xhttp.ParseCacheTime(req.Header.Get(constants.CacheTime), resp.Header)
+	expiredAt, cacheable := xhttp.ParseCacheTime(constants.CacheTime, resp.Header)
 
 	// expire time
 	c.md.ExpiresAt = now.Add(expiredAt).Unix()
@@ -408,7 +408,7 @@ func (c *Caching) doProxy(req *http.Request, subRequest bool) (*http.Response, e
 
 		// error code cache feature.
 		if statusCode >= http.StatusBadRequest &&
-			req.Header.Get(constants.InternalCacheErrCode) != "1" {
+			resp.Header.Get(constants.InternalCacheErrCode) != "1" {
 			c.cacheable = false // 禁止缓存错误码缓存
 
 			copiedHeaders := make(http.Header)

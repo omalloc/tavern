@@ -20,7 +20,7 @@ import (
 
 var (
 	mu        sync.RWMutex
-	localAddr = "127.0.0.1:8888"
+	localAddr = "/tmp/tavern.sock" // default local address
 	dump      = atomic.Bool{}
 	dumpReq   = atomic.Bool{}
 
