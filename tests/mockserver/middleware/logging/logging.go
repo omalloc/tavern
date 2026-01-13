@@ -7,7 +7,7 @@ import (
 
 func Logging(next http.Handler) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		log.Printf("%s %s", r.Method, r.URL.String())
+		log.Printf("%s %s Range=%s", r.Method, r.URL.String(), r.Header.Get("Range"))
 
 		next.ServeHTTP(w, r)
 	}

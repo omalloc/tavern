@@ -126,7 +126,7 @@ func (pc *ProcessorChain) preCacheProcessor(proxyClient proxy.Proxy, store stora
 	return caching, nil
 }
 
-func (pc *ProcessorChain) postCacheProcessor(caching *Caching, _ *http.Request, resp *http.Response) (*http.Response, error) {
+func (pc *ProcessorChain) postCacheProcessor(caching *Caching, req *http.Request, resp *http.Response) (*http.Response, error) {
 	caching.setXCache(resp)
 
 	if resp != nil && resp.Header != nil && caching.md != nil {
@@ -136,6 +136,11 @@ func (pc *ProcessorChain) postCacheProcessor(caching *Caching, _ *http.Request, 
 	}
 
 	if caching.cacheable {
+		// HEAD request need store metadata
+		if req.Method == http.MethodHead {
+			_ = caching.bucket.Store(caching.req.Context(), caching.md)
+		}
+
 		if caching.rootmd != nil {
 			_ = caching.bucket.Store(caching.req.Context(), caching.rootmd)
 		}

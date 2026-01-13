@@ -1,7 +1,6 @@
 package multirange
 
 import (
-	"context"
 	"errors"
 	"io"
 	"mime/multipart"
@@ -71,7 +70,7 @@ func Middleware(c *configv1.Middleware) (middleware.Middleware, func(), error) {
 						return
 					}
 
-					workerRequest := req.Clone(context.Background())
+					workerRequest := req.Clone(req.Context())
 					workerRequest.Header.Set("Range", ra.String())
 					raResp, err3 := origin.RoundTrip(workerRequest)
 					if err3 != nil {
