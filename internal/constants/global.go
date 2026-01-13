@@ -14,4 +14,5 @@ const (
 	InternalSwapfile         = "i-x-swapfile"
 	InternalFillRangePercent = "i-x-fp"
 	InternalCacheErrCode     = "i-x-ct-code"
+	InternalUpstreamAddr     = "i-x-ups-addr"
 )

@@ -17,6 +17,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/omalloc/proxy/selector"
 	"github.com/omalloc/tavern/api/defined/v1/storage"
 	"github.com/omalloc/tavern/api/defined/v1/storage/object"
 	"github.com/omalloc/tavern/contrib/log"
@@ -291,6 +292,13 @@ func cloneRequest(req *http.Request) *http.Request {
 	}
 	xhttp.CopyHeader(proxyReq.Header, req.Header)
 	xhttp.RemoveHopByHopHeaders(proxyReq.Header)
+
+	// custom upstream addr
+	if upsAddr := req.Header.Get(constants.InternalUpstreamAddr); upsAddr != "" {
+		proxyReq = proxyReq.WithContext(
+			selector.NewPeerContext(context.Background(), selector.NewPeer(selector.NewNode("http", upsAddr, map[string]string{}))),
+		)
+	}
 
 	return proxyReq
 }

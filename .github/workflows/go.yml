@@ -21,8 +21,14 @@ jobs:
       with:
         go-version: '1.25'
 
-#    - name: Build
-#      run: go build -v ./...
+    - name: Build
+      run: make build
+
+    - name: Run CacheServer
+      run: |
+        ./bin/tavern -c ./test/config.yaml 2>&1 &
+        sleep 2
+        echo "CacheServer is running"
 
     - name: Test
       run: go test -v ./...
