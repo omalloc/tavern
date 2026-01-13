@@ -113,6 +113,13 @@ func Middleware(c *configv1.Middleware) (middleware.Middleware, func(), error) {
 		store := storagev1.Current()
 
 		return middleware.RoundTripperFunc(func(req *http.Request) (resp *http.Response, err error) {
+			// only cache GET/HEAD request
+			if req.Method != http.MethodGet && req.Method != http.MethodHead {
+				// discard RequestURI for proxy client
+				req.RequestURI = ""
+				return proxyClient.Do(req, false, time.Millisecond)
+			}
+
 			// find indexdb cache-key has hit/miss.
 			caching, err := processor.preCacheProcessor(proxyClient, store, opts, req)
 
