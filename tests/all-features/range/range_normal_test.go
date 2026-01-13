@@ -34,7 +34,7 @@ func TestRangeOffset(t *testing.T) {
 
 		assert.Equal(t, f.MD5, resp.Header.Get("ETag"), "etag should be equal")
 
-		assert.Equal(t, int64(524288), size, "size should be 524288")
+		assert.Equal(t, 524288, size, "size should be 524288")
 
 		assert.Contains(t, resp.Header.Get("X-Cache"), "MISS", "cache should be MISS")
 	})
@@ -55,7 +55,7 @@ func TestRangeOffset(t *testing.T) {
 
 		assert.Contains(t, resp.Header.Get("X-Cache"), "HIT", "cache should be HIT")
 
-		assert.Equal(t, int64(524288), size, "size should be 524288")
+		assert.Equal(t, 524288, size, "size should be 524288")
 	})
 
 	t.Run("test range offset bytes=524288-1048575 PART_MISS", func(t *testing.T) {
@@ -74,7 +74,7 @@ func TestRangeOffset(t *testing.T) {
 
 		assert.Contains(t, resp.Header.Get("X-Cache"), "PART_MISS", "cache should be PART_MISS")
 
-		assert.Equal(t, int64(524288), size, "size should be 524288")
+		assert.Equal(t, 524288, size, "size should be 524288")
 	})
 
 	t.Run("test range offset bytes=524288-1572863 PART_HIT", func(t *testing.T) {
@@ -121,7 +121,7 @@ func TestRangeOffsetOverflow(t *testing.T) {
 
 		assert.Equal(t, http.StatusPartialContent, resp.StatusCode, "response should be code 206")
 
-		assert.Equal(t, int64(524288), size, "size should be 524288")
+		assert.Equal(t, 524288, size, "size should be 524288")
 	})
 
 	t.Run("test range offset end-overflow bytes=5242880-", func(t *testing.T) {
@@ -152,7 +152,7 @@ func TestRangeOffsetOverflow(t *testing.T) {
 
 		assert.Equal(t, http.StatusPartialContent, resp.StatusCode, "response should be code 206")
 
-		assert.Equal(t, int64(2), size, "size should be 2")
+		assert.Equal(t, 2, size, "size should be 2")
 	})
 
 	t.Run("PURGE", func(t *testing.T) {
@@ -179,7 +179,7 @@ func TestRangeExpiredRefresh(t *testing.T) {
 
 		assert.Contains(t, resp.Header.Get("X-Cache"), "MISS")
 
-		assert.Equal(t, int64(f.Size), size, "size should be file size")
+		assert.Equal(t, f.Size, size, "size should be file size")
 	})
 
 	t.Run("test range full-cache HIT", func(t *testing.T) {
