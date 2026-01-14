@@ -2,6 +2,7 @@ package caching
 
 import (
 	"context"
+	"io"
 	"math/rand/v2"
 	"net/http"
 	"time"
@@ -23,13 +24,14 @@ type RevalidateProcessor struct{}
 // calculateSoftTTL calculates the soft expiration time based on fuzzy_refresh_rate.
 // soft_ttl = hard_ttl * fuzzy_ratio
 // For example, if hard_ttl is 600s and fuzzy_ratio is 0.8, soft_ttl = 480s
+// Valid fuzzy_rate range is (0, 1.0], where 1.0 means fuzzy refresh starts immediately
 func calculateSoftTTL(respUnix, expiresAt int64, fuzzyRate float64) int64 {
 	hardTTL := expiresAt - respUnix
 	if hardTTL <= 0 {
 		return expiresAt
 	}
 	
-	// Ensure fuzzy rate is between 0 and 1
+	// Ensure fuzzy rate is in valid range (0, 1.0]
 	if fuzzyRate <= 0 || fuzzyRate > 1 {
 		fuzzyRate = 0.8 // default to 0.8 if invalid
 	}
@@ -259,15 +261,28 @@ func (r *RevalidateProcessor) asyncRevalidate(c *Caching, req *http.Request) {
 	}
 	defer closeBody(resp)
 	
-	// Handle 304 Not Modified - just update freshness
+	// Handle 304 Not Modified - just update freshness metadata
 	if resp.StatusCode == http.StatusNotModified {
 		r.freshness(c, resp)
 		c.log.Debugf("async fuzzy refresh completed (304) for object: %s", c.id.Key())
 		return
 	}
 	
-	// For non-304 responses, the normal caching logic will handle it
-	// through the response body processing
+	// For non-304 responses, the content has changed
+	// The doProxy method has already wrapped the response body with cache writing logic
+	// We need to consume the body to trigger the cache update
+	if resp.StatusCode == http.StatusOK && resp.Body != nil {
+		// Read the entire response body to trigger cache storage through the wrapper
+		// This ensures the new content is written to cache
+		_, err := io.Copy(io.Discard, resp.Body)
+		if err != nil {
+			c.log.Warnf("async fuzzy refresh failed to read body for object %s: %v", c.id.Key(), err)
+			return
+		}
+		c.log.Debugf("async fuzzy refresh completed (%d) for object: %s - content updated", resp.StatusCode, c.id.Key())
+		return
+	}
+	
 	c.log.Debugf("async fuzzy refresh completed (%d) for object: %s", resp.StatusCode, c.id.Key())
 }
 
