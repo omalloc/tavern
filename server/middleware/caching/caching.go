@@ -499,7 +499,12 @@ func (c *Caching) flushbufferSlice(respRange xhttp.ContentRange) (iobuf.EventSuc
 		return nil
 	}
 
-	return writerBuffer, func(eof bool) {
+	writerCloser := func(eof bool) {
+		if !eof && chunked {
+			_ = c.bucket.DiscardWithMessage(c.req.Context(), c.id, "incomplete chunked file discard")
+			return
+		}
+
 		if c.opt.AsyncFlushChunk {
 			c.log.Debug("flush async metadata at eof")
 			// store chunk with last eof event.
@@ -507,6 +512,7 @@ func (c *Caching) flushbufferSlice(respRange xhttp.ContentRange) (iobuf.EventSuc
 		}
 	}
 
+	return writerBuffer, writerCloser
 }
 
 // flushFailed flush cache file to bucket failed callback

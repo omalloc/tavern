@@ -80,6 +80,11 @@ func main() {
 		http.ServeFile(w, r, "./files/1M.bin")
 	})))
 
+	mux.Handle("/chunked", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		reader := iobuf.NewRateLimitReader(io.NopCloser(bytes.NewReader(buf)), 200)
+		_, _ = io.Copy(w, reader)
+	}))
+
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		log.Printf("received request: %s %s", r.Method, r.URL.String())
 
