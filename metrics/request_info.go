@@ -24,6 +24,11 @@ type RequestMetric struct {
 	FirstResponseTime time.Time
 }
 
+func (r *RequestMetric) Clone() *RequestMetric {
+	out := *r
+	return &out
+}
+
 func WithRequestMetric(req *http.Request) (*http.Request, *RequestMetric) {
 	metric := &RequestMetric{
 		StartAt:   time.Now(),
@@ -37,6 +42,10 @@ func FromContext(ctx context.Context) *RequestMetric {
 		return v
 	}
 	return &RequestMetric{}
+}
+
+func NewContext(ctx context.Context, metric *RequestMetric) context.Context {
+	return newContext(ctx, metric)
 }
 
 func newContext(ctx context.Context, metric *RequestMetric) context.Context {

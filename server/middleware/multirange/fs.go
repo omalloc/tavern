@@ -4,7 +4,7 @@ package multirange
 import (
 	"mime/multipart"
 
-	xhttp "github.com/omalloc/tavern/pkg/x/http"
+	"github.com/omalloc/tavern/pkg/x/http/rangecontrol"
 )
 
 type countingWriter int64
@@ -16,7 +16,7 @@ func (w *countingWriter) Write(p []byte) (n int, err error) {
 
 // rangesMIMESize returns the number of bytes it takes to encode the
 // provided ranges as a multipart response.
-func rangesMIMESize(ranges []*xhttp.Range, contentType string, contentSize uint64) (encSize int64) {
+func rangesMIMESize(ranges []rangecontrol.ByteRange, contentType string, contentSize uint64) (encSize int64) {
 	var w countingWriter
 	mw := multipart.NewWriter(&w)
 	for _, ra := range ranges {

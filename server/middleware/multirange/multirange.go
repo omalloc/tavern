@@ -2,6 +2,7 @@ package multirange
 
 import (
 	"errors"
+	"fmt"
 	"io"
 	"mime/multipart"
 	"net/http"
@@ -9,7 +10,9 @@ import (
 
 	configv1 "github.com/omalloc/tavern/api/defined/v1/middleware"
 	"github.com/omalloc/tavern/contrib/log"
+	"github.com/omalloc/tavern/metrics"
 	xhttp "github.com/omalloc/tavern/pkg/x/http"
+	"github.com/omalloc/tavern/pkg/x/http/rangecontrol"
 	"github.com/omalloc/tavern/server/middleware"
 )
 
@@ -35,8 +38,21 @@ func Middleware(c *configv1.Middleware) (middleware.Middleware, func(), error) {
 				return origin.RoundTrip(req)
 			}
 
-			unsafeRanges, err := xhttp.UnsatisfiableMultiRange(rawRange)
-			if err != nil || len(unsafeRanges) <= 1 {
+			// unsafeRanges, err := xhttp.UnsatisfiableMultiRange(rawRange)
+			// if err != nil || len(unsafeRanges) <= 1 {
+			// 	return origin.RoundTrip(req)
+			// }
+
+			byteRanges, err := rangecontrol.Parse(rawRange)
+			if err != nil {
+				// Range 解析失败，返回 416
+				headers := make(http.Header)
+				headers.Set("X-Error", err.Error())
+				return nil, xhttp.NewBizError(http.StatusRequestedRangeNotSatisfiable, headers)
+			}
+
+			mergedByteRanges := rangecontrol.MergeRanges(byteRanges)
+			if len(mergedByteRanges) <= 1 {
 				return origin.RoundTrip(req)
 			}
 
@@ -53,16 +69,17 @@ func Middleware(c *configv1.Middleware) (middleware.Middleware, func(), error) {
 			ctype := head.Header.Get("Content-Type")
 			xhttp.CopyHeadersWithout(header, head.Header, "Content-Length", "Content-Range", "Content-Type")
 
-			ranges, err2 := xhttp.Parse(rawRange, objSize)
-			if err2 != nil {
-				return nil, err2
-			}
-			sendSize := rangesMIMESize(ranges, ctype, objSize)
+			// ranges, err2 := xhttp.Parse(rawRange, objSize)
+			// if err2 != nil {
+			// 	return nil, err2
+			// }
+
+			sendSize := rangesMIMESize(byteRanges, ctype, objSize)
 			pr, pw := io.Pipe()
 			mw := multipart.NewWriter(pw)
 
 			go func() {
-				for _, ra := range ranges {
+				for _, ra := range byteRanges {
 					part, err3 := mw.CreatePart(ra.MimeHeader(ctype, objSize))
 					if err3 != nil {
 						log.Errorf("create part failed: %s", err3)
@@ -70,7 +87,12 @@ func Middleware(c *configv1.Middleware) (middleware.Middleware, func(), error) {
 						return
 					}
 
+					// copy request-id
+					newMetric := metrics.FromContext(req.Context()).Clone()
+					newMetric.RequestID = fmt.Sprintf("%s@%d-%d", newMetric.RequestID, ra.Start, ra.End)
 					workerRequest := req.Clone(req.Context())
+					workerRequest = workerRequest.WithContext(metrics.NewContext(workerRequest.Context(), newMetric))
+
 					workerRequest.Header.Set("Range", ra.String())
 					raResp, err3 := origin.RoundTrip(workerRequest)
 					if err3 != nil {

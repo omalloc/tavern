@@ -53,6 +53,10 @@ func (f *fillRange) PreRequest(c *Caching, req *http.Request) (*http.Request, er
 	if rawRange == "" || f.fillRangePercent == 0 {
 		return req, nil
 	}
+	// HEAD request do not need to fill range
+	if req.Method == http.MethodHead {
+		return req, nil
+	}
 
 	return f.fill(c, req, rawRange), nil
 }

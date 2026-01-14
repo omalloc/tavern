@@ -3,6 +3,7 @@ package rangecontrol
 import (
 	"errors"
 	"fmt"
+	"net/textproto"
 	"sort"
 	"strconv"
 	"strings"
@@ -18,16 +19,34 @@ type ByteRange struct {
 	End   int64 // inclusive, -1 表示 open-ended (100-)
 }
 
-func (r *ByteRange) ContentRange(totalSize int64) string {
+func (r ByteRange) Length() int64 {
+	return r.End - r.Start + 1
+}
+
+func (r ByteRange) String() string {
+	if r.End <= 0 && r.Start > 0 {
+		return fmt.Sprintf("bytes=%d-", r.Start)
+	}
+	return fmt.Sprintf("bytes=%d-%d", r.Start, r.End)
+}
+
+func (r ByteRange) ContentRange(totalSize uint64) string {
 	if totalSize <= 0 {
 		return fmt.Sprintf("bytes %d-%d/*", r.Start, r.End)
 	}
 
-	if r.End == -1 || r.End >= totalSize {
+	if r.End == -1 || r.End >= int64(totalSize) {
 		return fmt.Sprintf("bytes %d-%d/%d", r.Start, totalSize-1, totalSize)
 	}
 
 	return fmt.Sprintf("bytes %d-%d/%d", r.Start, r.End, totalSize)
+}
+
+func (r ByteRange) MimeHeader(contentType string, size uint64) textproto.MIMEHeader {
+	return textproto.MIMEHeader{
+		"Content-Range": {r.ContentRange(size)},
+		"Content-Type":  {contentType},
+	}
 }
 
 // Parse parses a Range header and returns.
@@ -73,7 +92,7 @@ func Parse(rangeHeader string) ([]ByteRange, error) {
 		} else {
 			end, err = strconv.ParseInt(endStr, 10, 64)
 			if err != nil || end < start {
-				return nil, ErrInvalidRange
+				return nil, fmt.Errorf("open-ended range format err %s-%s", startStr, endStr)
 			}
 		}
 
