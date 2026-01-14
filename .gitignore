@@ -37,3 +37,4 @@ config*.yaml
 # Editor/IDE
 .idea/
 .vscode/
+/tavern
