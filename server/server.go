@@ -275,17 +275,26 @@ func (s *HTTPServer) buildHandler(tripper http.RoundTripper) http.HandlerFunc {
 			}()
 
 			want := resp.Header.Get("Content-Length")
+			hasChunked := slices.Contains(resp.TransferEncoding, "chunked")
 
 			sent, err := io.CopyBuffer(w, resp.Body, *buf)
+
+			// handle copy error
 			if err != nil && !errors.Is(err, io.EOF) {
-				// abort ? continue ?
+				// quickabort ? continue ?
+
+				// if the body is chunked or no Content-Length, just close the connection
+				if hasChunked || want == "" {
+					wrapUpstreamError(w)
+				}
+
 				clog.Errorf("failed to copy response body to client: [%s] %s %s sent=%d want=%s err=%s", req.Proto, req.Method, req.URL.Path, sent, want, err)
 				_metricRequestUnexpectedClosedTotal.WithLabelValues(req.Proto, req.Method).Inc()
 				return
 			}
 
-			if slices.Contains(resp.TransferEncoding, "chunked") || want == "" {
-				clog.Debugf("copied %d response body bytes chunked body from upstream to client", sent)
+			if hasChunked || want == "" {
+				clog.Debugf("copied %d response chunked body bytes to client", sent)
 				return
 			}
 
@@ -361,4 +370,15 @@ func (s *HTTPServer) globalOptions(src map[string]any) map[string]any {
 	}
 
 	return src
+}
+
+func wrapUpstreamError(w http.ResponseWriter) {
+	if hj, ok := w.(http.Hijacker); ok {
+		conn, _, err := hj.Hijack()
+		if err != nil {
+			return
+		}
+
+		_ = conn.Close()
+	}
 }

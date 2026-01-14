@@ -1,8 +1,15 @@
 package http
 
-import "net/http"
+import (
+	"bufio"
+	"net"
+	"net/http"
+)
+
+var _ http.Hijacker = (*ResponseRecorder)(nil)
 
 type ResponseRecorder struct {
+	http.Hijacker
 	http.ResponseWriter
 
 	status int
@@ -32,6 +39,14 @@ func (r *ResponseRecorder) WriteHeader(s int) {
 	if f, ok := r.ResponseWriter.(http.Flusher); ok {
 		f.Flush()
 	}
+}
+
+// Hijack implements http.Hijacker.
+func (r *ResponseRecorder) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	if hj, ok := r.ResponseWriter.(http.Hijacker); ok {
+		return hj.Hijack()
+	}
+	return nil, nil, http.ErrHijacked
 }
 
 func (r *ResponseRecorder) Status() int {
