@@ -30,6 +30,13 @@ func TestCalculateSoftTTL(t *testing.T) {
 			wantSoftTTL: 4240, // 1000 + (3600 * 0.9) = 4240
 		},
 		{
+			name:        "100% rate - immediate fuzzy refresh",
+			respUnix:    1000,
+			expiresAt:   1600,
+			fuzzyRate:   1.0,
+			wantSoftTTL: 1600, // 1000 + (600 * 1.0) = 1600
+		},
+		{
 			name:        "invalid rate - should default to 0.8",
 			respUnix:    1000,
 			expiresAt:   1600,

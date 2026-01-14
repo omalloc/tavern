@@ -2,7 +2,7 @@ package caching
 
 import (
 	"context"
-	"math/rand"
+	"math/rand/v2"
 	"net/http"
 	"time"
 
@@ -30,7 +30,7 @@ func calculateSoftTTL(respUnix, expiresAt int64, fuzzyRate float64) int64 {
 	}
 	
 	// Ensure fuzzy rate is between 0 and 1
-	if fuzzyRate <= 0 || fuzzyRate >= 1 {
+	if fuzzyRate <= 0 || fuzzyRate > 1 {
 		fuzzyRate = 0.8 // default to 0.8 if invalid
 	}
 	
@@ -62,7 +62,7 @@ func shouldTriggerFuzzyRefresh(now, softTTL, hardTTL int64) bool {
 	elapsed := float64(now - softTTL)
 	probability := elapsed / totalWindow
 	
-	// Random trigger based on probability
+	// Random trigger based on probability using math/rand/v2 which is thread-safe
 	return rand.Float64() < probability
 }
 
