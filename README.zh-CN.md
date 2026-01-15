@@ -16,17 +16,17 @@
 Tavern 是一个 Go 实现的高性能 HTTP 缓存代理服务器，旨在利用现代化的服务框架提供更灵活的架构、更强的扩展性以及更优秀的性能。
 </p>
 
-其他语言:  [English](README.md)
+其他语言: [English](README.md)
 
 ## ✨ 特性 (Features)
 
 - **核心缓存能力**:
   - [x] 缓存预取 (Prefetch)
   - [x] 缓存推送 (URL/DIR Push)
-    - [x] URL标记过期 (Mark Expired)
-    - [x] URL缓存文件删除 (CacheFile Delete)
-    - [ ] DIR标记过期 (DirPath Mark Expired)
-    - [x] DIR缓存文件删除 (DirPath Delete)
+    - [x] URL 标记过期 (Mark Expired)
+    - [x] URL 缓存文件删除 (CacheFile Delete)
+    - [x] DIR 标记过期 (DirPath Mark Expired)
+    - [x] DIR 缓存文件删除 (DirPath Delete)
   - [x] 模糊刷新 (Fuzzing fetch)
   - [x] 自动刷新 (Auto Refresh)
   - [x] 缓存变更校验 (Cache Validation)
@@ -37,7 +37,7 @@ Tavern 是一个 Go 实现的高性能 HTTP 缓存代理服务器，旨在利用
   - [x] Vary 分版本缓存 (Vary Cache)
   - [x] 头部重写 (Headers Rewrite)
   - [x] 支持 Multiple Range 请求
-  - [x] 缓存HASH校验 (CRC checksum/EdgeMode)
+  - [x] 缓存 HASH 校验 (CRC checksum/EdgeMode)
     - 你可能需要 [缓存校验中心](https://github.com/omalloc/trust-receive) 服务
 - **现代化架构**:
   - 基于 **Kratos** 框架，提供高扩展、模块复用能力
