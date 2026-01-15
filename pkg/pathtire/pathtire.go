@@ -9,45 +9,45 @@ import (
 const Separator = '/'
 
 // Node 表示 PathTrie 中的节点
-type Node[T any] struct {
-	children map[string]*Node[T] // 子节点映射
-	isEnd    bool                // 是否是路径结束
-	value    T                   // 节点存储的值
-	wildcard *Node[T]            // 用于存储通配符子节点
-	pattern  string              // 存储完整的路径模式
-	isRegex  bool                // 是否是正则表达式节点
-	regex    *regexp.Regexp      // 编译后的正则表达式
+type Node[K any, T any] struct {
+	children map[string]*Node[K, T] // 子节点映射
+	isEnd    bool                   // 是否是路径结束
+	value    T                      // 节点存储的值
+	wildcard *Node[K, T]            // 用于存储通配符子节点
+	pattern  string                 // 存储完整的路径模式
+	isRegex  bool                   // 是否是正则表达式节点
+	regex    *regexp.Regexp         // 编译后的正则表达式
 }
 
 // PathTrie 表示路径前缀树
-type PathTrie[T any] struct {
-	root *Node[T]
+type PathTrie[K any, T any] struct {
+	root *Node[K, T]
 }
 
 // NewPathTrie 创建新的 PathTrie
-func NewPathTrie[T any]() *PathTrie[T] {
-	return &PathTrie[T]{
-		root: &Node[T]{
-			children: make(map[string]*Node[T]),
+func NewPathTrie[K any, T any]() *PathTrie[K, T] {
+	return &PathTrie[K, T]{
+		root: &Node[K, T]{
+			children: make(map[string]*Node[K, T]),
 		},
 	}
 }
 
 // Insert 插入路径和对应的值
-func (t *PathTrie[T]) Insert(pattern string, value T) {
+func (t *PathTrie[K, T]) Insert(pattern string, value T) {
 	current := t.root
 	parts := split(pattern)
 
 	for _, part := range parts {
 		if current.children == nil {
-			current.children = make(map[string]*Node[T])
+			current.children = make(map[string]*Node[K, T])
 		}
 
 		// 处理通配符
 		if part == "*" {
 			if current.wildcard == nil {
-				current.wildcard = &Node[T]{
-					children: make(map[string]*Node[T]),
+				current.wildcard = &Node[K, T]{
+					children: make(map[string]*Node[K, T]),
 					pattern:  pattern,
 				}
 			}
@@ -64,8 +64,8 @@ func (t *PathTrie[T]) Insert(pattern string, value T) {
 					continue
 				}
 
-				current.wildcard = &Node[T]{
-					children: make(map[string]*Node[T]),
+				current.wildcard = &Node[K, T]{
+					children: make(map[string]*Node[K, T]),
 					pattern:  pattern,
 					isRegex:  true,
 					regex:    regex,
@@ -76,8 +76,8 @@ func (t *PathTrie[T]) Insert(pattern string, value T) {
 		}
 
 		if _, exists := current.children[part]; !exists {
-			current.children[part] = &Node[T]{
-				children: make(map[string]*Node[T]),
+			current.children[part] = &Node[K, T]{
+				children: make(map[string]*Node[K, T]),
 				pattern:  pattern,
 			}
 		}
@@ -89,7 +89,7 @@ func (t *PathTrie[T]) Insert(pattern string, value T) {
 }
 
 // Search 查找路径并返回对应的值（支持通配符匹配）
-func (t *PathTrie[T]) Search(path string) (T, bool) {
+func (t *PathTrie[K, T]) Search(path string) (T, bool) {
 	current := t.root
 	parts := split(path)
 
@@ -97,7 +97,7 @@ func (t *PathTrie[T]) Search(path string) (T, bool) {
 }
 
 // searchNode 递归搜索节点
-func (t *PathTrie[T]) searchNode(node *Node[T], parts []string, index int) (T, bool) {
+func (t *PathTrie[K, T]) searchNode(node *Node[K, T], parts []string, index int) (T, bool) {
 	if index == len(parts) {
 		if node.isEnd {
 			return node.value, true
@@ -140,7 +140,7 @@ func (t *PathTrie[T]) searchNode(node *Node[T], parts []string, index int) (T, b
 }
 
 // FindByPrefix 通过前缀查找所有匹配的路径和值
-func (t *PathTrie[T]) FindByPrefix(prefix string) map[string]T {
+func (t *PathTrie[K, T]) FindByPrefix(prefix string) map[string]T {
 	results := make(map[string]T)
 	current := t.root
 	parts := split(prefix)
@@ -160,7 +160,7 @@ func (t *PathTrie[T]) FindByPrefix(prefix string) map[string]T {
 }
 
 // collectValues 递归收集节点下的所有值
-func (t *PathTrie[T]) collectValues(node *Node[T], results map[string]T) {
+func (t *PathTrie[K, T]) collectValues(node *Node[K, T], results map[string]T) {
 	if node.isEnd {
 		results[node.pattern] = node.value
 	}
