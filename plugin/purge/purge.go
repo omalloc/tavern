@@ -81,13 +81,16 @@ func (r *PurgePlugin) HandleFunc(next http.HandlerFunc) http.HandlerFunc {
 		if storeUrl == "" {
 			storeUrl = req.URL.String()
 		}
-		r.log.Debugf("purge request %s received: %s", ipPort[0], storeUrl)
 
 		u, err1 := url.Parse(storeUrl)
 		if err1 != nil {
 			r.log.Errorf("failed to parse storeUrl %s: %s", storeUrl, err1)
 			return
 		}
+
+		ctrl := parsePurgeControl(req.Header.Get(r.opt.HeaderName))
+
+		r.log.Debugf("purge request %s received: %s %s", ipPort[0], storeUrl, ctrl.String())
 
 		current := storage.Current()
 
@@ -99,18 +102,15 @@ func (r *PurgePlugin) HandleFunc(next http.HandlerFunc) http.HandlerFunc {
 		}
 
 		// purge dir
-		if typ := req.Header.Get(r.opt.HeaderName); strings.ToLower(typ) == "dir" {
+		if ctrl.Dir {
 			// check if/domain exist
 			if _, err := current.SharedKV().Get(context.Background(),
 				[]byte(fmt.Sprintf("if/domain/%s", u.Host))); err != nil && errors.Is(err, storagev1.ErrKeyNotFound) {
-				r.log.Infof("purge dir %s but is not caching in the service", storeUrl)
+				r.log.Infof("purge dir %s but is not caching in the service", u.Host)
 				return
 			}
 
-			if err := current.PURGE(storeUrl, storagev1.PurgeControl{
-				Hard: true,
-				Dir:  true,
-			}); err != nil {
+			if err := current.PURGE(storeUrl, ctrl); err != nil {
 				if errors.Is(err, storagev1.ErrKeyNotFound) {
 					w.Header().Set("Content-Length", "0")
 					w.Header().Set("Content-Type", "application/json; charset=utf-8")
@@ -132,10 +132,7 @@ func (r *PurgePlugin) HandleFunc(next http.HandlerFunc) http.HandlerFunc {
 		}
 
 		// purge single file.
-		if err := current.PURGE(storeUrl, storagev1.PurgeControl{
-			Hard: true,
-			Dir:  false,
-		}); err != nil {
+		if err := current.PURGE(storeUrl, ctrl); err != nil {
 			// key not found.
 			if errors.Is(err, storagev1.ErrKeyNotFound) {
 				w.Header().Set("Content-Length", "0")
@@ -176,4 +173,27 @@ func NewPurgePlugin(opts configv1.Option, log *log.Helper) (configv1.Plugin, err
 		opt:       opt,
 		allowAddr: allowAddr,
 	}, nil
+}
+
+func parsePurgeControl(headValue string) storagev1.PurgeControl {
+	param := strings.Split(strings.ToLower(headValue), ",")
+
+	ctrl := storagev1.PurgeControl{
+		MarkExpired: true, // 默认用过期标记
+	}
+
+	if len(param) >= 1 {
+		ctrl.Dir = param[0] == "dir"
+	}
+
+	// 配置推送模式 hard / mark_expired
+	if len(param) == 2 {
+		hasHard := param[1] == "hard"
+
+		ctrl.Hard = hasHard
+		ctrl.MarkExpired = !hasHard
+	}
+
+	// 没有配置推送选项
+	return ctrl
 }

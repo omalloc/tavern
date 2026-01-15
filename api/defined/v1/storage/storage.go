@@ -3,6 +3,7 @@ package storage
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 
 	"github.com/omalloc/tavern/api/defined/v1/storage/object"
@@ -82,6 +83,18 @@ type PurgeControl struct {
 	Hard        bool `json:"hard"`         // 是否硬删除, default: false 与 MarkExpired 冲突
 	Dir         bool `json:"dir"`          // 是否清理目录, default: false
 	MarkExpired bool `json:"mark_expired"` // 是否标记为过期, default: false 与 Hard 冲突
+}
+
+func (r PurgeControl) String() string {
+	mode := "file"
+	if r.Dir {
+		mode = "dir"
+	}
+	expOrHard := "mark_expired"
+	if r.Hard {
+		expOrHard = "hard_del"
+	}
+	return fmt.Sprintf("mode:%s@%s", mode, expOrHard)
 }
 
 var ErrSharedKVKeyNotFound = errors.New("key not found")

@@ -37,6 +37,7 @@ import (
 	"github.com/omalloc/tavern/proxy"
 	"github.com/omalloc/tavern/server"
 	"github.com/omalloc/tavern/storage"
+	"github.com/omalloc/tavern/storage/marked"
 )
 
 var (
@@ -113,11 +114,12 @@ func newApp(bc *conf.Bootstrap, logger log.Logger) (*kratos.App, error) {
 	}
 
 	// init storage
-	st, err := storage.New(bc.Storage, log.GetLogger())
+	store, err := storage.New(bc.Storage, log.GetLogger())
 	if err != nil {
 		log.Fatalf("failed to initialize storage: %v", err)
 	}
-	storage.SetDefault(st)
+	store = marked.WrapStorage(store, marked.NewSharedKVChecker(store.SharedKV()))
+	storage.SetDefault(store)
 
 	// init upstream
 	nodes := make([]selector.Node, 0, len(bc.Upstream.Address))
@@ -184,7 +186,7 @@ func newApp(bc *conf.Bootstrap, logger log.Logger) (*kratos.App, error) {
 			log.Info("tavern sig event SIGUSR2")
 
 			// close all db
-			if err := st.Close(); err != nil {
+			if err := store.Close(); err != nil {
 				log.Errorf("failed to close storage: %s", err)
 			}
 

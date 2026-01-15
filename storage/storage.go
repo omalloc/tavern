@@ -128,6 +128,11 @@ func (n *nativeStorage) Buckets() []storage.Bucket {
 func (n *nativeStorage) PURGE(storeUrl string, typ storage.PurgeControl) error {
 	// Directory prefix purge
 	if typ.Dir {
+		// For mark-expired on dir, skip sharedkv hits and fallback to full scan below.
+		if typ.MarkExpired {
+			return nil
+		}
+
 		// For directory purge, we prefer SharedKV inverted index when available:
 		// key schema: ix/<bucketID>/<storeUrl>
 		// value: object.IDHash bytes
@@ -150,8 +155,6 @@ func (n *nativeStorage) PURGE(storeUrl string, typ storage.PurgeControl) error {
 					if err := b.DiscardWithHash(ctx, h); err == nil {
 						processed++
 					}
-				} else {
-					// For mark-expired on dir, skip sharedkv hits and fallback to full scan below.
 				}
 
 				// remove index mapping
