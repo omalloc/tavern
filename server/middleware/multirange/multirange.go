@@ -65,14 +65,16 @@ func Middleware(c *configv1.Middleware) (middleware.Middleware, func(), error) {
 			if head.Body != nil {
 				_ = head.Body.Close()
 			}
-			objSize := uint64(head.ContentLength)
+
+			objSize := uint64(head.ContentLength) // ContentLength 不一定存在
+			cr, err := rangecontrol.ParseContentRange(head.Header.Get("Content-Range"))
+			if err == nil {
+				// 如果源站支持 Range 头响应，则使用其总大小
+				objSize = uint64(cr.Size)
+			}
+
 			ctype := head.Header.Get("Content-Type")
 			xhttp.CopyHeadersWithout(header, head.Header, "Content-Length", "Content-Range", "Content-Type")
-
-			// ranges, err2 := xhttp.Parse(rawRange, objSize)
-			// if err2 != nil {
-			// 	return nil, err2
-			// }
 
 			sendSize := rangesMIMESize(byteRanges, ctype, objSize)
 			pr, pw := io.Pipe()
@@ -126,7 +128,7 @@ func Middleware(c *configv1.Middleware) (middleware.Middleware, func(), error) {
 // 发起 HEAD 请求获取资源信息; content-type, content-length
 func prefetchResource(req *http.Request, next http.RoundTripper) (*http.Response, error) {
 	newreq := req.Clone(req.Context())
-	newreq.Header.Del("Range")
+	newreq.Header.Set("Range", "bytes=0-0")
 	newreq.Method = http.MethodHead
 	head, err1 := next.RoundTrip(newreq)
 	if err1 != nil {
