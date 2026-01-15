@@ -27,7 +27,7 @@ Other languages:  [简体中文](README.zh-CN.md)
     - [x] URL cache file delete
     - [ ] DIR mark expired
     - [x] DIR cache file delete
-  - [ ] Fuzzy refresh (Fuzzing fetch)
+  - [x] Fuzzy refresh (Fuzzing fetch)
   - [x] Auto refresh
   - [x] Cache validation
   - [ ] Hot migration

@@ -27,7 +27,7 @@ Tavern 是一个 Go 实现的高性能 HTTP 缓存代理服务器，旨在利用
     - [x] URL缓存文件删除 (CacheFile Delete)
     - [ ] DIR标记过期 (DirPath Mark Expired)
     - [x] DIR缓存文件删除 (DirPath Delete)
-  - [ ] 模糊刷新 (Fuzzing fetch)
+  - [x] 模糊刷新 (Fuzzing fetch)
   - [x] 自动刷新 (Auto Refresh)
   - [x] 缓存变更校验 (Cache Validation)
   - [ ] 热点迁移 (Hot Migration)
