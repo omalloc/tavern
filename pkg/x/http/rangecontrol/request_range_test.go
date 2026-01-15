@@ -163,7 +163,7 @@ func TestByteRange_ContentRange(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			got := tc.byteRange.ContentRange(tc.totalSize)
+			got := tc.byteRange.ContentRange(uint64(tc.totalSize))
 			if got != tc.want {
 				t.Errorf("ContentRange(%d) = %v, want %v", tc.totalSize, got, tc.want)
 			}
