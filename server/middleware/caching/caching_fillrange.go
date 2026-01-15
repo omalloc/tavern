@@ -95,9 +95,10 @@ func (f *fillRange) PostRequest(c *Caching, req *http.Request, resp *http.Respon
 		}
 
 		// 修正填充的 end 数据范围
+		// 从 Content-Range 取 ObjectSize 而不是 Content-Length
 		newEnd := (fill.newEnd - fill.newStart)
-		if newEnd > int(resp.ContentLength) {
-			fill.newEnd = fill.newStart + int(resp.ContentLength) - 1
+		if newEnd > int(cr.ObjSize) {
+			fill.newEnd = fill.newStart + int(cr.ObjSize) - 1
 		}
 		if fill.rawEnd > fill.newEnd {
 			fill.rawEnd = fill.newEnd
