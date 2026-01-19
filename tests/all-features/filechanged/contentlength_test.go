@@ -150,7 +150,7 @@ func TestContentLenShorter(t *testing.T) {
 			r.Header.Set("Range", rr.String())
 		})
 
-		n := e2e.DiscardBody(resp)
+		n := e2e.DiscardBody(resp, 512)
 
 		assert.NoError(t, err, "response should not error")
 

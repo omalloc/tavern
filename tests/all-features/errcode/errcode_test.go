@@ -5,9 +5,10 @@ import (
 	"strconv"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
+
 	"github.com/omalloc/tavern/internal/constants"
 	"github.com/omalloc/tavern/pkg/e2e"
-	"github.com/stretchr/testify/assert"
 )
 
 func init() {
@@ -30,7 +31,7 @@ func TestErrCodeNoCache(t *testing.T) {
 
 		assert.NoError(t, err, "response should not error")
 
-		_ = e2e.DiscardBody(resp)
+		_ = e2e.DiscardBody(resp, 512)
 
 		assert.Equal(t, http.StatusBadGateway, resp.StatusCode, "response should be code 502")
 	})
@@ -49,7 +50,7 @@ func TestErrCodeNoCache(t *testing.T) {
 
 		assert.NoError(t, err, "response should not error")
 
-		_ = e2e.DiscardBody(resp)
+		_ = e2e.DiscardBody(resp, 512)
 
 		assert.Equal(t, http.StatusBadGateway, resp.StatusCode, "response should be code 502")
 
@@ -79,7 +80,7 @@ func TestErrCodeCache(t *testing.T) {
 
 		assert.NoError(t, err, "response should not error")
 
-		_ = e2e.DiscardBody(resp)
+		_ = e2e.DiscardBody(resp, 512)
 
 		assert.Equal(t, http.StatusBadGateway, resp.StatusCode, "response should be code 502")
 	})
@@ -93,7 +94,7 @@ func TestErrCodeCache(t *testing.T) {
 
 		assert.NoError(t, err, "response should not error")
 
-		_ = e2e.DiscardBody(resp)
+		_ = e2e.DiscardBody(resp, 512)
 
 		assert.Equal(t, http.StatusBadGateway, resp.StatusCode, "response should be code 502")
 

@@ -468,8 +468,8 @@ func (c *Caching) flushbufferSlice(respRange xhttp.ContentRange) (iobuf.EventSuc
 
 		// save slice chunk
 		c.md.Chunks.Set(index)
+
 		if !c.opt.AsyncFlushChunk {
-			c.log.Debugf("flush sync metadata at chunk %d/%d(chunks %d)", index+1, endPart, c.md.Chunks.Count())
 			// store chunk now.
 			_ = c.bucket.Store(c.req.Context(), c.md)
 		}
@@ -506,7 +506,6 @@ func (c *Caching) flushbufferSlice(respRange xhttp.ContentRange) (iobuf.EventSuc
 		}
 
 		if c.opt.AsyncFlushChunk {
-			c.log.Debug("flush async metadata at eof")
 			// store chunk with last eof event.
 			_ = c.bucket.Store(c.req.Context(), c.md)
 		}

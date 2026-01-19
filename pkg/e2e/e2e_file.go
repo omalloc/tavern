@@ -40,12 +40,16 @@ func SumMD5(buf []byte) string {
 	return hex.EncodeToString(h.Sum(nil))
 }
 
-func DiscardBody(resp *http.Response) int {
+func DiscardBody(resp *http.Response, readSpeedKbps int) int {
 	if resp == nil || resp.Body == nil {
 		return 0
 	}
+	if readSpeedKbps <= 0 {
+		readSpeedKbps = 5 * 1024 // 5MB/s
+	}
 
-	n, _ := io.Copy(io.Discard, resp.Body)
+	// n, _ := io.Copy(io.Discard, resp.Body)
+	n, _ := io.Copy(io.Discard, iobuf.NewRateLimitReader(resp.Body, readSpeedKbps))
 	_ = resp.Body.Close()
 	return int(n)
 }

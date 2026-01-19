@@ -7,8 +7,9 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/omalloc/tavern/pkg/e2e"
 	"github.com/stretchr/testify/assert"
+
+	"github.com/omalloc/tavern/pkg/e2e"
 )
 
 func init() {
@@ -26,7 +27,7 @@ func TestRangeOffset(t *testing.T) {
 			r.Header.Set("Range", "bytes=0-524287")
 		})
 
-		size := e2e.DiscardBody(resp)
+		size := e2e.DiscardBody(resp, 1024)
 
 		assert.NoError(t, err, "response should not error")
 
@@ -47,7 +48,7 @@ func TestRangeOffset(t *testing.T) {
 			r.Header.Set("Range", "bytes=0-524287")
 		})
 
-		size := e2e.DiscardBody(resp)
+		size := e2e.DiscardBody(resp, 1024)
 
 		assert.NoError(t, err, "response should not error")
 
@@ -66,7 +67,7 @@ func TestRangeOffset(t *testing.T) {
 			r.Header.Set("Range", "bytes=524288-1048575")
 		})
 
-		size := e2e.DiscardBody(resp)
+		size := e2e.DiscardBody(resp, 1024)
 
 		assert.NoError(t, err, "response should not error")
 
@@ -115,7 +116,7 @@ func TestRangeOffsetOverflow(t *testing.T) {
 			r.Header.Set("Range", "bytes=0-524287")
 		})
 
-		size := e2e.DiscardBody(resp)
+		size := e2e.DiscardBody(resp, 1024)
 
 		assert.NoError(t, err, "response should not error")
 
@@ -146,7 +147,7 @@ func TestRangeOffsetOverflow(t *testing.T) {
 			r.Header.Set("Range", "bytes=5242878-")
 		})
 
-		size := e2e.DiscardBody(resp)
+		size := e2e.DiscardBody(resp, 1024)
 
 		assert.NoError(t, err, "response should not error")
 
@@ -173,7 +174,7 @@ func TestRangeExpiredRefresh(t *testing.T) {
 
 		resp, err := case1.Do(func(r *http.Request) {})
 
-		size := e2e.DiscardBody(resp)
+		size := e2e.DiscardBody(resp, 5*1024)
 
 		assert.NoError(t, err, "response should not error")
 
