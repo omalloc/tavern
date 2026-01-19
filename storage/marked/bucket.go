@@ -35,9 +35,11 @@ func (b *wrappedBucket) Lookup(ctx context.Context, id *object.ID) (*object.Meta
 		return md, nil
 	}
 
-	// Mark expired by setting ExpiresAt into the past and store back.
+	// Mark as expired for this lookup by setting ExpiresAt into the past.
+	// NOTE: We intentionally do not persist this change via Store here to avoid
+	// additional writes during Lookup; callers should treat the returned metadata
+	// as expired.
 	md.ExpiresAt = time.Now().Add(-1 * time.Second).Unix()
-	// _ = b.base.Store(ctx, md)
 	return md, nil
 }
 

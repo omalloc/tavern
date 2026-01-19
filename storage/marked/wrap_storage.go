@@ -11,7 +11,7 @@ import (
 // Return true to mark expired.
 type Checker interface {
 	Marked(ctx context.Context, id *object.ID, md *object.Metadata) (bool, error)
-	TireAdd(ctx context.Context, storePath string)
+	TrieAdd(ctx context.Context, storePath string)
 }
 
 // WrapStorage wraps a storage with push-mark logic.
@@ -60,7 +60,7 @@ func (w *wrappedStorage) PURGE(storeUrl string, typ storagev1.PurgeControl) erro
 	//  3. 任务多久过期
 	//  4. 凌晨2-4点低峰时期进行 Hard Delete, 然后删除任务
 	if typ.Dir && typ.MarkExpired {
-		w.checker.TireAdd(context.Background(), storeUrl)
+		w.checker.TrieAdd(context.Background(), storeUrl)
 		return nil
 	}
 	return w.base.PURGE(storeUrl, typ)

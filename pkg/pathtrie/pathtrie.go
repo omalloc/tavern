@@ -1,4 +1,4 @@
-package pathtire
+package pathtrie
 
 import (
 	"fmt"
