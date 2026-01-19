@@ -2,7 +2,6 @@ package purge
 
 import (
 	"context"
-	"encoding/binary"
 	"errors"
 	"fmt"
 	"net/http"
@@ -76,7 +75,6 @@ func (r *PurgePlugin) HandleFunc(next http.HandlerFunc) http.HandlerFunc {
 			return
 		}
 
-		// TODO: generate store-url and delete index
 		storeUrl := req.Header.Get(constants.InternalStoreUrl)
 		if storeUrl == "" {
 			storeUrl = req.URL.String()
@@ -93,13 +91,6 @@ func (r *PurgePlugin) HandleFunc(next http.HandlerFunc) http.HandlerFunc {
 		r.log.Debugf("purge request %s received: %s %s", ipPort[0], storeUrl, ctrl.String())
 
 		current := storage.Current()
-
-		if log.Enabled(log.LevelDebug) {
-			_ = current.SharedKV().IteratePrefix(context.Background(), []byte("if/domain"), func(key, val []byte) error {
-				r.log.Debugf("kvstore domina=%s, cache-counter=%d", string(key), binary.BigEndian.Uint32(val))
-				return nil
-			})
-		}
 
 		// purge dir
 		if ctrl.Dir {

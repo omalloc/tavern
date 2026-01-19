@@ -102,6 +102,10 @@ Once started, you can monitor and debug using the following (ports depend on `co
 - `server/`: HTTP server implementation and middleware
 - `storage/`: Storage engine abstractions and implementations
 
+## 📚 Documentation
+
+- PURGE design and operations: [docs/purge.md](docs/purge.md)
+
 ## 📝 License
 
 [MIT License](LICENSE)
