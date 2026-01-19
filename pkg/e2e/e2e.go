@@ -85,6 +85,9 @@ func New(caseUrl string, srcHandler http.HandlerFunc) *E2E {
 }
 
 func (e *E2E) Do(rewrite func(r *http.Request)) (*http.Response, error) {
+	// wait for a while to let the server ready
+	time.Sleep(time.Millisecond * 100)
+
 	rewrite(e.req)
 
 	method := e.req.Method

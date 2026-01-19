@@ -4,8 +4,9 @@ import (
 	"net/http"
 	"testing"
 
-	"github.com/omalloc/tavern/pkg/e2e"
 	"github.com/stretchr/testify/assert"
+
+	"github.com/omalloc/tavern/pkg/e2e"
 )
 
 func TestCacheMethodAllowGETorHEAD(t *testing.T) {
@@ -21,7 +22,7 @@ func TestCacheMethodAllowGETorHEAD(t *testing.T) {
 
 		assert.NoError(t, err, "response should not error")
 
-		size := e2e.DiscardBody(resp)
+		size := e2e.DiscardBody(resp, 512)
 
 		assert.Equal(t, f.Size, size, "size should be file size")
 
@@ -42,7 +43,7 @@ func TestCacheMethodAllowGETorHEAD(t *testing.T) {
 
 		assert.NoError(t, err, "response should not error")
 
-		size := e2e.DiscardBody(resp)
+		size := e2e.DiscardBody(resp, 512)
 
 		assert.Equal(t, f.Size, size, "size should be file size")
 
@@ -61,7 +62,7 @@ func TestCacheMethodAllowGETorHEAD(t *testing.T) {
 			r.Method = http.MethodGet
 		})
 
-		_ = e2e.DiscardBody(resp)
+		_ = e2e.DiscardBody(resp, 512)
 
 		assert.NoError(t, err, "response should not error")
 
