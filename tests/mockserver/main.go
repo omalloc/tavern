@@ -15,6 +15,7 @@ import (
 	"github.com/andybalholm/brotli"
 
 	"github.com/omalloc/tavern/pkg/iobuf"
+	"github.com/omalloc/tavern/pkg/x/http/rangecontrol"
 	"github.com/omalloc/tavern/tests/mockserver/middleware/cachecontrol"
 	"github.com/omalloc/tavern/tests/mockserver/middleware/logging"
 )
@@ -81,8 +82,50 @@ func main() {
 	})))
 
 	mux.Handle("/chunked", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		reader := iobuf.NewRateLimitReader(io.NopCloser(bytes.NewReader(buf)), 200)
-		_, _ = io.Copy(w, reader)
+		totalSize := int64(len(buf))
+
+		reader := io.NopCloser(bytes.NewReader(buf))
+		if r.Header.Get("X-Limit") != "" {
+			reader = iobuf.NewRateLimitReader(io.NopCloser(bytes.NewReader(buf)), 200)
+		}
+
+		rawRange := r.Header.Get("Range")
+
+		byteRange, err := rangecontrol.Parse(rawRange)
+		if err != nil {
+			_, _ = io.Copy(w, reader)
+			return
+		}
+
+		rr := byteRange[0]
+
+		// 2. 边界检查
+		if rr.Start < 0 || rr.Start >= totalSize || rr.End < rr.Start {
+			w.Header().Set("Content-Range", fmt.Sprintf("bytes */%d", totalSize))
+			w.WriteHeader(http.StatusRequestedRangeNotSatisfiable)
+			return
+		}
+
+		if rr.End >= totalSize {
+			rr.End = totalSize - 1
+		}
+
+		w.Header().Set("Content-Type", "application/octet-stream")
+		w.Header().Set("Content-Range", fmt.Sprintf("bytes %d-%d/%d", rr.Start, rr.End, totalSize))
+		w.Header().Set("Accept-Ranges", "bytes")
+
+		w.WriteHeader(http.StatusPartialContent)
+
+		flusher, ok := w.(http.Flusher)
+		if !ok {
+			http.Error(w, "Streaming unsupported!", http.StatusInternalServerError)
+			return
+		}
+		flusher.Flush()
+
+		n, err := io.Copy(w, iobuf.LimitReadCloser(iobuf.SkipReadCloser(reader, rr.Start), rr.Length()))
+		log.Printf("received request: chunked bytes %d, rawRange %s", n, rawRange)
+
 	}))
 
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {

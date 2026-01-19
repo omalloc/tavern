@@ -8,7 +8,7 @@ import (
 	storagev1 "github.com/omalloc/tavern/api/defined/v1/storage"
 	"github.com/omalloc/tavern/api/defined/v1/storage/object"
 	"github.com/omalloc/tavern/contrib/log"
-	"github.com/omalloc/tavern/pkg/pathtire"
+	"github.com/omalloc/tavern/pkg/pathtrie"
 )
 
 // checker is a simple checker based on SharedKV.
@@ -16,7 +16,7 @@ import (
 // If AutoClear is true, the key is deleted after a hit.
 type checker struct {
 	KV        storagev1.SharedKV
-	pathtire  *pathtire.PathTrie[string, int64]
+	pathtrie  *pathtrie.PathTrie[string, int64]
 	prefix    string
 	autoClear bool
 }
@@ -35,10 +35,10 @@ func WithAutoClear(clear bool) SharedKVOption {
 	}
 }
 
-func NewSharedKVChecker(kv storagev1.SharedKV, opts ...SharedKVOption) *checker {
+func NewSharedKVChecker(kv storagev1.SharedKV, opts ...SharedKVOption) Checker {
 	c := &checker{
 		KV:        kv,
-		pathtire:  pathtire.NewPathTrie[string, int64](),
+		pathtrie:  pathtrie.NewPathTrie[string, int64](),
 		prefix:    "dir/",
 		autoClear: true,
 	}
@@ -62,7 +62,7 @@ func (c *checker) Marked(ctx context.Context, id *object.ID, md *object.Metadata
 	}
 
 	// 前缀树里找有没有具体推送目录任务，以及推送时间
-	unix, found1 := c.pathtire.Search(id.Path())
+	unix, found1 := c.pathtrie.Search(id.Path())
 	// 前缀树存在，并且 对象最后修改时间 小于等于 推送时间，说明对象在推送目录任务之前保存的，需要标记为为过期
 	if found1 && md.RespUnix <= unix {
 		return true, nil
@@ -70,8 +70,8 @@ func (c *checker) Marked(ctx context.Context, id *object.ID, md *object.Metadata
 	return false, nil
 }
 
-func (c *checker) TireAdd(ctx context.Context, storePath string) {
+func (c *checker) TrieAdd(ctx context.Context, storePath string) {
 	unix := time.Now().Unix()
-	c.pathtire.Insert(storePath, unix)
-	log.Infof("purge add pathtire %s, drop-time %d", storePath, unix)
+	c.pathtrie.Insert(storePath, unix)
+	log.Infof("purge add pathtrie %s, drop-time %d", storePath, unix)
 }

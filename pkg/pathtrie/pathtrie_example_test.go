@@ -1,14 +1,14 @@
-package pathtire_test
+package pathtrie_test
 
 import (
 	"fmt"
 
-	"github.com/omalloc/tavern/pkg/pathtire"
+	"github.com/omalloc/tavern/pkg/pathtrie"
 )
 
 func ExampleNewPathTrie() {
 
-	trie := pathtire.NewPathTrie[string, int64]()
+	trie := pathtrie.NewPathTrie[string, int64]()
 
 	trie.Insert("/api/users", 0)
 	trie.Insert("http://sendya.me.gslb.com/host/path/", 1768480300)
