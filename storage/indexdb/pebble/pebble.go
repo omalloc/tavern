@@ -3,6 +3,7 @@ package pebble
 import (
 	"context"
 	"errors"
+	"sync"
 	"time"
 
 	"github.com/cockroachdb/pebble/v2"
@@ -22,6 +23,9 @@ type PebbleDB struct {
 	db            *pebble.DB
 	writeMode     *pebble.WriteOptions
 	skipErrRecord bool
+	dbLabel       string
+	descs         *pebbleCollectorDescs
+	registerOnce  sync.Once
 }
 
 func init() {
@@ -124,6 +128,7 @@ func (p *PebbleDB) GC(ctx context.Context) error {
 
 // pebbleOption  Options for pebble
 type pebbleOption struct {
+	EnableMetric       bool `json:"enable_metric" yaml:"enable_metric"`
 	CacheSize          int  `json:"cache_size" yaml:"cache_size"`
 	MemTableSize       int  `json:"mem_table_size" yaml:"mem_table_size"`
 	BytesPerSync       int  `json:"bytes_per_sync" yaml:"bytes_per_sync"`
@@ -167,16 +172,29 @@ func New(path string, option storage.Option) (storage.IndexDB, error) {
 		return nil, err
 	}
 
+	dbLabel := path
+	if dbLabel == "" {
+		dbLabel = "memory"
+	}
+
 	// write options
 	writeMode := pebble.Sync
 	if !pebbleOption.WriteSyncMode {
 		writeMode = pebble.NoSync
 	}
 
-	return &PebbleDB{
+	db := &PebbleDB{
 		codec:         option.Codec(),
 		db:            pdb,
 		writeMode:     writeMode, // 是否异步写操作
 		skipErrRecord: true,
-	}, nil
+		dbLabel:       dbLabel,
+		descs:         defaultPebbleCollectorDescs,
+	}
+
+	if pebbleOption.EnableMetric {
+		db.RegisterMetrics()
+	}
+
+	return db, nil
 }

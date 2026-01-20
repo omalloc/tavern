@@ -98,6 +98,7 @@ storage:
       type: normal
       max_object_limit: 10000000
       db_config:
+        enable_metric: true
         cache_size: 1024000000
         mem_table_size: 256000000
         bytes_per_sync: 10240000
