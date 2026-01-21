@@ -2,6 +2,7 @@ package purge
 
 import (
 	"context"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"net/http"
@@ -13,6 +14,7 @@ import (
 	storagev1 "github.com/omalloc/tavern/api/defined/v1/storage"
 	"github.com/omalloc/tavern/contrib/log"
 	"github.com/omalloc/tavern/internal/constants"
+	"github.com/omalloc/tavern/pkg/encoding"
 	"github.com/omalloc/tavern/plugin"
 	"github.com/omalloc/tavern/storage"
 )
@@ -48,10 +50,26 @@ func (r *PurgePlugin) Stop(ctx context.Context) error {
 }
 
 func (r *PurgePlugin) AddRouter(router *http.ServeMux) {
-	router.Handle("/plugin/purge/tasks", http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-		// TODO: query sharedkv purge task list
 
-		var payload []byte
+	codec := encoding.GetDefaultCodec()
+	sharedkv := storage.Current().SharedKV()
+
+	router.Handle("/plugin/purge/tasks", http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		// query sharedkv purge task list
+
+		purgeTaskMap := make(map[string]uint64)
+
+		sharedkv.IteratePrefix(req.Context(), []byte("dir/"), func(key, val []byte) error {
+			purgeTaskMap[string(key)[4:]] = binary.LittleEndian.Uint64(val)
+			return nil
+		})
+
+		// marshal to json
+		payload, err := codec.Marshal(purgeTaskMap)
+		if err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
 
 		w.Header().Set("Content-Length", fmt.Sprintf("%d", len(payload)))
 		w.Header().Set("Content-Type", "application/json")
@@ -72,6 +90,7 @@ func (r *PurgePlugin) HandleFunc(next http.HandlerFunc) http.HandlerFunc {
 		ipPort := strings.Split(req.RemoteAddr, ":")
 		if _, ok := r.allowAddr[ipPort[0]]; !ok {
 			w.WriteHeader(http.StatusForbidden)
+			_metricPurgeRequestsTotal.WithLabelValues("403").Inc()
 			return
 		}
 
@@ -83,6 +102,7 @@ func (r *PurgePlugin) HandleFunc(next http.HandlerFunc) http.HandlerFunc {
 		u, err1 := url.Parse(storeUrl)
 		if err1 != nil {
 			r.log.Errorf("failed to parse storeUrl %s: %s", storeUrl, err1)
+			_metricPurgeRequestsTotal.WithLabelValues("500").Inc()
 			return
 		}
 
@@ -98,6 +118,7 @@ func (r *PurgePlugin) HandleFunc(next http.HandlerFunc) http.HandlerFunc {
 			if _, err := current.SharedKV().Get(context.Background(),
 				[]byte(fmt.Sprintf("if/domain/%s", u.Host))); err != nil && errors.Is(err, storagev1.ErrKeyNotFound) {
 				r.log.Infof("purge dir %s but is not caching in the service", u.Host)
+				_metricPurgeRequestsTotal.WithLabelValues("404").Inc()
 				return
 			}
 
@@ -106,11 +127,13 @@ func (r *PurgePlugin) HandleFunc(next http.HandlerFunc) http.HandlerFunc {
 					w.Header().Set("Content-Length", "0")
 					w.Header().Set("Content-Type", "application/json; charset=utf-8")
 					w.WriteHeader(http.StatusNotFound)
+					_metricPurgeRequestsTotal.WithLabelValues("404").Inc()
 					return
 				}
 
 				r.log.Errorf("purge dir %s failed: %v", storeUrl, err)
 				w.WriteHeader(http.StatusInternalServerError)
+				_metricPurgeRequestsTotal.WithLabelValues("500").Inc()
 				return
 			}
 
@@ -119,6 +142,7 @@ func (r *PurgePlugin) HandleFunc(next http.HandlerFunc) http.HandlerFunc {
 			w.Header().Set("Content-Type", "application/json; charset=utf-8")
 			w.WriteHeader(http.StatusOK)
 			_, _ = w.Write(payload)
+			_metricPurgeRequestsTotal.WithLabelValues("200").Inc()
 			return
 		}
 
@@ -129,12 +153,14 @@ func (r *PurgePlugin) HandleFunc(next http.HandlerFunc) http.HandlerFunc {
 				w.Header().Set("Content-Length", "0")
 				w.Header().Set("Content-Type", "application/json; charset=utf-8")
 				w.WriteHeader(http.StatusNotFound)
+				_metricPurgeRequestsTotal.WithLabelValues("404").Inc()
 				return
 			}
 
 			// others error
 			r.log.Errorf("purge %s failed: %v", storeUrl, err)
 			w.WriteHeader(http.StatusInternalServerError)
+			_metricPurgeRequestsTotal.WithLabelValues("500").Inc()
 			return
 		}
 
@@ -143,6 +169,7 @@ func (r *PurgePlugin) HandleFunc(next http.HandlerFunc) http.HandlerFunc {
 		w.Header().Set("Content-Type", "application/json; charset=utf-8")
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write(payload)
+		_metricPurgeRequestsTotal.WithLabelValues("200").Inc()
 	}
 }
 
