@@ -34,6 +34,7 @@ type diskBucket struct {
 	driver    string
 	storeType string
 	asyncLoad bool
+	tiering   *conf.Tiering
 	weight    int
 	sharedkv  storage.SharedKV
 	indexdb   storage.IndexDB
@@ -50,6 +51,7 @@ func New(config *conf.Bucket, sharedkv storage.SharedKV) (storage.Bucket, error)
 		driver:    config.Driver,
 		storeType: config.Type,
 		asyncLoad: config.AsyncLoad,
+		tiering:   config.Tiering,
 		weight:    100, // default weight
 		sharedkv:  sharedkv,
 		cache:     lru.New[object.IDHash, storage.Mark](config.MaxObjectLimit),
@@ -91,16 +93,40 @@ func (d *diskBucket) evict() {
 
 	clog.Debugf("start evict goroutine for %s", d.ID())
 
+	// Demote func
+	demoteTarget := storage.TypeNormal
+	if d.storeType == storage.TypeNormal {
+		demoteTarget = storage.TypeCold
+	}
+	demote := func(evicted lru.Eviction[object.IDHash, storage.Mark]) error {
+		// TODO: demote to target storage bucket
+		log.Debugf("demote %s to %s", demoteTarget, evicted.Key)
+
+		return nil
+	}
+
+	discard := func(evicted lru.Eviction[object.IDHash, storage.Mark]) {
+		fd := evicted.Key.WPath(d.path)
+		clog.Debugf("evict file %s, last-access %d", fd, evicted.Value.LastAccess())
+		d.DiscardWithHash(context.Background(), evicted.Key)
+	}
+
 	go func() {
 		for {
 			select {
 			case <-d.stop:
 				return
 			case evicted := <-ch:
-				fd := evicted.Key.WPath(d.path)
-				clog.Debugf("evict file %s, last-access %d", fd, evicted.Value.LastAccess())
-				// TODO: discard expired cachefile or Move to cold storage
-				d.DiscardWithHash(context.Background(), evicted.Key)
+				// expired cachefile Demote to cold bucket
+				if d.tiering != nil && d.tiering.Enabled {
+					if err := demote(evicted); err != nil {
+						// fallback to discard
+						discard(evicted)
+					}
+					continue
+				}
+
+				discard(evicted)
 			}
 		}
 	}()
