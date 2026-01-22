@@ -14,6 +14,7 @@ var ErrKeyNotFound = errors.New("key not found")
 const (
 	TypeInMemory = "inmemory"
 	TypeNormal   = "normal"
+	TypeCold     = "cold"
 	TypeHot      = "hot"
 )
 

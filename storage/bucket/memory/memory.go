@@ -202,6 +202,19 @@ func (m *memoryBucket) Lookup(ctx context.Context, id *object.ID) (*object.Metad
 	return md, err
 }
 
+// Touch implements [storage.Bucket].
+func (m *memoryBucket) Touch(ctx context.Context, id *object.ID) error {
+	mark := m.cache.Get(id.Hash())
+	if mark.LastAccess() <= 0 {
+		return nil
+	}
+
+	mark.SetLastAccess(time.Now().Unix())
+	mark.SetRefs(mark.Refs() + 1)
+	m.cache.Set(id.Hash(), mark)
+	return nil
+}
+
 // Path implements [storage.Bucket].
 func (m *memoryBucket) Path() string {
 	return m.path

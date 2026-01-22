@@ -24,7 +24,9 @@ type nativeStorage struct {
 	mu     sync.Mutex
 	log    *log.Helper
 
-	selector     storage.Selector
+	warmSelector storage.Selector // warm selector
+	hotSelector  storage.Selector // hot selector
+	coldSelector storage.Selector // cold selector
 	sharedkv     storage.SharedKV
 	nopBucket    storage.Bucket
 	memoryBucket storage.Bucket
@@ -39,7 +41,9 @@ func New(config *conf.Storage, logger log.Logger) (storage.Storage, error) {
 		mu:     sync.Mutex{},
 		log:    log.NewHelper(logger),
 
-		selector:     selector.New([]storage.Bucket{}, config.SelectionPolicy),
+		warmSelector: nil,
+		hotSelector:  nil,
+		coldSelector: nil,
 		sharedkv:     sharedkv.NewMemSharedKV(),
 		nopBucket:    nopBucket,
 		memoryBucket: nil,
@@ -102,16 +106,36 @@ func (n *nativeStorage) reinit(config *conf.Storage) error {
 			n.normalBucket = append(n.normalBucket, n.memoryBucket)
 		}
 	}
+	n.warmSelector = selector.New(n.normalBucket, config.SelectionPolicy)
 
-	n.selector = selector.New(n.normalBucket, config.SelectionPolicy)
+	// 热盘
+	if len(n.hotBucket) > 0 {
+		n.hotSelector = selector.New(n.hotBucket, config.SelectionPolicy)
+	} else {
+		n.log.Infof("no hot bucket configured")
+	}
 
 	return nil
 }
 
 // Select implements storage.Selector.
 func (n *nativeStorage) Select(ctx context.Context, id *object.ID) storage.Bucket {
-	bucket := n.selector.Select(ctx, id)
-	return bucket
+	return n.chainSelector(ctx, id,
+		n.hotSelector,
+		n.warmSelector,
+		n.coldSelector,
+	)
+}
+
+func (n *nativeStorage) chainSelector(ctx context.Context, id *object.ID, selectors ...storage.Selector) storage.Bucket {
+	for _, sel := range selectors {
+		if sel != nil {
+			if bucket := sel.Select(ctx, id); bucket != nil {
+				return bucket
+			}
+		}
+	}
+	return nil
 }
 
 // Rebuild implements storage.Selector.

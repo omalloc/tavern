@@ -151,7 +151,8 @@ func (pc *ProcessorChain) postCacheProcessor(caching *Caching, req *http.Request
 		_, _ = io.Copy(io.Discard, resp.Body)
 	}
 
-	// TODO: incr index ref count.
+	// incr index ref count.
+	caching.bucket.Touch(req.Context(), caching.id)
 
 	return resp, nil
 }

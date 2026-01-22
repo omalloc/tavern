@@ -68,28 +68,49 @@ type Upstream struct {
 	Features            map[string]any `json:"features" yaml:"features"`
 }
 
-type Storage struct {
-	Driver          string    `json:"driver" yaml:"driver"`
-	DBType          string    `json:"db_type" yaml:"db_type"`
-	DBPath          string    `json:"db_path" yaml:"db_path"` // default db path
-	AsyncLoad       bool      `json:"async_load" yaml:"async_load"`
-	EvictionPolicy  string    `json:"eviction_policy" yaml:"eviction_policy"`
-	SelectionPolicy string    `json:"selection_policy" yaml:"selection_policy"`
-	SliceSize       uint64    `json:"slice_size" yaml:"slice_size"`
-	Buckets         []*Bucket `json:"buckets" yaml:"buckets"`
-}
+type (
+	Storage struct {
+		Driver          string    `json:"driver" yaml:"driver"`
+		DBType          string    `json:"db_type" yaml:"db_type"`
+		DBPath          string    `json:"db_path" yaml:"db_path"` // default db path
+		AsyncLoad       bool      `json:"async_load" yaml:"async_load"`
+		EvictionPolicy  string    `json:"eviction_policy" yaml:"eviction_policy"`
+		SelectionPolicy string    `json:"selection_policy" yaml:"selection_policy"`
+		SliceSize       uint64    `json:"slice_size" yaml:"slice_size"` // slice size for each part
+		Tiering         *Tiering  `json:"tiering" yaml:"tiering"`       // tiering config
+		Buckets         []*Bucket `json:"buckets" yaml:"buckets"`       // bucket list
+	}
 
-type Bucket struct {
-	Path           string         `json:"path" yaml:"path"`                         // local path or ?
-	Driver         string         `json:"driver" yaml:"driver"`                     // native, custom-driver
-	Type           string         `json:"type" yaml:"type"`                         // normal, cold, hot, fastmemory
-	DBType         string         `json:"db_type" yaml:"db_type"`                   // boltdb, badgerdb, pebble
-	DBPath         string         `json:"db_path" yaml:"db_path"`                   // db path, defult: <bucket_path>/.indexdb
-	AsyncLoad      bool           `json:"async_load" yaml:"async_load"`             // load metadata async
-	SliceSize      uint64         `json:"slice_size" yaml:"slice_size"`             // slice size for each part
-	MaxObjectLimit int            `json:"max_object_limit" yaml:"max_object_limit"` // max object limit, upper Bound discard
-	DBConfig       map[string]any `json:"db_config" yaml:"db_config"`               // custom db config
-}
+	Bucket struct {
+		Path           string         `json:"path" yaml:"path"`                         // local path or ?
+		Driver         string         `json:"driver" yaml:"driver"`                     // native, custom-driver
+		Type           string         `json:"type" yaml:"type"`                         // normal, cold, hot, fastmemory
+		DBType         string         `json:"db_type" yaml:"db_type"`                   // boltdb, badgerdb, pebble
+		DBPath         string         `json:"db_path" yaml:"db_path"`                   // db path, defult: <bucket_path>/.indexdb
+		AsyncLoad      bool           `json:"async_load" yaml:"async_load"`             // load metadata async
+		SliceSize      uint64         `json:"slice_size" yaml:"slice_size"`             // slice size for each part
+		MaxObjectLimit int            `json:"max_object_limit" yaml:"max_object_limit"` // max object limit, upper Bound discard
+		DBConfig       map[string]any `json:"db_config" yaml:"db_config"`               // custom db config
+	}
+)
+
+type (
+	Promote struct {
+		MinHits       int           `json:"min_hits" yaml:"min_hits"`               // 时间窗口内命中 >= N
+		Window        time.Duration `json:"window" yaml:"window"`                   // 时间窗口 10m
+		MaxObjectSize uint64        `json:"max_object_size" yaml:"max_object_size"` // 最大对象大小
+	}
+	Demote struct {
+		MinHits   int           `json:"min_hits" yaml:"min_hits"`   // 时间窗口内命中 <= N
+		Window    time.Duration `json:"window" yaml:"window"`       // 时间窗口 10m
+		Occupancy float64       `json:"occupancy" yaml:"occupancy"` // 热盘存储占用率 >= N%
+	}
+	Tiering struct {
+		Enabled bool    `json:"enabled" yaml:"enabled"`
+		Promote Promote `json:"promote" yaml:"promote"` // 升温
+		Demote  Demote  `json:"demote" yaml:"demote"`   // 降温
+	}
+)
 
 type Plugin struct {
 	Name    string         `json:"name" yaml:"name"`
