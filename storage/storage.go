@@ -32,6 +32,7 @@ type nativeStorage struct {
 	memoryBucket storage.Bucket
 	hotBucket    []storage.Bucket
 	normalBucket []storage.Bucket
+	coldBucket   []storage.Bucket
 }
 
 func New(config *conf.Storage, logger log.Logger) (storage.Storage, error) {
@@ -73,6 +74,7 @@ func (n *nativeStorage) reinit(config *conf.Storage) error {
 		Driver:          config.Driver,
 		DBType:          config.DBType,
 		DBPath:          config.DBPath,
+		Tiering:         *config.Tiering,
 	}
 
 	for _, c := range config.Buckets {
@@ -100,7 +102,9 @@ func (n *nativeStorage) reinit(config *conf.Storage) error {
 	// load lru
 	// load purge queue
 
+	// warm / normal
 	if len(n.normalBucket) <= 0 {
+		n.log.Infof("no warm bucket configured")
 		// no normal bucket, use nop bucket
 		if n.memoryBucket != nil {
 			n.normalBucket = append(n.normalBucket, n.memoryBucket)
@@ -108,7 +112,14 @@ func (n *nativeStorage) reinit(config *conf.Storage) error {
 	}
 	n.warmSelector = selector.New(n.normalBucket, config.SelectionPolicy)
 
-	// 热盘
+	// cold
+	if len(n.coldBucket) > 0 {
+		n.coldSelector = selector.New(n.coldBucket, config.SelectionPolicy)
+	} else {
+		n.log.Infof("no cold bucket configured")
+	}
+
+	// hot
 	if len(n.hotBucket) > 0 {
 		n.hotSelector = selector.New(n.hotBucket, config.SelectionPolicy)
 	} else {
@@ -120,6 +131,7 @@ func (n *nativeStorage) reinit(config *conf.Storage) error {
 
 // Select implements storage.Selector.
 func (n *nativeStorage) Select(ctx context.Context, id *object.ID) storage.Bucket {
+	// find bucket: Hot → Warm → Cold
 	return n.chainSelector(ctx, id,
 		n.hotSelector,
 		n.warmSelector,
@@ -145,7 +157,11 @@ func (n *nativeStorage) Rebuild(ctx context.Context, buckets []storage.Bucket) e
 
 // Buckets implements storage.Storage.
 func (n *nativeStorage) Buckets() []storage.Bucket {
-	return append(n.normalBucket, n.hotBucket...)
+	buckets := make([]storage.Bucket, 0, len(n.normalBucket)+len(n.hotBucket)+len(n.coldBucket))
+	buckets = append(buckets, n.normalBucket...)
+	buckets = append(buckets, n.hotBucket...)
+	buckets = append(buckets, n.coldBucket...)
+	return buckets
 }
 
 // PURGE implements storage.Storage.
