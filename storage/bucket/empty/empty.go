@@ -80,6 +80,10 @@ func (e *emptyBucket) Lookup(ctx context.Context, id *object.ID) (*object.Metada
 	return nil, storage.ErrKeyNotFound
 }
 
+func (e *emptyBucket) Touch(ctx context.Context, id *object.ID) error {
+	return nil
+}
+
 // Remove implements storage.Bucket.
 func (e *emptyBucket) Remove(ctx context.Context, id *object.ID) error {
 	return nil

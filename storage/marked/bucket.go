@@ -43,6 +43,10 @@ func (b *wrappedBucket) Lookup(ctx context.Context, id *object.ID) (*object.Meta
 	return md, nil
 }
 
+func (b *wrappedBucket) Touch(ctx context.Context, id *object.ID) error {
+	return b.base.Touch(ctx, id)
+}
+
 func (b *wrappedBucket) Store(ctx context.Context, meta *object.Metadata) error {
 	return b.base.Store(ctx, meta)
 }

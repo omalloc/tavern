@@ -268,6 +268,19 @@ func (d *diskBucket) Lookup(ctx context.Context, id *object.ID) (*object.Metadat
 	return md, err
 }
 
+// Touch implements [storage.Bucket].
+func (d *diskBucket) Touch(ctx context.Context, id *object.ID) error {
+	mark := d.cache.Get(id.Hash())
+	if mark.LastAccess() <= 0 {
+		return nil
+	}
+
+	mark.SetLastAccess(time.Now().Unix())
+	mark.SetRefs(mark.Refs() + 1)
+	d.cache.Set(id.Hash(), mark)
+	return nil
+}
+
 // Remove implements storage.Bucket.
 func (d *diskBucket) Remove(ctx context.Context, id *object.ID) error {
 	return d.indexdb.Delete(ctx, id.Bytes())
