@@ -20,7 +20,7 @@ type globalBucketOption struct {
 	Driver          string
 	DBType          string
 	DBPath          string
-	Tiering         conf.Tiering
+	Tiering         *conf.Tiering
 }
 
 // implements storage.Bucket map.
@@ -48,7 +48,7 @@ func mergeConfig(global *globalBucketOption, bucket *conf.Bucket) *conf.Bucket {
 		DBPath:         bucket.DBPath,
 		MaxObjectLimit: bucket.MaxObjectLimit,
 		DBConfig:       bucket.DBConfig, // custom db config
-		Tiering:        &global.Tiering,
+		Tiering:        global.Tiering,
 	}
 
 	if copied.Driver == "" {

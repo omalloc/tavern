@@ -31,7 +31,7 @@ func Test_getContents(t *testing.T) {
 	memoryBucket, _ := memory.New(&conf.Bucket{}, sharedkv.NewEmpty())
 
 	req, _ := http.NewRequestWithContext(t.Context(), http.MethodGet, "http://www.example.com/path/to/1.apk", nil)
-	objectID, _ := newObjectIDFromRequest(req, "", true)
+	objectID := newObjectIDFromRequest(req, "", true)
 	c := &Caching{
 		log:       log.NewHelper(log.GetLogger()),
 		processor: mockProcessorChain(),

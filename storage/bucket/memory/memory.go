@@ -40,6 +40,7 @@ type memoryBucket struct {
 	maxSize   uint64
 	closed    bool
 	stop      chan struct{}
+	promoter  storage.Promoter
 }
 
 func New(config *conf.Bucket, sharedkv storage.SharedKV) (storage.Bucket, error) {
@@ -48,7 +49,7 @@ func New(config *conf.Bucket, sharedkv storage.SharedKV) (storage.Bucket, error)
 		path:      "/",
 		dbPath:    storage.TypeInMemory,
 		driver:    config.Driver,
-		storeType: storage.TypeInMemory,
+		storeType: config.Type,
 		weight:    100, // default weight
 		sharedkv:  sharedkv,
 		cache:     lru.New[object.IDHash, storage.Mark](config.MaxObjectLimit), // in-memory object size
@@ -285,6 +286,15 @@ func (m *memoryBucket) ReadChunkFile(_ context.Context, id *object.ID, index uin
 	}
 	return storage.WrapVFSFile(f), wpath, err
 }
+
+func (m *memoryBucket) MoveTo(ctx context.Context, id *object.ID, target storage.Bucket) error {
+	return nil
+}
+
+func (m *memoryBucket) SetDemoter(demoter storage.Demoter) {}
+
+// SetPromoter implements Bucket.SetPromoter
+func (m *memoryBucket) SetPromoter(promoter storage.Promoter) { m.promoter = promoter }
 
 // StoreType implements [storage.Bucket].
 func (m *memoryBucket) StoreType() string {
