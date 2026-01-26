@@ -130,3 +130,15 @@ func (b *wrappedBucket) Path() string {
 func (b *wrappedBucket) Close() error {
 	return b.base.Close()
 }
+
+func (b *wrappedBucket) MoveTo(ctx context.Context, id *object.ID, target storagev1.Bucket) error {
+	return b.base.MoveTo(ctx, id, target)
+}
+
+func (b *wrappedBucket) SetDemoter(demoter storagev1.Demoter) {
+	b.base.SetDemoter(demoter)
+}
+
+func (b *wrappedBucket) SetPromoter(promoter storagev1.Promoter) {
+	b.base.SetPromoter(promoter)
+}

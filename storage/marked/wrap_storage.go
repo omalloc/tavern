@@ -40,12 +40,7 @@ func (w *wrappedStorage) Rebuild(ctx context.Context, buckets []storagev1.Bucket
 }
 
 func (w *wrappedStorage) Buckets() []storagev1.Bucket {
-	baseBuckets := w.base.Buckets()
-	wrapped := make([]storagev1.Bucket, 0, len(baseBuckets))
-	for _, b := range baseBuckets {
-		wrapped = append(wrapped, wrapBucket(b, w.checker))
-	}
-	return wrapped
+	return w.base.Buckets()
 }
 
 func (w *wrappedStorage) SharedKV() storagev1.SharedKV {
@@ -64,6 +59,14 @@ func (w *wrappedStorage) PURGE(storeUrl string, typ storagev1.PurgeControl) erro
 		return nil
 	}
 	return w.base.PURGE(storeUrl, typ)
+}
+
+func (w *wrappedStorage) SelectWithType(ctx context.Context, id *object.ID, tier string) storagev1.Bucket {
+	return wrapBucket(w.base.SelectWithType(ctx, id, tier), w.checker)
+}
+
+func (w *wrappedStorage) Promote(ctx context.Context, id *object.ID, src storagev1.Bucket) error {
+	return w.base.Promote(ctx, id, src)
 }
 
 func (w *wrappedStorage) Close() error {

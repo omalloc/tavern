@@ -1,7 +1,6 @@
 package caching
 
 import (
-	"fmt"
 	"io"
 	"net/http"
 	"reflect"
@@ -82,11 +81,7 @@ func (pc *ProcessorChain) PostRequest(caching *Caching, req *http.Request, resp 
 }
 
 func (pc *ProcessorChain) preCacheProcessor(proxyClient proxy.Proxy, store storage.Storage, opt *cachingOption, req *http.Request) (*Caching, error) {
-	objectID, err := newObjectIDFromRequest(req, "", opt.IncludeQueryInCacheKey)
-	if err != nil {
-		return nil, fmt.Errorf("failed new object-objectID from request err: %w", err)
-	}
-
+	objectID := newObjectIDFromRequest(req, "", opt.IncludeQueryInCacheKey)
 	// Select storage bucket by object ID
 	// hashring or diskhash
 	bucket := store.Select(req.Context(), objectID)
@@ -152,7 +147,11 @@ func (pc *ProcessorChain) postCacheProcessor(caching *Caching, req *http.Request
 	}
 
 	// incr index ref count.
-	caching.bucket.Touch(req.Context(), caching.id)
+	// trigger touch for promotion on cache hit
+	// do not block response path
+	if caching.hit && caching.bucket != nil && caching.id != nil {
+		go func() { _ = caching.bucket.Touch(req.Context(), caching.id) }()
+	}
 
 	return resp, nil
 }

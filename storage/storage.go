@@ -74,7 +74,7 @@ func (n *nativeStorage) reinit(config *conf.Storage) error {
 		Driver:          config.Driver,
 		DBType:          config.DBType,
 		DBPath:          config.DBPath,
-		Tiering:         *config.Tiering,
+		Tiering:         config.Tiering,
 	}
 
 	for _, c := range config.Buckets {
@@ -84,15 +84,16 @@ func (n *nativeStorage) reinit(config *conf.Storage) error {
 		}
 
 		switch bucket.StoreType() {
-		case storage.TypeNormal:
+		case storage.TypeNormal, storage.TypeWarm:
 			n.normalBucket = append(n.normalBucket, bucket)
 		case storage.TypeHot:
 			n.hotBucket = append(n.hotBucket, bucket)
+		case storage.TypeCold:
+			n.coldBucket = append(n.coldBucket, bucket)
 		case storage.TypeInMemory:
 			if n.memoryBucket != nil {
 				return fmt.Errorf("only one inmemory bucket is allowed")
 			}
-
 			n.memoryBucket = bucket
 		}
 	}
@@ -126,6 +127,17 @@ func (n *nativeStorage) reinit(config *conf.Storage) error {
 		n.log.Infof("no hot bucket configured")
 	}
 
+	// register demoter
+	for _, b := range n.Buckets() {
+		b.SetDemoter(n)
+		// register promoter as well
+		b.SetPromoter(n)
+	}
+	if n.memoryBucket != nil {
+		n.memoryBucket.SetDemoter(n)
+		n.memoryBucket.SetPromoter(n)
+	}
+
 	return nil
 }
 
@@ -139,15 +151,81 @@ func (n *nativeStorage) Select(ctx context.Context, id *object.ID) storage.Bucke
 	)
 }
 
-func (n *nativeStorage) chainSelector(ctx context.Context, id *object.ID, selectors ...storage.Selector) storage.Bucket {
-	for _, sel := range selectors {
-		if sel != nil {
-			if bucket := sel.Select(ctx, id); bucket != nil {
-				return bucket
-			}
+// SelectByTier implements storage.Storage.
+func (n *nativeStorage) SelectWithType(ctx context.Context, id *object.ID, tier string) storage.Bucket {
+	switch tier {
+	case storage.TypeHot:
+		if n.hotSelector != nil {
+			return n.hotSelector.Select(ctx, id)
 		}
+	case storage.TypeNormal, storage.TypeWarm: // TypeWarm is same as TypeNormal
+		if n.warmSelector != nil {
+			return n.warmSelector.Select(ctx, id)
+		}
+	case storage.TypeCold:
+		if n.coldSelector != nil {
+			return n.coldSelector.Select(ctx, id)
+		}
+	case storage.TypeInMemory:
+		return n.memoryBucket
 	}
 	return nil
+}
+
+// Demote implements storage.Demoter.
+func (n *nativeStorage) Demote(ctx context.Context, id *object.ID, src storage.Bucket) error {
+	// Hot -> Warm -> Cold
+	var targetTier string
+	switch src.StoreType() {
+	case storage.TypeHot:
+		targetTier = storage.TypeNormal
+	case storage.TypeNormal: // TypeWarm is same as TypeNormal
+		targetTier = storage.TypeCold
+	default:
+		return nil // no demotion for other types
+	}
+
+	target := n.SelectWithType(ctx, id, targetTier)
+	if target == nil {
+		return fmt.Errorf("no target bucket found for demotion from %s to %s", src.StoreType(), targetTier)
+	}
+
+	return src.MoveTo(ctx, id, target)
+}
+
+// Promote implements storage.Promoter.
+func (n *nativeStorage) Promote(ctx context.Context, id *object.ID, src storage.Bucket) error {
+	// Cold -> Warm -> Hot
+	var targetTier string
+	switch src.StoreType() {
+	case storage.TypeCold:
+		targetTier = storage.TypeNormal
+	case storage.TypeNormal: // TypeWarm is same as TypeNormal
+		targetTier = storage.TypeHot
+	default:
+		return nil // no promotion for other types
+	}
+
+	target := n.SelectWithType(ctx, id, targetTier)
+	if target == nil {
+		return fmt.Errorf("no target bucket found for promotion from %s to %s", src.StoreType(), targetTier)
+	}
+
+	return src.MoveTo(ctx, id, target)
+}
+
+func (n *nativeStorage) chainSelector(ctx context.Context, id *object.ID, selectors ...storage.Selector) storage.Bucket {
+	for _, sel := range selectors {
+		if sel == nil {
+			continue
+		}
+		if bucket := sel.Select(ctx, id); bucket != nil && bucket.Exist(ctx, id.Bytes()) {
+			return bucket
+		}
+	}
+
+	// fallback to warm selector
+	return n.warmSelector.Select(ctx, id)
 }
 
 // Rebuild implements storage.Selector.
@@ -269,6 +347,10 @@ func (n *nativeStorage) Close() error {
 	}
 
 	for _, bucket := range n.hotBucket {
+		errs = append(errs, bucket.Close())
+	}
+
+	for _, bucket := range n.coldBucket {
 		errs = append(errs, bucket.Close())
 	}
 

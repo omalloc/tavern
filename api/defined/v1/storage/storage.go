@@ -44,6 +44,8 @@ type Operation interface {
 	WriteChunkFile(ctx context.Context, id *object.ID, index uint32) (io.WriteCloser, string, error)
 	// ReadChunkFile open chunk file and returns io.ReadCloser
 	ReadChunkFile(ctx context.Context, id *object.ID, index uint32) (File, string, error)
+	// MoveTo moves the object to the target bucket.
+	MoveTo(ctx context.Context, id *object.ID, target Bucket) error
 }
 
 type Storage interface {
@@ -55,6 +57,11 @@ type Storage interface {
 	SharedKV() SharedKV
 
 	PURGE(storeUrl string, typ PurgeControl) error
+	// Promote moves object up the tiers (e.g., warm -> hot)
+	Promote(ctx context.Context, id *object.ID, src Bucket) error
+
+	// SelectWithType selects a Bucket by the tier type.
+	SelectWithType(ctx context.Context, id *object.ID, tierType string) Bucket
 }
 
 type Bucket interface {
@@ -79,6 +86,18 @@ type Bucket interface {
 	StoreType() string
 	// Path returns the Bucket path.
 	Path() string
+	// SetDemoter sets the demoter for the Bucket.
+	SetDemoter(demoter Demoter)
+	// SetPromoter sets the promoter for the Bucket.
+	SetPromoter(promoter Promoter)
+}
+
+type Demoter interface {
+	Demote(ctx context.Context, id *object.ID, src Bucket) error
+}
+
+type Promoter interface {
+	Promote(ctx context.Context, id *object.ID, src Bucket) error
 }
 
 type PurgeControl struct {

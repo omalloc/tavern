@@ -14,7 +14,7 @@ var ErrKeyNotFound = errors.New("key not found")
 const (
 	TypeInMemory = "inmemory"
 	TypeNormal   = "normal" // normal, warm 同一个
-	TypeWarm     = "normal" // normal, warm 同一个
+	TypeWarm     = "warm"   // normal, warm 同一个
 	TypeCold     = "cold"
 	TypeHot      = "hot"
 )

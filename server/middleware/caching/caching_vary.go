@@ -3,7 +3,6 @@ package caching
 import (
 	"context"
 	"errors"
-	"fmt"
 	"net/http"
 	"os"
 	"slices"
@@ -126,10 +125,7 @@ func (v *VaryProcessor) lookup(caching *Caching, req *http.Request) *object.Meta
 	varyKey := varycontrol.Clean(caching.md.Headers.Values("Vary")...)
 
 	// Generate object ID based on Vary data from request headers.
-	vid, err := newObjectIDFromRequest(req, varyKey.VaryData(req.Header), caching.opt.IncludeQueryInCacheKey)
-	if err != nil {
-		return nil
-	}
+	vid := newObjectIDFromRequest(req, varyKey.VaryData(req.Header), caching.opt.IncludeQueryInCacheKey)
 
 	vmd, err := caching.bucket.Lookup(req.Context(), vid)
 	if err != nil {
@@ -193,10 +189,7 @@ func (v *VaryProcessor) handleNoResponseVary(caching *Caching, resp *http.Respon
 		caching.log.Debugf("vary data already exist: %s", varyData)
 	}
 
-	l2MetaID, err := newObjectIDFromRequest(caching.req, varyData, caching.opt.IncludeQueryInCacheKey)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create hash-key: %w", err)
-	}
+	l2MetaID := newObjectIDFromRequest(caching.req, varyData, caching.opt.IncludeQueryInCacheKey)
 
 	cl, _ := strconv.Atoi(resp.Header.Get("Content-Length"))
 	return &object.Metadata{
@@ -222,7 +215,7 @@ func (v *VaryProcessor) handleResponseVary(caching *Caching, resp *http.Response
 		if metaVary.Compare(respVary) {
 			// Vary keys match, try to find existing Vary cache.
 			varyData = metaVary.VaryData(caching.req.Header)
-			varyKey, _ := newObjectIDFromRequest(caching.req, varyData, caching.opt.IncludeQueryInCacheKey)
+			varyKey := newObjectIDFromRequest(caching.req, varyData, caching.opt.IncludeQueryInCacheKey)
 			varyMeta, err := caching.bucket.Lookup(caching.req.Context(), varyKey)
 			if err != nil {
 				caching.log.Warnf("Vary key lookup failed: %v", err)
@@ -251,7 +244,7 @@ func (v *VaryProcessor) handleResponseVary(caching *Caching, resp *http.Response
 		}
 
 		// Build new Vary cache object.
-		varyObjectID, _ := newObjectIDFromRequest(caching.req, varyData, caching.opt.IncludeQueryInCacheKey)
+		varyObjectID := newObjectIDFromRequest(caching.req, varyData, caching.opt.IncludeQueryInCacheKey)
 		return v.upgrade(caching, resp, varyObjectID, varyData)
 	}
 
@@ -264,7 +257,7 @@ func (v *VaryProcessor) handleResponseVary(caching *Caching, resp *http.Response
 
 	caching.md.VirtualKey = nil
 	varyData = respVary.VaryData(caching.req.Header)
-	varyObjectID, _ := newObjectIDFromRequest(caching.req, varyData, caching.opt.IncludeQueryInCacheKey)
+	varyObjectID := newObjectIDFromRequest(caching.req, varyData, caching.opt.IncludeQueryInCacheKey)
 	return v.upgrade(caching, resp, varyObjectID, varyData)
 }
 

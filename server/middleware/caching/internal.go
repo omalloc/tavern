@@ -310,17 +310,19 @@ func cloneRequest(req *http.Request) *http.Request {
 	return proxyReq
 }
 
-func newObjectIDFromRequest(req *http.Request, vd string, includeQuery bool) (*object.ID, error) {
-	// option: cache-key include querystring
-	//
-	// TODO: get cache-key from frontend protocol rule.
-
-	// or later default rule.
-	if includeQuery {
-		return object.NewVirtualID(req.URL.String(), vd), nil
+func newObjectIDFromRequest(req *http.Request, vd string, includeQuery bool) *object.ID {
+	// get cache-key from frontend protocol rule.
+	if cacheKey := req.Header.Get(constants.InternalStoreUrl); cacheKey != "" {
+		return object.NewVirtualID(cacheKey, vd)
 	}
 
-	return object.NewVirtualID(fmt.Sprintf("%s://%s%s", req.URL.Scheme, req.Host, req.URL.Path), vd), nil
+	// option: cache-key include querystring
+	// or later default rule.
+	if includeQuery {
+		return object.NewVirtualID(req.URL.String(), vd)
+	}
+
+	return object.NewVirtualID(fmt.Sprintf("%s://%s%s", req.URL.Scheme, req.Host, req.URL.Path), vd)
 }
 
 func closeBody(resp *http.Response) {

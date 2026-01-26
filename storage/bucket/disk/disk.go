@@ -41,6 +41,8 @@ type diskBucket struct {
 	cache     *lru.Cache[object.IDHash, storage.Mark]
 	fileFlag  int
 	fileMode  fs.FileMode
+	demoter   storage.Demoter
+	promoter  storage.Promoter
 	stop      chan struct{}
 }
 
@@ -93,15 +95,20 @@ func (d *diskBucket) evict() {
 
 	clog.Debugf("start evict goroutine for %s", d.ID())
 
-	// Demote func
-	demoteTarget := storage.TypeNormal
-	if d.storeType == storage.TypeNormal {
-		demoteTarget = storage.TypeCold
-	}
-	demote := func(evicted lru.Eviction[object.IDHash, storage.Mark]) error {
-		// TODO: demote to target storage bucket
-		log.Debugf("demote %s to %s", demoteTarget, evicted.Key)
+	migration := d.tiering != nil && d.tiering.Enabled
 
+	demote := func(evicted lru.Eviction[object.IDHash, storage.Mark]) error {
+		if d.demoter != nil {
+			md, err := d.indexdb.Get(context.Background(), evicted.Key[:])
+			if err != nil {
+				return err
+			}
+			if md == nil || md.ID == nil {
+				return fmt.Errorf("metadata not found for demotion")
+			}
+			log.Debugf("demote %s to %s", d.storeType, md.ID.Key())
+			return d.demoter.Demote(context.Background(), md.ID, d)
+		}
 		return nil
 	}
 
@@ -118,7 +125,7 @@ func (d *diskBucket) evict() {
 				return
 			case evicted := <-ch:
 				// expired cachefile Demote to cold bucket
-				if d.tiering != nil && d.tiering.Enabled {
+				if migration {
 					if err := demote(evicted); err != nil {
 						// fallback to discard
 						discard(evicted)
@@ -272,7 +279,7 @@ func (d *diskBucket) discard(ctx context.Context, md *object.Metadata) error {
 
 // Exist implements storage.Bucket.
 func (d *diskBucket) Exist(ctx context.Context, id []byte) bool {
-	return d.indexdb.Exist(ctx, id)
+	return d.cache.Has(object.IDHash(id))
 }
 
 // Expired implements storage.Bucket.
@@ -294,7 +301,7 @@ func (d *diskBucket) Lookup(ctx context.Context, id *object.ID) (*object.Metadat
 	return md, err
 }
 
-// Touch implements [storage.Bucket].
+// Touch implements [storage.Bucket]. Update LRU mark and maybe trigger promotion.
 func (d *diskBucket) Touch(ctx context.Context, id *object.ID) error {
 	mark := d.cache.Get(id.Hash())
 	if mark.LastAccess() <= 0 {
@@ -304,6 +311,36 @@ func (d *diskBucket) Touch(ctx context.Context, id *object.ID) error {
 	mark.SetLastAccess(time.Now().Unix())
 	mark.SetRefs(mark.Refs() + 1)
 	d.cache.Set(id.Hash(), mark)
+
+	// Promotion logic (hit counting within window)
+	if d.tiering == nil || !d.tiering.Enabled || d.promoter == nil {
+		return nil
+	}
+	if d.storeType == storage.TypeHot || d.storeType == storage.TypeInMemory {
+		return nil
+	}
+
+	minHits := d.tiering.Promote.MinHits
+	window := d.tiering.Promote.Window
+	maxSize := d.tiering.Promote.MaxObjectSize
+	if minHits <= 0 || window <= 0 {
+		return nil
+	}
+
+	hits := mark.Refs()
+	if int(hits) < minHits {
+		return nil
+	}
+	if maxSize > 0 {
+		if md, err := d.indexdb.Get(ctx, id.Bytes()); err == nil && md != nil {
+			if uint64(md.Size) > maxSize {
+				return nil
+			}
+		}
+	}
+	go func() {
+		_ = d.promoter.Promote(context.Background(), id, d)
+	}()
 	return nil
 }
 
@@ -420,6 +457,64 @@ func (d *diskBucket) ReadChunkFile(ctx context.Context, id *object.ID, index uin
 // Close implements storage.Bucket.
 func (d *diskBucket) Close() error {
 	return d.indexdb.Close()
+}
+
+func (d *diskBucket) MoveTo(ctx context.Context, id *object.ID, target storage.Bucket) error {
+	md, err := d.indexdb.Get(ctx, id.Bytes())
+	if err != nil {
+		return err
+	}
+
+	clog := log.Context(ctx)
+
+	// 1. Move all chunks
+	var moveErr error
+	md.Chunks.Range(func(x uint32) {
+		if moveErr != nil {
+			return
+		}
+
+		rf, _, err1 := d.ReadChunkFile(ctx, id, x)
+		if err1 != nil {
+			moveErr = err1
+			return
+		}
+		defer rf.Close()
+
+		wf, _, err2 := target.WriteChunkFile(ctx, id, x)
+		if err2 != nil {
+			moveErr = err2
+			return
+		}
+		defer wf.Close()
+
+		if _, err2 = io.Copy(wf, rf); err2 != nil {
+			moveErr = err2
+		}
+	})
+
+	if moveErr != nil {
+		clog.Errorf("failed to move object %s chunks: %v", id.Key(), moveErr)
+		return moveErr
+	}
+
+	// 2. Store metadata in target
+	if err := target.Store(ctx, md); err != nil {
+		clog.Errorf("failed to store metadata in target bucket for %s: %v", id.Key(), err)
+		return err
+	}
+
+	// 3. Discard locally
+	return d.discard(ctx, md)
+}
+
+func (d *diskBucket) SetDemoter(demoter storage.Demoter) {
+	d.demoter = demoter
+}
+
+// SetPromoter implements Bucket.SetPromoter
+func (d *diskBucket) SetPromoter(promoter storage.Promoter) {
+	d.promoter = promoter
 }
 
 func (d *diskBucket) initWorkdir() {
