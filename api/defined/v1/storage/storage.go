@@ -57,6 +57,7 @@ type Storage interface {
 	SharedKV() SharedKV
 
 	PURGE(storeUrl string, typ PurgeControl) error
+
 	// Promote moves object up the tiers (e.g., warm -> hot)
 	Promote(ctx context.Context, id *object.ID, src Bucket) error
 
@@ -86,17 +87,12 @@ type Bucket interface {
 	StoreType() string
 	// Path returns the Bucket path.
 	Path() string
-	// SetDemoter sets the demoter for the Bucket.
-	SetDemoter(demoter Demoter)
-	// SetPromoter sets the promoter for the Bucket.
-	SetPromoter(promoter Promoter)
+	// SetMigration sets the migration for the Bucket.
+	SetMigration(migration Migration)
 }
 
-type Demoter interface {
+type Migration interface {
 	Demote(ctx context.Context, id *object.ID, src Bucket) error
-}
-
-type Promoter interface {
 	Promote(ctx context.Context, id *object.ID, src Bucket) error
 }
 

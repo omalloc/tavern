@@ -266,7 +266,7 @@ func (c *Caching) getUpstreamReader(fromByte, toByte uint64, async bool) (io.Rea
 		now := time.Now()
 		c.log.Debugf("getUpstreamReader doProxy[chunk]: begin: %s, rawRange: %s, newRange: %s", now, rawRange, newRange)
 		resp, err := c.doProxy(req, true)
-		c.log.Infof("getUpstreamReader doProxy[chunk]: timeCost: %s, rawRange: %s, newRange: %s", time.Since(now), rawRange, newRange)
+		c.log.Debugf("getUpstreamReader doProxy[chunk]: timeCost: %s, rawRange: %s, newRange: %s", time.Since(now), rawRange, newRange)
 		if err != nil {
 			closeBody(resp)
 			return nil, err

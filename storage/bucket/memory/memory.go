@@ -40,7 +40,7 @@ type memoryBucket struct {
 	maxSize   uint64
 	closed    bool
 	stop      chan struct{}
-	promoter  storage.Promoter
+	migration storage.Migration
 }
 
 func New(config *conf.Bucket, sharedkv storage.SharedKV) (storage.Bucket, error) {
@@ -267,7 +267,7 @@ func (m *memoryBucket) WriteChunkFile(ctx context.Context, id *object.ID, index 
 	_ = m.fs.MkdirAll(filepath.Dir(wpath), m.fileMode)
 
 	if log.Enabled(log.LevelDebug) {
-		log.Context(ctx).Infof("write inmemory chunk file %s", wpath)
+		log.Context(ctx).Debugf("write inmemory chunk file %s", wpath)
 	}
 
 	f, err := m.fs.OpenReadWrite(wpath, vfs.WriteCategoryUnspecified)
@@ -291,10 +291,7 @@ func (m *memoryBucket) MoveTo(ctx context.Context, id *object.ID, target storage
 	return nil
 }
 
-func (m *memoryBucket) SetDemoter(demoter storage.Demoter) {}
-
-// SetPromoter implements Bucket.SetPromoter
-func (m *memoryBucket) SetPromoter(promoter storage.Promoter) { m.promoter = promoter }
+func (m *memoryBucket) SetMigration(migration storage.Migration) {}
 
 // StoreType implements [storage.Bucket].
 func (m *memoryBucket) StoreType() string {

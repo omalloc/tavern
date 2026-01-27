@@ -91,7 +91,7 @@ func (c *Caching) setXCache(resp *http.Response) {
 		return
 	}
 
-	resp.Header.Set(constants.ProtocolCacheStatusKey, strings.Join([]string{c.cacheStatus.String(), "from", c.opt.Hostname, "(tavern/4.0)"}, " "))
+	resp.Header.Set(constants.ProtocolCacheStatusKey, strings.Join([]string{c.cacheStatus.String(), "from", c.opt.Hostname, c.bucket.StoreType(), "(tavern/4.0)"}, " "))
 
 	metric := metrics.FromContext(c.req.Context())
 	metric.CacheStatus = c.cacheStatus.String()
@@ -186,26 +186,27 @@ func getContents(c *Caching, reqChunks []uint32, from uint32) (io.ReadCloser, in
 	c.log.Debugf("find available chunk index %d, availableChunks: %v", index, availableChunks)
 	fromByte := uint64(reqChunks[from] * uint32(c.md.BlockSize))
 	if index < len(availableChunks) {
+
 		chunkFile, _ := getSliceChunkFile(c, availableChunks[index])
 		if chunkFile != nil {
 			if err := checkChunkSize(c, chunkFile, idx); err != nil {
 				_ = c.bucket.Discard(context.Background(), c.id)
 				return nil, 0, err
 			}
+
+			// 找到一个起始块，需要补齐前面的缺失块到当前这个块
+			toByte := min(c.md.Size-1, uint64(availableChunks[index]*uint32(partSize))-1)
+			req := c.req.Clone(context.Background())
+			newRange := fmt.Sprintf("bytes=%d-%d", fromByte, toByte)
+			req.Header.Set("Range", newRange)
+
+			reader, err := c.getUpstreamReader(fromByte, toByte, true)
+			if err != nil {
+				return nil, 0, err
+			}
+
+			return iobuf.PartsReadCloser(reader, chunkFile), int(availableChunks[index]-reqChunks[from]) + 1, nil
 		}
-
-		// 找到一个起始块，需要补齐前面的缺失块到当前这个块
-		toByte := min(c.md.Size-1, uint64(availableChunks[index]*uint32(partSize))-1)
-		req := c.req.Clone(context.Background())
-		newRange := fmt.Sprintf("bytes=%d-%d", fromByte, toByte)
-		req.Header.Set("Range", newRange)
-
-		reader, err := c.getUpstreamReader(fromByte, toByte, true)
-		if err != nil {
-			return nil, 0, err
-		}
-
-		return iobuf.PartsReadCloser(reader, chunkFile), int(availableChunks[index]-reqChunks[from]) + 1, nil
 	}
 
 	// no more hit block, fill
