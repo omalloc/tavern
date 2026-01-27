@@ -127,15 +127,9 @@ func (n *nativeStorage) reinit(config *conf.Storage) error {
 		n.log.Infof("no hot bucket configured")
 	}
 
-	// register demoter
+	// register demoter and promoter
 	for _, b := range n.Buckets() {
-		b.SetDemoter(n)
-		// register promoter as well
-		b.SetPromoter(n)
-	}
-	if n.memoryBucket != nil {
-		n.memoryBucket.SetDemoter(n)
-		n.memoryBucket.SetPromoter(n)
+		b.SetMigration(n)
 	}
 
 	return nil
@@ -199,8 +193,8 @@ func (n *nativeStorage) Promote(ctx context.Context, id *object.ID, src storage.
 	var targetTier string
 	switch src.StoreType() {
 	case storage.TypeCold:
-		targetTier = storage.TypeNormal
-	case storage.TypeNormal: // TypeWarm is same as TypeNormal
+		targetTier = storage.TypeWarm
+	case storage.TypeWarm:
 		targetTier = storage.TypeHot
 	default:
 		return nil // no promotion for other types

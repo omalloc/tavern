@@ -91,7 +91,7 @@ func (c *Caching) setXCache(resp *http.Response) {
 		return
 	}
 
-	resp.Header.Set(constants.ProtocolCacheStatusKey, strings.Join([]string{c.cacheStatus.String(), "from", c.opt.Hostname, "(tavern/4.0)"}, " "))
+	resp.Header.Set(constants.ProtocolCacheStatusKey, strings.Join([]string{c.cacheStatus.String(), "from", c.opt.Hostname, c.bucket.StoreType(), "(tavern/4.0)"}, " "))
 
 	metric := metrics.FromContext(c.req.Context())
 	metric.CacheStatus = c.cacheStatus.String()
@@ -188,6 +188,7 @@ func getContents(c *Caching, reqChunks []uint32, from uint32) (io.ReadCloser, in
 	c.log.Debugf("find available chunk index %d, availableChunks: %v", index, availableChunks)
 	fromByte := uint64(reqChunks[from] * uint32(c.md.BlockSize))
 	if index < len(availableChunks) {
+
 		chunkFile, _ := getSliceChunkFile(c, availableChunks[index])
 		if chunkFile != nil {
 			if err := checkChunkSize(c, chunkFile, idx); err != nil {

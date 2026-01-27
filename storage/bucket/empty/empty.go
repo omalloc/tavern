@@ -130,9 +130,7 @@ func (e *emptyBucket) MoveTo(ctx context.Context, id *object.ID, target storage.
 	return nil
 }
 
-func (e *emptyBucket) SetDemoter(demoter storage.Demoter) {}
-
-func (e *emptyBucket) SetPromoter(promoter storage.Promoter) {}
+func (e *emptyBucket) SetMigration(migration storage.Migration) {}
 
 func New(c *conf.Bucket, _ storage.SharedKV) (storage.Bucket, error) {
 	path := c.Path

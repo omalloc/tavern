@@ -135,10 +135,6 @@ func (b *wrappedBucket) MoveTo(ctx context.Context, id *object.ID, target storag
 	return b.base.MoveTo(ctx, id, target)
 }
 
-func (b *wrappedBucket) SetDemoter(demoter storagev1.Demoter) {
-	b.base.SetDemoter(demoter)
-}
-
-func (b *wrappedBucket) SetPromoter(promoter storagev1.Promoter) {
-	b.base.SetPromoter(promoter)
+func (b *wrappedBucket) SetMigration(migration storagev1.Migration) {
+	b.base.SetMigration(migration)
 }

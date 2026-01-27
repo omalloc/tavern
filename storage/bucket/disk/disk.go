@@ -41,8 +41,7 @@ type diskBucket struct {
 	cache     *lru.Cache[object.IDHash, storage.Mark]
 	fileFlag  int
 	fileMode  fs.FileMode
-	demoter   storage.Demoter
-	promoter  storage.Promoter
+	migration storage.Migration
 	stop      chan struct{}
 }
 
@@ -98,7 +97,7 @@ func (d *diskBucket) evict() {
 	migration := d.tiering != nil && d.tiering.Enabled
 
 	demote := func(evicted lru.Eviction[object.IDHash, storage.Mark]) error {
-		if d.demoter != nil {
+		if d.migration != nil {
 			md, err := d.indexdb.Get(context.Background(), evicted.Key[:])
 			if err != nil {
 				return err
@@ -107,7 +106,7 @@ func (d *diskBucket) evict() {
 				return fmt.Errorf("metadata not found for demotion")
 			}
 			log.Debugf("demote %s to %s", d.storeType, md.ID.Key())
-			return d.demoter.Demote(context.Background(), md.ID, d)
+			return d.migration.Demote(context.Background(), md.ID, d)
 		}
 		return nil
 	}
@@ -310,10 +309,11 @@ func (d *diskBucket) Touch(ctx context.Context, id *object.ID) error {
 
 	mark.SetLastAccess(time.Now().Unix())
 	mark.SetRefs(mark.Refs() + 1)
+
 	d.cache.Set(id.Hash(), mark)
 
 	// Promotion logic (hit counting within window)
-	if d.tiering == nil || !d.tiering.Enabled || d.promoter == nil {
+	if d.tiering == nil || !d.tiering.Enabled || d.migration == nil {
 		return nil
 	}
 	if d.storeType == storage.TypeHot || d.storeType == storage.TypeInMemory {
@@ -338,10 +338,9 @@ func (d *diskBucket) Touch(ctx context.Context, id *object.ID) error {
 			}
 		}
 	}
-	go func() {
-		_ = d.promoter.Promote(context.Background(), id, d)
-	}()
-	return nil
+
+	log.Infof("promote %s", id.WPath(d.path))
+	return d.migration.Promote(context.Background(), id, d)
 }
 
 // Remove implements storage.Bucket.
@@ -508,13 +507,8 @@ func (d *diskBucket) MoveTo(ctx context.Context, id *object.ID, target storage.B
 	return d.discard(ctx, md)
 }
 
-func (d *diskBucket) SetDemoter(demoter storage.Demoter) {
-	d.demoter = demoter
-}
-
-// SetPromoter implements Bucket.SetPromoter
-func (d *diskBucket) SetPromoter(promoter storage.Promoter) {
-	d.promoter = promoter
+func (d *diskBucket) SetMigration(migration storage.Migration) {
+	d.migration = migration
 }
 
 func (d *diskBucket) initWorkdir() {

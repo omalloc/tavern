@@ -1,6 +1,7 @@
 package caching
 
 import (
+	"context"
 	"io"
 	"net/http"
 	"reflect"
@@ -10,6 +11,7 @@ import (
 	"time"
 
 	"github.com/omalloc/tavern/api/defined/v1/storage"
+	"github.com/omalloc/tavern/api/defined/v1/storage/object"
 	"github.com/omalloc/tavern/contrib/log"
 	"github.com/omalloc/tavern/proxy"
 )
@@ -24,13 +26,22 @@ type Processor interface {
 	PostRequest(caching *Caching, req *http.Request, resp *http.Response) (*http.Response, error)
 }
 
+type touchArgs struct {
+	bucket storage.Bucket
+	id     *object.ID
+	unlock func()
+}
+
 // ProcessorChain represents a chain of caching processors.
-type ProcessorChain []Processor
+type ProcessorChain struct {
+	processors []Processor
+	touchChan  chan *touchArgs
+}
 
 // Lookup iterates through the processor chain to check for a cache hit.
 func (pc *ProcessorChain) Lookup(caching *Caching, req *http.Request) (bool, error) {
 	var err error
-	for _, processor := range *pc {
+	for _, processor := range pc.processors {
 		caching.hit, err = processor.Lookup(caching, req)
 		if err != nil {
 			return false, err
@@ -51,7 +62,7 @@ func (pc *ProcessorChain) Lookup(caching *Caching, req *http.Request) (bool, err
 // PreRequest processes the request through the processor chain before sending it to the origin server.
 func (pc *ProcessorChain) PreRequest(caching *Caching, req *http.Request) (*http.Request, error) {
 	var err error
-	for _, processor := range *pc {
+	for _, processor := range pc.processors {
 		req, err = processor.PreRequest(caching, req)
 		if err != nil {
 			if caching.log.Enabled(log.LevelDebug) {
@@ -67,7 +78,7 @@ func (pc *ProcessorChain) PreRequest(caching *Caching, req *http.Request) (*http
 // PostRequest processes the response through the processor chain after receiving it from the origin server.
 func (pc *ProcessorChain) PostRequest(caching *Caching, req *http.Request, resp *http.Response) (*http.Response, error) {
 	var err error
-	for _, processor := range *pc {
+	for _, processor := range pc.processors {
 		resp, err = processor.PostRequest(caching, req, resp)
 		if err != nil {
 			if caching.log.Enabled(log.LevelDebug) {
@@ -150,7 +161,22 @@ func (pc *ProcessorChain) postCacheProcessor(caching *Caching, req *http.Request
 	// trigger touch for promotion on cache hit
 	// do not block response path
 	if caching.hit && caching.bucket != nil && caching.id != nil {
-		go func() { _ = caching.bucket.Touch(req.Context(), caching.id) }()
+		if !caching.TryLock() {
+			// already locked by other goroutine
+			caching.log.Infof("tryLock %s: already locked", caching.id.String())
+			return resp, nil
+		}
+
+		select {
+		case pc.touchChan <- &touchArgs{
+			bucket: caching.bucket,
+			id:     caching.id,
+			unlock: caching.Unlock,
+		}: //
+		default:
+			caching.Unlock()
+			caching.log.Warnf("failed to touch object %s: queue full", caching.id.String())
+		}
 	}
 
 	return resp, nil
@@ -159,7 +185,7 @@ func (pc *ProcessorChain) postCacheProcessor(caching *Caching, req *http.Request
 // String returns a string representation of the processor chain.
 func (pc *ProcessorChain) String() string {
 	sb := strings.Builder{}
-	for i, processor := range *pc {
+	for i, processor := range pc.processors {
 		if i > 0 {
 			sb.WriteString(" -> ")
 		}
@@ -171,13 +197,33 @@ func (pc *ProcessorChain) String() string {
 
 // NewProcessorChain creates a new ProcessorChain with the given processors.
 func NewProcessorChain(processors ...Processor) *ProcessorChain {
-	pc := ProcessorChain(processors)
-	return &pc
+	pc := &ProcessorChain{
+		processors: processors,
+		touchChan:  make(chan *touchArgs, 10_000), // 1w
+	}
+
+	go pc.startWorker()
+
+	return pc
+}
+
+// startWorker start a worker to touch objects.
+func (pc *ProcessorChain) startWorker() {
+	go func() {
+		for args := range pc.touchChan {
+			ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
+			if err := args.bucket.Touch(ctx, args.id); err != nil {
+				log.Warnf("failed to touch object %s: %v", args.id.String(), err)
+			}
+			args.unlock()
+			cancel()
+		}
+	}()
 }
 
 // fill removes any nil processors from the chain.
 func (pc *ProcessorChain) fill() *ProcessorChain {
-	*pc = slices.DeleteFunc(*pc, func(p Processor) bool {
+	pc.processors = slices.DeleteFunc(pc.processors, func(p Processor) bool {
 		return p == nil
 	})
 	return pc
