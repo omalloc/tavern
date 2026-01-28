@@ -40,6 +40,7 @@ type memoryBucket struct {
 	maxSize   uint64
 	closed    bool
 	stop      chan struct{}
+	migration storage.Migration
 }
 
 func New(config *conf.Bucket, sharedkv storage.SharedKV) (storage.Bucket, error) {
@@ -48,7 +49,7 @@ func New(config *conf.Bucket, sharedkv storage.SharedKV) (storage.Bucket, error)
 		path:      "/",
 		dbPath:    storage.TypeInMemory,
 		driver:    config.Driver,
-		storeType: storage.TypeInMemory,
+		storeType: config.Type,
 		weight:    100, // default weight
 		sharedkv:  sharedkv,
 		cache:     lru.New[object.IDHash, storage.Mark](config.MaxObjectLimit), // in-memory object size
@@ -202,6 +203,19 @@ func (m *memoryBucket) Lookup(ctx context.Context, id *object.ID) (*object.Metad
 	return md, err
 }
 
+// Touch implements [storage.Bucket].
+func (m *memoryBucket) Touch(ctx context.Context, id *object.ID) error {
+	mark := m.cache.Get(id.Hash())
+	if mark.LastAccess() <= 0 {
+		return nil
+	}
+
+	mark.SetLastAccess(time.Now().Unix())
+	mark.SetRefs(mark.Refs() + 1)
+	m.cache.Set(id.Hash(), mark)
+	return nil
+}
+
 // Path implements [storage.Bucket].
 func (m *memoryBucket) Path() string {
 	return m.path
@@ -253,7 +267,7 @@ func (m *memoryBucket) WriteChunkFile(ctx context.Context, id *object.ID, index 
 	_ = m.fs.MkdirAll(filepath.Dir(wpath), m.fileMode)
 
 	if log.Enabled(log.LevelDebug) {
-		log.Context(ctx).Infof("write inmemory chunk file %s", wpath)
+		log.Context(ctx).Debugf("write inmemory chunk file %s", wpath)
 	}
 
 	f, err := m.fs.OpenReadWrite(wpath, vfs.WriteCategoryUnspecified)
@@ -272,6 +286,12 @@ func (m *memoryBucket) ReadChunkFile(_ context.Context, id *object.ID, index uin
 	}
 	return storage.WrapVFSFile(f), wpath, err
 }
+
+func (m *memoryBucket) MoveTo(ctx context.Context, id *object.ID, target storage.Bucket) error {
+	return nil
+}
+
+func (m *memoryBucket) SetMigration(migration storage.Migration) {}
 
 // StoreType implements [storage.Bucket].
 func (m *memoryBucket) StoreType() string {

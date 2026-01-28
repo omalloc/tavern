@@ -80,6 +80,10 @@ func (e *emptyBucket) Lookup(ctx context.Context, id *object.ID) (*object.Metada
 	return nil, storage.ErrKeyNotFound
 }
 
+func (e *emptyBucket) Touch(ctx context.Context, id *object.ID) error {
+	return nil
+}
+
 // Remove implements storage.Bucket.
 func (e *emptyBucket) Remove(ctx context.Context, id *object.ID) error {
 	return nil
@@ -121,6 +125,12 @@ func (e *emptyBucket) WriteChunkFile(ctx context.Context, id *object.ID, index u
 func (e *emptyBucket) ReadChunkFile(ctx context.Context, id *object.ID, index uint32) (storage.File, string, error) {
 	return nil, "discard", nil
 }
+
+func (e *emptyBucket) MoveTo(ctx context.Context, id *object.ID, target storage.Bucket) error {
+	return nil
+}
+
+func (e *emptyBucket) SetMigration(migration storage.Migration) {}
 
 func New(c *conf.Bucket, _ storage.SharedKV) (storage.Bucket, error) {
 	path := c.Path

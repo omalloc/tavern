@@ -20,6 +20,8 @@ type Selector interface {
 type Operation interface {
 	// Lookup retrieves the metadata for the specified object ID.
 	Lookup(ctx context.Context, id *object.ID) (*object.Metadata, error)
+	// Touch updates the last access time for the specified object ID.
+	Touch(ctx context.Context, id *object.ID) error
 	// Store store the metadata for the specified object ID.
 	Store(ctx context.Context, meta *object.Metadata) error
 	// Exist checks if the object exists.
@@ -42,6 +44,8 @@ type Operation interface {
 	WriteChunkFile(ctx context.Context, id *object.ID, index uint32) (io.WriteCloser, string, error)
 	// ReadChunkFile open chunk file and returns io.ReadCloser
 	ReadChunkFile(ctx context.Context, id *object.ID, index uint32) (File, string, error)
+	// MoveTo moves the object to the target bucket.
+	MoveTo(ctx context.Context, id *object.ID, target Bucket) error
 }
 
 type Storage interface {
@@ -53,6 +57,12 @@ type Storage interface {
 	SharedKV() SharedKV
 
 	PURGE(storeUrl string, typ PurgeControl) error
+
+	// Promote moves object up the tiers (e.g., warm -> hot)
+	Promote(ctx context.Context, id *object.ID, src Bucket) error
+
+	// SelectWithType selects a Bucket by the tier type.
+	SelectWithType(ctx context.Context, id *object.ID, tierType string) Bucket
 }
 
 type Bucket interface {
@@ -77,6 +87,13 @@ type Bucket interface {
 	StoreType() string
 	// Path returns the Bucket path.
 	Path() string
+	// SetMigration sets the migration for the Bucket.
+	SetMigration(migration Migration)
+}
+
+type Migration interface {
+	Demote(ctx context.Context, id *object.ID, src Bucket) error
+	Promote(ctx context.Context, id *object.ID, src Bucket) error
 }
 
 type PurgeControl struct {

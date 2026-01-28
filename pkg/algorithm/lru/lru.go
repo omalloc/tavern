@@ -57,14 +57,15 @@ func (c *Cache[K, V]) Has(key K) bool {
 
 // Get retrieves the key's value if it exists, incrementing the frequency.
 // It returns nil if there is no value for the given key.
-func (c *Cache[K, V]) Get(key K) *V {
+func (c *Cache[K, V]) Get(key K) V {
 	c.lock.Lock()
 	defer c.lock.Unlock()
 	if e, ok := c.values[key]; ok {
 		c.increment(e)
-		return &e.value
+		return e.value
 	}
-	return nil
+	var zero V
+	return zero
 }
 
 // Set sets given key-value in the cache.

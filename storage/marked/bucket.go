@@ -43,6 +43,10 @@ func (b *wrappedBucket) Lookup(ctx context.Context, id *object.ID) (*object.Meta
 	return md, nil
 }
 
+func (b *wrappedBucket) Touch(ctx context.Context, id *object.ID) error {
+	return b.base.Touch(ctx, id)
+}
+
 func (b *wrappedBucket) Store(ctx context.Context, meta *object.Metadata) error {
 	return b.base.Store(ctx, meta)
 }
@@ -125,4 +129,12 @@ func (b *wrappedBucket) Path() string {
 
 func (b *wrappedBucket) Close() error {
 	return b.base.Close()
+}
+
+func (b *wrappedBucket) MoveTo(ctx context.Context, id *object.ID, target storagev1.Bucket) error {
+	return b.base.MoveTo(ctx, id, target)
+}
+
+func (b *wrappedBucket) SetMigration(migration storagev1.Migration) {
+	b.base.SetMigration(migration)
 }
