@@ -1,4 +1,4 @@
-package example
+package qs
 
 import (
 	"context"
@@ -18,7 +18,7 @@ import (
 	"github.com/omalloc/tavern/storage"
 )
 
-var _ configv1.Plugin = (*ExamplePlugin)(nil)
+var _ configv1.Plugin = (*QsPlugin)(nil)
 
 type SimpleMetadata struct {
 	ID       string    `json:"id"`
@@ -37,33 +37,33 @@ type option struct {
 	Option2 int    `json:"option2"`
 }
 
-type ExamplePlugin struct {
+type QsPlugin struct {
 	log *log.Helper
 	opt *option
 }
 
 func init() {
-	plugin.Register("example-plugin", NewExamplePlugin)
+	plugin.Register("qs-plugin", NewQsPlugin)
 }
 
-func NewExamplePlugin(opts configv1.Option, log *log.Helper) (configv1.Plugin, error) {
+func NewQsPlugin(opts configv1.Option, log *log.Helper) (configv1.Plugin, error) {
 	opt := &option{}
 	if err := opts.Unmarshal(opt); err != nil {
 		return nil, err
 	}
-	return &ExamplePlugin{
+	return &QsPlugin{
 		log: log,
 		opt: opt,
 	}, nil
 }
 
 // HandleFunc implements plugin.Plugin.
-func (e *ExamplePlugin) HandleFunc(next http.HandlerFunc) http.HandlerFunc {
+func (e *QsPlugin) HandleFunc(next http.HandlerFunc) http.HandlerFunc {
 	return next
 }
 
 // AddRouter implements plugin.Plugin.
-func (e *ExamplePlugin) AddRouter(router *http.ServeMux) {
+func (e *QsPlugin) AddRouter(router *http.ServeMux) {
 	router.Handle("/plugin/store/disk", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		buckets := storage.Current().Buckets()
 
@@ -79,7 +79,6 @@ func (e *ExamplePlugin) AddRouter(router *http.ServeMux) {
 		_, _ = w.Write(payload)
 	}))
 
-	// 本设备的所有缓存信息，精简版
 	router.Handle("/plugin/store/object/simple", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		getHash := r.URL.Query().Get("hash") != ""
 
@@ -149,7 +148,7 @@ func (e *ExamplePlugin) AddRouter(router *http.ServeMux) {
 }
 
 // Start implements plugin.Plugin.
-func (e *ExamplePlugin) Start(context.Context) error {
+func (e *QsPlugin) Start(context.Context) error {
 	// you can add your startup logic here
 
 	// e.g.
@@ -161,7 +160,7 @@ func (e *ExamplePlugin) Start(context.Context) error {
 }
 
 // Stop implements plugin.Plugin.
-func (e *ExamplePlugin) Stop(context.Context) error {
+func (e *QsPlugin) Stop(context.Context) error {
 	// you can add your cleanup logic here
 
 	// e.g.
@@ -186,7 +185,7 @@ func convRange(parts bitmap.Bitmap) string {
 
 	for i := 1; i < len(nums); i++ {
 		if nums[i] != prev+1 {
-			// 当数字不连续时，处理之前的范围
+			// handle the previous range when numbers are not consecutive
 			if start == prev {
 				result = append(result, fmt.Sprintf("%d", start))
 			} else {
@@ -197,7 +196,7 @@ func convRange(parts bitmap.Bitmap) string {
 		prev = nums[i]
 	}
 
-	// 处理最后一个范围
+	// last range
 	if start == prev {
 		result = append(result, fmt.Sprintf("%d", start))
 	} else {
