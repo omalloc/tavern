@@ -1,12 +1,13 @@
 package verifier
 
 import (
-	"crypto/md5"
 	"encoding/hex"
 	"fmt"
 	"hash"
 	"os"
 	"path/filepath"
+
+	"github.com/cespare/xxhash/v2"
 )
 
 func buildPaths(basepath string, cacheKey string, count int) []string {
@@ -21,7 +22,7 @@ func ReadAndSumHash(basepath string, cacheKey string, count int, chunkSzie uint6
 
 	paths := buildPaths(basepath, cacheKey, count)
 
-	h := md5.New()
+	h := xxhash.New()
 
 	readChunkFile := func(fileName string, idx int, h hash.Hash) error {
 		f, err := os.OpenFile(fileName, os.O_RDONLY, 0)

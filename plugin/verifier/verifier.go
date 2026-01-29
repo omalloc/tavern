@@ -8,6 +8,7 @@ import (
 	"hash/crc32"
 	"net"
 	"net/http"
+	"net/http/httputil"
 	"strconv"
 	"time"
 
@@ -126,7 +127,7 @@ func (v *verifier) eventLoop(_ context.Context, payload event.CacheCompleted) {
 	// calculate file md5 hash
 	hash, err := ReadAndSumHash(payload.StorePath(), payload.StoreKey(), payload.ChunkCount(), payload.ChunkSize())
 	if err != nil {
-		log.Errorf("check cache-file md5 failed %v", err)
+		log.Errorf("check cache-file xxhash failed %v", err)
 		return
 	}
 
@@ -164,6 +165,11 @@ func (v *verifier) doReport(payload ReportPayload) error {
 	// add headers
 	req.Header.Set("Authorization", v.opt.ApiKey)
 	req.Header.Set("Content-Type", "application/json")
+
+	if log.Enabled(log.LevelDebug) {
+		dump, _ := httputil.DumpRequest(req, true)
+		log.Debugf("dump verifier request: %s", dump)
+	}
 
 	// do request to verifier center.
 	resp, err := v.reportClient.Do(req)
