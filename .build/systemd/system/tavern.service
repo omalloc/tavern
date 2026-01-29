@@ -1,0 +1,22 @@
+[Unit]
+Description=Tavern HTTP Cache Service
+After=network.target
+
+[Service]
+Type=simple
+User=root
+Group=root
+ExecStart=/usr/local/bin/tavern -c /etc/tavern/config.yaml
+ExecReload=/bin/kill -USR2 $MAINPID
+PIDFile=/var/run/tavern/tavern.pid
+Environment="GOTRACEBACK=crash"
+
+# Having non-zero Limit*s causes performance problems due to accounting overhead
+# in the kernel. We recommend using cgroups to do container-local accounting.
+LimitNPROC=infinity
+LimitCORE=infinity
+LimitNOFILE=infinity
+
+[Install]
+WantedBy=multi-user.target
+
