@@ -18,28 +18,28 @@ type Cache[K comparable, V any] struct {
 	UpperBound      int
 	LowerBound      int
 	values          map[K]*cacheEntry[K, V]
-	freqs           *list.List[V]
+	freqs           *list.List[*listEntry[K, V]]
 	len             int
-	lock            *sync.Mutex
+	mu              sync.RWMutex
 	EvictionChannel chan<- Eviction[K, V]
 }
 
 type cacheEntry[K comparable, V any] struct {
-	key      K
-	value    V
-	freqNode *list.Element[V]
+	key       K
+	value     V
+	freqNode  *list.Element[*listEntry[K, V]]
+	entryNode *list.Element[*cacheEntry[K, V]]
 }
 
 type listEntry[K comparable, V any] struct {
-	entries map[*cacheEntry[K, V]]byte
+	entries *list.List[*cacheEntry[K, V]]
 	freq    int
 }
 
 func New[K comparable, V any](cap int) *Cache[K, V] {
 	c := new(Cache[K, V])
 	c.values = make(map[K]*cacheEntry[K, V])
-	c.freqs = list.New[V]()
-	c.lock = new(sync.Mutex)
+	c.freqs = list.New[*listEntry[K, V]]()
 	if cap > 0 {
 		c.UpperBound = cap
 		c.LowerBound = cap
@@ -49,8 +49,8 @@ func New[K comparable, V any](cap int) *Cache[K, V] {
 
 // Has checks if the cache contains the given key, without incrementing the frequency.
 func (c *Cache[K, V]) Has(key K) bool {
-	c.lock.Lock()
-	defer c.lock.Unlock()
+	c.mu.RLock()
+	defer c.mu.RUnlock()
 	_, has := c.values[key]
 	return has
 }
@@ -58,10 +58,21 @@ func (c *Cache[K, V]) Has(key K) bool {
 // Get retrieves the key's value if it exists, incrementing the frequency.
 // It returns nil if there is no value for the given key.
 func (c *Cache[K, V]) Get(key K) *V {
-	c.lock.Lock()
-	defer c.lock.Unlock()
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	if e, ok := c.values[key]; ok {
 		c.increment(e)
+		return &e.value
+	}
+	return nil
+}
+
+// Peek retrieves the key's value if it exists, without incrementing the frequency.
+// It returns nil if there is no value for the given key.
+func (c *Cache[K, V]) Peek(key K) *V {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	if e, ok := c.values[key]; ok {
 		return &e.value
 	}
 	return nil
@@ -70,8 +81,8 @@ func (c *Cache[K, V]) Get(key K) *V {
 // Set sets given key-value in the cache.
 // If the key-value already exists, it increases the frequency.
 func (c *Cache[K, V]) Set(key K, value V) {
-	c.lock.Lock()
-	defer c.lock.Unlock()
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	if e, ok := c.values[key]; ok {
 		// value already exists for key.  overwrite
 		e.value = value
@@ -95,15 +106,15 @@ func (c *Cache[K, V]) Set(key K, value V) {
 
 // Len returns the length of the cache
 func (c *Cache[K, V]) Len() int {
-	c.lock.Lock()
-	defer c.lock.Unlock()
+	c.mu.RLock()
+	defer c.mu.RUnlock()
 	return c.len
 }
 
 // GetFrequency returns the frequency count of the given key
 func (c *Cache[K, V]) GetFrequency(key K) int {
-	c.lock.Lock()
-	defer c.lock.Unlock()
+	c.mu.RLock()
+	defer c.mu.RUnlock()
 	if e, ok := c.values[key]; ok {
 		return e.freqNode.Value.(*listEntry[K, V]).freq
 	}
@@ -113,6 +124,8 @@ func (c *Cache[K, V]) GetFrequency(key K) int {
 
 // Keys returns all the keys in the cache
 func (c *Cache[K, V]) Keys() []K {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
 	keys := make([]K, len(c.values))
 	i := 0
 	for k := range c.values {
@@ -123,9 +136,31 @@ func (c *Cache[K, V]) Keys() []K {
 	return keys
 }
 
+// Remove removes the given key from the cache.
+func (c *Cache[K, V]) Remove(key K) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if e, ok := c.values[key]; ok {
+		delete(c.values, key)
+		c.remEntry(e.freqNode, e)
+		c.len--
+		return true
+	}
+	return false
+}
+
+// Purge clears the cache.
+func (c *Cache[K, V]) Purge() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.values = make(map[K]*cacheEntry[K, V])
+	c.freqs.Init()
+	c.len = 0
+}
+
 func (c *Cache[K, V]) Evict(count int) int {
-	c.lock.Lock()
-	defer c.lock.Unlock()
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	return c.evict(count)
 }
 
@@ -133,23 +168,31 @@ func (c *Cache[K, V]) evict(count int) int {
 	// No lock here so it can be called
 	// from within the lock (during Set)
 	var evicted int
-	for place := c.freqs.Front(); place != nil && evicted < count; place = c.freqs.Front() {
-		entries := place.Value.(*listEntry[K, V]).entries
-		for entry := range entries {
-			if evicted >= count {
-				break
-			}
+	for place := c.freqs.Front(); place != nil && evicted < count; {
+		li := place.Value.(*listEntry[K, V])
+		for entryNode := li.entries.Front(); entryNode != nil && evicted < count; {
+			entry := entryNode.Value.(*cacheEntry[K, V])
 			if c.EvictionChannel != nil {
-				c.EvictionChannel <- Eviction[K, V]{
+				select {
+				case c.EvictionChannel <- Eviction[K, V]{
 					Key:   entry.key,
 					Value: entry.value,
+				}:
+				default:
 				}
 			}
 			delete(c.values, entry.key)
+			// Move to next before removing
+			nextEntryNode := entryNode.Next()
 			c.remEntry(place, entry)
+			entryNode = nextEntryNode
 			evicted++
 			c.len--
 		}
+		// If the entire freq bucket was emptied, place.Next() might be nil or changed.
+		// remEntry handles removing the bucket from c.freqs if it's empty.
+		// So we always get Front() again if we still need to evict.
+		place = c.freqs.Front()
 	}
 	return evicted
 }
@@ -157,7 +200,7 @@ func (c *Cache[K, V]) evict(count int) int {
 func (c *Cache[K, V]) increment(e *cacheEntry[K, V]) {
 	currentPlace := e.freqNode
 	var nextFreq int
-	var nextPlace *list.Element[V]
+	var nextPlace *list.Element[*listEntry[K, V]]
 	if currentPlace == nil {
 		// new entry
 		nextFreq = 1
@@ -172,7 +215,7 @@ func (c *Cache[K, V]) increment(e *cacheEntry[K, V]) {
 		// create a new list entry
 		li := new(listEntry[K, V])
 		li.freq = nextFreq
-		li.entries = make(map[*cacheEntry[K, V]]byte)
+		li.entries = list.New[*cacheEntry[K, V]]()
 		if currentPlace != nil {
 			nextPlace = c.freqs.InsertAfter(li, currentPlace)
 		} else {
@@ -180,17 +223,17 @@ func (c *Cache[K, V]) increment(e *cacheEntry[K, V]) {
 		}
 	}
 	e.freqNode = nextPlace
-	nextPlace.Value.(*listEntry[K, V]).entries[e] = 1
+	e.entryNode = nextPlace.Value.(*listEntry[K, V]).entries.PushBack(e)
 	if currentPlace != nil {
 		// remove from current position
 		c.remEntry(currentPlace, e)
 	}
 }
 
-func (c *Cache[K, V]) remEntry(place *list.Element[V], entry *cacheEntry[K, V]) {
-	entries := place.Value.(*listEntry[K, V]).entries
-	delete(entries, entry)
-	if len(entries) == 0 {
+func (c *Cache[K, V]) remEntry(place *list.Element[*listEntry[K, V]], entry *cacheEntry[K, V]) {
+	li := place.Value.(*listEntry[K, V])
+	li.entries.Remove(entry.entryNode)
+	if li.entries.Len() == 0 {
 		c.freqs.Remove(place)
 	}
 }

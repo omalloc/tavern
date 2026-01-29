@@ -8,6 +8,7 @@ import (
 	"github.com/cockroachdb/pebble/v2"
 	"github.com/cockroachdb/pebble/v2/vfs"
 	"github.com/omalloc/tavern/api/defined/v1/storage"
+	"github.com/omalloc/tavern/contrib/log"
 )
 
 var _ storage.SharedKV = (*memSharedKV)(nil)
@@ -185,7 +186,8 @@ func keyUpperBound(b []byte) []byte {
 
 func NewMemSharedKV() storage.SharedKV {
 	db, err := pebble.Open("", &pebble.Options{
-		FS: vfs.NewMem(),
+		FS:     vfs.NewMem(),
+		Logger: log.NewHelper(log.NewFilter(log.GetLogger(), log.FilterLevel(log.LevelWarn))),
 	})
 	if err != nil {
 		panic(err)
