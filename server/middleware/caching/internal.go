@@ -153,6 +153,8 @@ func buildNoBodyRespond(c *Caching, hasRangeRequest bool, start, end int64) *htt
 	return resp
 }
 
+// getContents retrieves content based on the requested chunks, starting from the specified position.
+// It returns an io.ReadCloser for the content, the number of chunks processed, and an error if any.
 func getContents(c *Caching, reqChunks []uint32, from uint32) (io.ReadCloser, int, error) {
 	idx := reqChunks[from]
 	partSize := c.opt.SliceSize
@@ -192,20 +194,20 @@ func getContents(c *Caching, reqChunks []uint32, from uint32) (io.ReadCloser, in
 				_ = c.bucket.Discard(context.Background(), c.id)
 				return nil, 0, err
 			}
+
+			// Identify an anchor block and synchronize any missing blocks prior to the current index.
+			toByte := min(c.md.Size-1, uint64(availableChunks[index]*uint32(partSize))-1)
+			req := c.req.Clone(context.Background())
+			newRange := fmt.Sprintf("bytes=%d-%d", fromByte, toByte)
+			req.Header.Set("Range", newRange)
+
+			reader, err := c.getUpstreamReader(fromByte, toByte, true)
+			if err != nil {
+				return nil, 0, err
+			}
+
+			return iobuf.PartsReadCloser(reader, chunkFile), int(availableChunks[index]-reqChunks[from]) + 1, nil
 		}
-
-		// 找到一个起始块，需要补齐前面的缺失块到当前这个块
-		toByte := min(c.md.Size-1, uint64(availableChunks[index]*uint32(partSize))-1)
-		req := c.req.Clone(context.Background())
-		newRange := fmt.Sprintf("bytes=%d-%d", fromByte, toByte)
-		req.Header.Set("Range", newRange)
-
-		reader, err := c.getUpstreamReader(fromByte, toByte, true)
-		if err != nil {
-			return nil, 0, err
-		}
-
-		return iobuf.PartsReadCloser(reader, chunkFile), int(availableChunks[index]-reqChunks[from]) + 1, nil
 	}
 
 	// no more hit block, fill
