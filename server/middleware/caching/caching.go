@@ -450,38 +450,19 @@ func (c *Caching) flushbufferSlice(respRange xhttp.ContentRange) (iobuf.EventSuc
 		if err != nil {
 			return err
 		}
-		defer f.Close()
+		defer func() {
+			if err := f.Close(); err != nil {
+				_ = err
+			}
 
-		c.log.Debugf("flushBuffer wpath=%s isChunked=%t fileChunk=%d/%d", wpath, chunked, index+1, endPart)
-
-		if chunked {
-			c.md.Size = current
-			c.md.Headers.Set("Content-Length", fmt.Sprintf("%d", current))
-		} else if uint64(len(buf)) != c.md.BlockSize && current != respRange.ObjSize {
-			c.log.Debugf("writeBuffer chunk[%d] is not complete, want end chunk [%d] ", index+1, endPart)
-			return nil
-		}
-
-		if nn, err1 := f.Write(buf); err1 != nil || nn != len(buf) {
-			return fmt.Errorf("writeBuffer wpath[%s] chunk[%d] failed nn[%d] want[%d] err %v", wpath, index+1, nn, len(buf), err1)
-		}
-
-		// save slice chunk
-		c.md.Chunks.Set(index)
-
-		if !c.opt.AsyncFlushChunk {
-			// store chunk now.
-			_ = c.bucket.Store(c.req.Context(), c.md)
-		}
-
-		if eof {
-			if endPart == uint32(c.md.Chunks.Count()) {
-				c.log.Debugf("file all chunk complete at %s", time.Now().Format(time.DateTime))
+			// push verifier
+			if eof && endPart == uint32(c.md.Chunks.Count()) {
+				c.log.Debug("file all chunk complete")
 
 				// trigger file crc check
 				// has InMemory store type skip crc check
 				if c.bucket.StoreType() == storage.TypeInMemory {
-					return nil
+					return
 				}
 
 				c.opt.publish(context.Background(), &cacheCompleted{
@@ -495,7 +476,30 @@ func (c *Caching) flushbufferSlice(respRange xhttp.ContentRange) (iobuf.EventSuc
 					chunkSize:     c.md.BlockSize,
 				})
 			}
+		}()
+
+		if chunked {
+			c.md.Size = current
+			c.md.Headers.Set("Content-Length", fmt.Sprintf("%d", current))
+		} else if uint64(len(buf)) != c.md.BlockSize && current != respRange.ObjSize {
+			c.log.Debugf("writeBuffer chunk[%d] is not complete, want end chunk [%d] ", index+1, endPart)
+			return nil
 		}
+
+		c.log.Debugf("flushBuffer wpath=%s isChunked=%t fileChunk=%d/%d", wpath, chunked, index+1, endPart)
+
+		if nn, err1 := f.Write(buf); err1 != nil || nn != len(buf) {
+			return fmt.Errorf("writeBuffer wpath[%s] chunk[%d] failed nn[%d] want[%d] err %v", wpath, index+1, nn, len(buf), err1)
+		}
+
+		// save slice chunk
+		c.md.Chunks.Set(index)
+
+		if !c.opt.AsyncFlushChunk {
+			// store chunk now.
+			_ = c.bucket.Store(c.req.Context(), c.md)
+		}
+
 		return nil
 	}
 
@@ -509,6 +513,7 @@ func (c *Caching) flushbufferSlice(respRange xhttp.ContentRange) (iobuf.EventSuc
 			// store chunk with last eof event.
 			_ = c.bucket.Store(c.req.Context(), c.md)
 		}
+
 	}
 
 	return writerBuffer, writerCloser

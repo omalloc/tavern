@@ -39,9 +39,7 @@ type savepartAsyncReader struct {
 }
 
 func (s *savepartAsyncReader) startWriter() {
-	s.writeWg.Add(1)
-	go func() {
-		defer s.writeWg.Done()
+	s.writeWg.Go(func() {
 		for job := range s.writeCh {
 			if err := s.onSuccess(job.buf, job.bitIdx, job.pos, job.eof); err != nil {
 				s.writeMu.Lock()
@@ -52,7 +50,7 @@ func (s *savepartAsyncReader) startWriter() {
 				s.onError(err)
 			}
 		}
-	}()
+	})
 }
 
 func (s *savepartAsyncReader) Read(p []byte) (n int, err error) {

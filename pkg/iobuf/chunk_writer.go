@@ -10,12 +10,10 @@ type chunkWriter struct {
 }
 
 func (cw *chunkWriter) Close() error {
-	if err := cw.closer(); err != nil {
-		// force close
-		_ = cw.w.Close()
+	if err := cw.w.Close(); err != nil {
 		return err
 	}
-	return cw.w.Close()
+	return cw.closer()
 }
 
 func (cw *chunkWriter) Write(p []byte) (n int, err error) {
