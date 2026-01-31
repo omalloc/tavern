@@ -38,7 +38,6 @@ Other languages: [简体中文](README.zh-CN.md)
   - [x] Headers rewrite
   - [x] Multiple Range requests support
   - [x] CacheFile verification (CRC checksum / EdgeMode)
-    - You may need [CRC-Center](https://github.com/omalloc/trust-receive) Service.
 - **Modern Architecture**:
   - Built on the **Kratos** framework for high extensibility and module reuse
   - **Plugin System**: Extend core business logic via plugins
@@ -50,6 +49,11 @@ Other languages: [简体中文](README.zh-CN.md)
 - **Traffic Control**:
   - Header rewrite (Rewrite)
   - Upstream load balancing (via custom Selector)
+
+## Ecosystem
+
+- Cache CRC verification service: [CRC-Center](https://github.com/omalloc/trust-receive)
+
 
 ## 🚀 Quick Start
 
