@@ -11,11 +11,10 @@ import (
 	"github.com/dustin/go-humanize"
 	ui "github.com/gizak/termui/v3"
 	"github.com/gizak/termui/v3/widgets"
-	"github.com/paulbellamy/ratecounter"
 )
 
 var (
-	endpoint     = "http://localhost:8080/plugin/graph"
+	endpoint     = "http://localhost:8081/plugin/graph"
 	tickInterval = time.Second * 1
 	startAt      = time.Now()
 	uptime       = time.Unix(1767060001, 0)
@@ -64,9 +63,6 @@ func main() {
 		return banner, textDraw
 	}()
 
-	counter := ratecounter.NewRateCounter(time.Second)
-	var last float64
-
 	fetch := func() map[string]float64 {
 		resp, err := client.Do(graph)
 		if err != nil {
@@ -79,25 +75,6 @@ func main() {
 		return data
 	}
 
-	// initial fetch
-	if initial := fetch(); initial != nil {
-		last = initial["total"]
-	}
-
-	dataCh := make(chan map[string]float64, 10)
-
-	go func() {
-		ticker := time.NewTicker(tickInterval).C
-		for {
-			select {
-			case <-ticker:
-				if data := fetch(); data != nil {
-					dataCh <- data
-				}
-			}
-		}
-	}()
-
 	rater, raterDraw := func() (*widgets.Paragraph, func()) {
 		rater := widgets.NewParagraph()
 		rater.Title = "Requests"
@@ -106,16 +83,10 @@ func main() {
 		rater.TitleStyle.Fg = ui.ColorCyan
 
 		draw := func() {
-			data, ok := <-dataCh
-			if !ok {
-				return
-			}
-
-			counter.Incr(int64(data["total"]) - int64(last))
-			last = data["total"]
+			data := fetch()
 
 			rater.Text = fmt.Sprintf("\nRequests/sec: %d \nTotal: %d \n2xx : %d\n4xx : %d\n499 : %d\n5xx : %d",
-				counter.Rate(), int(data["total"]), int(data["2xx"]), int(data["4xx"]), int(data["499"]), int(data["5xx"]))
+				int(data["total"]), int(data["total"]), int(data["2xx"]), int(data["4xx"]), int(data["499"]), int(data["5xx"]))
 		}
 
 		draw()

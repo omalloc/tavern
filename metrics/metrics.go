@@ -5,6 +5,31 @@ import (
 	dto "github.com/prometheus/client_model/go"
 )
 
+type CounterSmoother struct {
+	lastValue float64
+	smoothed  float64
+	Alpha     float64
+	isInit    bool
+}
+
+func (s *CounterSmoother) Update(currentTotal float64) float64 {
+	if !s.isInit {
+		s.lastValue = currentTotal
+		s.isInit = true
+		return 0
+	}
+
+	delta := currentTotal - s.lastValue
+	if delta < 0 {
+		delta = 0
+	}
+
+	s.smoothed = s.Alpha*delta + (1-s.Alpha)*s.smoothed
+	s.lastValue = currentTotal
+
+	return s.smoothed
+}
+
 type RequestsCodeTotal struct {
 	Code  string  `json:"code"`
 	Count float64 `json:"count"`
