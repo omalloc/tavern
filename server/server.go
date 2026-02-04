@@ -106,6 +106,7 @@ func NewServer(flip *tableflip.Upgrader, config *conf.Bootstrap, plugins []plugi
 		host := fmtAddr(r.Host)
 		if _, ok := localMatcher[host]; ok {
 			// 内部接口处理流程
+			w.Header().Set("X-Server", "local-plugin")
 			mux.ServeHTTP(w, r)
 			return
 		}
