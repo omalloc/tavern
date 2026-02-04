@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/goccy/go-json"
@@ -19,6 +20,8 @@ import (
 	"github.com/omalloc/tavern/plugin"
 	"github.com/omalloc/tavern/storage"
 	"github.com/prometheus/client_golang/prometheus"
+	"github.com/shirou/gopsutil/v4/cpu"
+	"github.com/shirou/gopsutil/v4/mem"
 )
 
 var _ configv1.Plugin = (*QsPlugin)(nil)
@@ -47,6 +50,9 @@ type QsPlugin struct {
 	mu           sync.RWMutex
 	stopCh       chan struct{}
 	smoothedData map[string]float64 // 存储平滑后的状态码指标
+	cpuPercent   atomic.Uint32
+	memUsage     atomic.Uint64
+	memTotal     atomic.Uint64
 }
 
 func init() {
@@ -63,6 +69,9 @@ func NewQsPlugin(opts configv1.Option, log *log.Helper) (configv1.Plugin, error)
 		opt:          opt,
 		stopCh:       make(chan struct{}, 1),
 		smoothedData: make(map[string]float64),
+		cpuPercent:   atomic.Uint32{},
+		memUsage:     atomic.Uint64{},
+		memTotal:     atomic.Uint64{},
 	}, nil
 }
 
@@ -155,8 +164,9 @@ func (qs *QsPlugin) AddRouter(router *http.ServeMux) {
 	}))
 
 	router.Handle("/plugin/qs/graph", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		data := make(map[string]float64, len(qs.smoothedData)+3)
+
 		qs.mu.RLock()
-		data := make(map[string]float64, len(qs.smoothedData))
 		for code, smoothedValue := range qs.smoothedData {
 			switch code {
 			case "total":
@@ -172,6 +182,10 @@ func (qs *QsPlugin) AddRouter(router *http.ServeMux) {
 			}
 		}
 		qs.mu.RUnlock()
+
+		data["cpu_percent"] = float64(qs.cpuPercent.Load())
+		data["mem_usage"] = float64(qs.memUsage.Load())
+		data["mem_total"] = float64(qs.memTotal.Load())
 
 		buf, err := json.Marshal(data)
 		if err != nil {
@@ -192,6 +206,8 @@ func (qs *QsPlugin) Start(context.Context) error {
 
 	// start the ticker to collect requests per second metrics ( TODO: with enabled qs/graph endpoint )
 	go qs.tickRequestsPerSecond()
+	// start the ticker to collect CPU and memory usage metrics
+	go qs.tickUsage()
 
 	return nil
 }
@@ -262,6 +278,26 @@ func (qs *QsPlugin) tickRequestsPerSecond() {
 			}
 			qs.smoothedData["total"] = totalCounter
 			qs.mu.Unlock()
+		}
+	}
+}
+
+func (qs *QsPlugin) tickUsage() {
+	cpu.Percent(time.Second, true)
+
+	for {
+		select {
+		case <-qs.stopCh:
+			return
+		case <-time.Tick(time.Second):
+			percent, err := cpu.Percent(0, false)
+			if err == nil && len(percent) > 0 {
+				qs.cpuPercent.Store(uint32(percent[0]))
+			}
+
+			vmem, _ := mem.VirtualMemory()
+			qs.memUsage.Store(vmem.Used)
+			qs.memTotal.Store(vmem.Total)
 		}
 	}
 }
