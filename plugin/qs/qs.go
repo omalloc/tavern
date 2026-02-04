@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/goccy/go-json"
@@ -14,8 +15,10 @@ import (
 	configv1 "github.com/omalloc/tavern/api/defined/v1/plugin"
 	"github.com/omalloc/tavern/api/defined/v1/storage/object"
 	"github.com/omalloc/tavern/contrib/log"
+	"github.com/omalloc/tavern/metrics"
 	"github.com/omalloc/tavern/plugin"
 	"github.com/omalloc/tavern/storage"
+	"github.com/prometheus/client_golang/prometheus"
 )
 
 var _ configv1.Plugin = (*QsPlugin)(nil)
@@ -40,6 +43,10 @@ type option struct {
 type QsPlugin struct {
 	log *log.Helper
 	opt *option
+
+	mu           sync.RWMutex
+	stopCh       chan struct{}
+	smoothedData map[string]float64 // 存储平滑后的状态码指标
 }
 
 func init() {
@@ -52,18 +59,20 @@ func NewQsPlugin(opts configv1.Option, log *log.Helper) (configv1.Plugin, error)
 		return nil, err
 	}
 	return &QsPlugin{
-		log: log,
-		opt: opt,
+		log:          log,
+		opt:          opt,
+		stopCh:       make(chan struct{}, 1),
+		smoothedData: make(map[string]float64),
 	}, nil
 }
 
 // HandleFunc implements plugin.Plugin.
-func (e *QsPlugin) HandleFunc(next http.HandlerFunc) http.HandlerFunc {
+func (qs *QsPlugin) HandleFunc(next http.HandlerFunc) http.HandlerFunc {
 	return next
 }
 
 // AddRouter implements plugin.Plugin.
-func (e *QsPlugin) AddRouter(router *http.ServeMux) {
+func (qs *QsPlugin) AddRouter(router *http.ServeMux) {
 	router.Handle("/plugin/store/disk", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		buckets := storage.Current().Buckets()
 
@@ -143,30 +152,118 @@ func (e *QsPlugin) AddRouter(router *http.ServeMux) {
 		w.WriteHeader(http.StatusOK)
 
 		_, _ = w.Write(buf)
-		return
+	}))
+
+	router.Handle("/plugin/qs/graph", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		qs.mu.RLock()
+		data := make(map[string]float64, len(qs.smoothedData))
+		for code, smoothedValue := range qs.smoothedData {
+			switch code {
+			case "total":
+				data["total"] = smoothedValue
+			case "200", "206":
+				data["2xx"] += smoothedValue
+			case "400", "401", "403", "404":
+				data["4xx"] += smoothedValue
+			case "499":
+				data["499"] += smoothedValue
+			case "500", "502", "503", "504":
+				data["5xx"] += smoothedValue
+			}
+		}
+		qs.mu.RUnlock()
+
+		buf, err := json.Marshal(data)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Content-Length", strconv.Itoa(len(buf)))
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(buf)
 	}))
 }
 
 // Start implements plugin.Plugin.
-func (e *QsPlugin) Start(context.Context) error {
+func (qs *QsPlugin) Start(context.Context) error {
 	// you can add your startup logic here
 
-	// e.g.
-	//
-	// go func() {
-	//     // do something
-	// }()
+	// start the ticker to collect requests per second metrics ( TODO: with enabled qs/graph endpoint )
+	go qs.tickRequestsPerSecond()
+
 	return nil
 }
 
 // Stop implements plugin.Plugin.
-func (e *QsPlugin) Stop(context.Context) error {
+func (qs *QsPlugin) Stop(context.Context) error {
 	// you can add your cleanup logic here
 
-	// e.g.
-	//
-	// stopCh <- struct{}{}
+	qs.stopCh <- struct{}{}
+
 	return nil
+}
+
+// tickRequestsPerSecond periodically collects and smooths the requests per second metrics.
+func (qs *QsPlugin) tickRequestsPerSecond() {
+	metricsMap := map[string]*metrics.CounterSmoother{
+		"200": {Alpha: 0.3},
+		"206": {Alpha: 0.3},
+		"400": {Alpha: 0.3},
+		"401": {Alpha: 0.3},
+		"403": {Alpha: 0.3},
+		"404": {Alpha: 0.3},
+		"499": {Alpha: 0.3},
+		"500": {Alpha: 0.3},
+		"502": {Alpha: 0.3},
+		"503": {Alpha: 0.3},
+		"504": {Alpha: 0.3},
+	}
+
+	ticker := time.NewTicker(time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-qs.stopCh:
+			return
+		case <-ticker.C:
+			familys, err := prometheus.DefaultGatherer.Gather()
+			if err != nil {
+				continue
+			}
+
+			// 临时存储本次收集的平滑值
+			tempData := make(map[string]float64)
+			totalCounter := float64(0)
+			for _, mf := range familys {
+				if mf.GetName() == "tr_tavern_requests_code_total" {
+					for _, metric := range mf.GetMetric() {
+						for _, label := range metric.Label {
+							if label.GetName() == "code" {
+								code := label.GetValue()
+								val := metric.GetCounter().GetValue()
+								totalCounter += val
+								if smoother, ok := metricsMap[code]; ok {
+									smoothedValue := smoother.Update(val)
+									tempData[code] = smoothedValue
+								}
+							}
+						}
+					}
+				}
+			}
+
+			// 使用写锁更新共享数据
+			qs.mu.Lock()
+			for code, value := range tempData {
+				qs.smoothedData[code] = value
+			}
+			qs.smoothedData["total"] = totalCounter
+			qs.mu.Unlock()
+		}
+	}
 }
 
 func convRange(parts bitmap.Bitmap) string {
