@@ -456,6 +456,15 @@ func (d *diskBucket) Path() string {
 	return d.path
 }
 
+func (d *diskBucket) TopK(k int) []string {
+	arr := d.cache.TopK(k)
+	ret := make([]string, len(arr))
+	for i := range arr {
+		ret[i] = hex.EncodeToString(arr[i][:])
+	}
+	return ret
+}
+
 func (d *diskBucket) WriteChunkFile(ctx context.Context, id *object.ID, index uint32) (io.WriteCloser, string, error) {
 	wpath := id.WPathSlice(d.path, index)
 	_ = os.MkdirAll(filepath.Dir(wpath), d.fileMode)

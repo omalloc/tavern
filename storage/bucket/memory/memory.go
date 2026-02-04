@@ -2,6 +2,7 @@ package memory
 
 import (
 	"context"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -221,6 +222,16 @@ func (m *memoryBucket) Touch(ctx context.Context, id *object.ID) {
 // Path implements [storage.Bucket].
 func (m *memoryBucket) Path() string {
 	return m.path
+}
+
+// TopK implements [storage.Bucket].
+func (m *memoryBucket) TopK(k int) []string {
+	arr := m.cache.TopK(k)
+	ret := make([]string, len(arr))
+	for i := range arr {
+		ret[i] = hex.EncodeToString(arr[i][:])
+	}
+	return ret
 }
 
 // Remove implements [storage.Bucket].

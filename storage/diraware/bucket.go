@@ -139,6 +139,10 @@ func (b *wrappedBucket) Path() string {
 	return b.base.Path()
 }
 
+func (b *wrappedBucket) TopK(k int) []string {
+	return b.base.TopK(k)
+}
+
 func (b *wrappedBucket) Close() error {
 	return b.base.Close()
 }
