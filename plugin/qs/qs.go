@@ -14,6 +14,7 @@ import (
 	"github.com/goccy/go-json"
 	"github.com/kelindar/bitmap"
 	configv1 "github.com/omalloc/tavern/api/defined/v1/plugin"
+	storagev1 "github.com/omalloc/tavern/api/defined/v1/storage"
 	"github.com/omalloc/tavern/api/defined/v1/storage/object"
 	"github.com/omalloc/tavern/contrib/log"
 	"github.com/omalloc/tavern/metrics"
@@ -21,10 +22,16 @@ import (
 	"github.com/omalloc/tavern/storage"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/shirou/gopsutil/v4/cpu"
+	"github.com/shirou/gopsutil/v4/disk"
 	"github.com/shirou/gopsutil/v4/mem"
 )
 
 var _ configv1.Plugin = (*QsPlugin)(nil)
+
+type Graph struct {
+	Data    map[string]float64 `json:"data"`
+	HotUrls []string           `json:"hot_urls"`
+}
 
 type SimpleMetadata struct {
 	ID       string    `json:"id"`
@@ -48,11 +55,18 @@ type QsPlugin struct {
 	opt *option
 
 	mu           sync.RWMutex
+	ctrlMu       sync.Mutex
+	collect      atomic.Bool
+	lastReq      atomic.Int64
+	cancel       context.CancelFunc
 	stopCh       chan struct{}
 	smoothedData map[string]float64 // 存储平滑后的状态码指标
+	hotUrls      []string
 	cpuPercent   atomic.Uint32
 	memUsage     atomic.Uint64
 	memTotal     atomic.Uint64
+	diskUsage    atomic.Uint64
+	diskTotal    atomic.Uint64
 }
 
 func init() {
@@ -68,6 +82,7 @@ func NewQsPlugin(opts configv1.Option, log *log.Helper) (configv1.Plugin, error)
 		log:          log,
 		opt:          opt,
 		stopCh:       make(chan struct{}, 1),
+		collect:      atomic.Bool{},
 		smoothedData: make(map[string]float64),
 		cpuPercent:   atomic.Uint32{},
 		memUsage:     atomic.Uint64{},
@@ -82,6 +97,7 @@ func (qs *QsPlugin) HandleFunc(next http.HandlerFunc) http.HandlerFunc {
 
 // AddRouter implements plugin.Plugin.
 func (qs *QsPlugin) AddRouter(router *http.ServeMux) {
+
 	router.Handle("/plugin/store/disk", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		buckets := storage.Current().Buckets()
 
@@ -164,30 +180,21 @@ func (qs *QsPlugin) AddRouter(router *http.ServeMux) {
 	}))
 
 	router.Handle("/plugin/qs/graph", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		data := make(map[string]float64, len(qs.smoothedData)+3)
+		qs.touchOrStart()
+
+		data := qs.collectRequestsCode()
 
 		qs.mu.RLock()
-		for code, smoothedValue := range qs.smoothedData {
-			switch code {
-			case "total":
-				data["total"] = smoothedValue
-			case "200", "206":
-				data["2xx"] += smoothedValue
-			case "400", "401", "403", "404":
-				data["4xx"] += smoothedValue
-			case "499":
-				data["499"] += smoothedValue
-			case "500", "502", "503", "504":
-				data["5xx"] += smoothedValue
-			}
-		}
+		hotUrls := make([]string, len(qs.hotUrls))
+		copy(hotUrls, qs.hotUrls)
 		qs.mu.RUnlock()
 
-		data["cpu_percent"] = float64(qs.cpuPercent.Load())
-		data["mem_usage"] = float64(qs.memUsage.Load())
-		data["mem_total"] = float64(qs.memTotal.Load())
+		g := Graph{
+			Data:    data,
+			HotUrls: hotUrls,
+		}
 
-		buf, err := json.Marshal(data)
+		buf, err := json.Marshal(g)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
@@ -203,12 +210,6 @@ func (qs *QsPlugin) AddRouter(router *http.ServeMux) {
 // Start implements plugin.Plugin.
 func (qs *QsPlugin) Start(context.Context) error {
 	// you can add your startup logic here
-
-	// start the ticker to collect requests per second metrics ( TODO: with enabled qs/graph endpoint )
-	go qs.tickRequestsPerSecond()
-	// start the ticker to collect CPU and memory usage metrics
-	go qs.tickUsage()
-
 	return nil
 }
 
@@ -221,8 +222,65 @@ func (qs *QsPlugin) Stop(context.Context) error {
 	return nil
 }
 
+// touchOrStart starts the collectors if not running, or updates the last request time.
+func (qs *QsPlugin) touchOrStart() {
+	qs.lastReq.Store(time.Now().UnixNano())
+	if qs.collect.Load() {
+		return
+	}
+
+	qs.ctrlMu.Lock()
+	defer qs.ctrlMu.Unlock()
+
+	if qs.collect.Load() {
+		return
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	qs.cancel = cancel
+	qs.collect.Store(true)
+
+	// start the ticker to collect requests per second metrics ( TODO: with enabled qs/graph endpoint )
+	go qs.tickRequestsPerSecond(ctx)
+	// start the ticker to collect CPU and memory usage metrics
+	go qs.tickUsage(ctx)
+	// start the monitor to stop the collectors if no requests for a while
+	go qs.tickMonitor(ctx)
+}
+
+func (qs *QsPlugin) tickMonitor(ctx context.Context) {
+	ticker := time.NewTicker(time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-qs.stopCh:
+			return
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			last := qs.lastReq.Load()
+			if time.Since(time.Unix(0, last)) > 5*time.Second {
+				qs.ctrlMu.Lock()
+				// double check
+				last = qs.lastReq.Load()
+				if time.Since(time.Unix(0, last)) > 5*time.Second {
+					if qs.cancel != nil {
+						qs.cancel()
+						qs.cancel = nil
+					}
+					qs.collect.Store(false)
+					qs.ctrlMu.Unlock()
+					return
+				}
+				qs.ctrlMu.Unlock()
+			}
+		}
+	}
+}
+
 // tickRequestsPerSecond periodically collects and smooths the requests per second metrics.
-func (qs *QsPlugin) tickRequestsPerSecond() {
+func (qs *QsPlugin) tickRequestsPerSecond(ctx context.Context) {
 	metricsMap := map[string]*metrics.CounterSmoother{
 		"200": {Alpha: 0.3},
 		"206": {Alpha: 0.3},
@@ -242,9 +300,12 @@ func (qs *QsPlugin) tickRequestsPerSecond() {
 
 	for {
 		select {
+		case <-ctx.Done():
+			return
 		case <-qs.stopCh:
 			return
 		case <-ticker.C:
+			log.Info("qs tickRequestsPerSecond")
 			familys, err := prometheus.DefaultGatherer.Gather()
 			if err != nil {
 				continue
@@ -282,14 +343,17 @@ func (qs *QsPlugin) tickRequestsPerSecond() {
 	}
 }
 
-func (qs *QsPlugin) tickUsage() {
-	cpu.Percent(time.Second, true)
+func (qs *QsPlugin) tickUsage(ctx context.Context) {
+	buckets := storage.Current().Buckets()
 
 	for {
 		select {
+		case <-ctx.Done():
+			return
 		case <-qs.stopCh:
 			return
 		case <-time.Tick(time.Second):
+			log.Info("qs tickUsage")
 			percent, err := cpu.Percent(0, false)
 			if err == nil && len(percent) > 0 {
 				qs.cpuPercent.Store(uint32(percent[0]))
@@ -298,8 +362,60 @@ func (qs *QsPlugin) tickUsage() {
 			vmem, _ := mem.VirtualMemory()
 			qs.memUsage.Store(vmem.Used)
 			qs.memTotal.Store(vmem.Total)
+
+			diskUsage := uint64(0)
+			diskTotal := uint64(0)
+			hotkeys := make([]string, 0, len(buckets)*10)
+			for _, bucket := range buckets {
+				if bucket.StoreType() == storagev1.TypeInMemory {
+					continue
+				}
+
+				usage, _ := disk.Usage(bucket.Path())
+				diskUsage += usage.Used
+				diskTotal += usage.Total
+
+				hotkeys = append(hotkeys, bucket.TopK(10)...)
+			}
+
+			qs.diskUsage.Store(diskUsage)
+			qs.diskTotal.Store(diskTotal)
+
+			qs.mu.Lock()
+			qs.hotUrls = hotkeys
+			qs.mu.Unlock()
 		}
 	}
+}
+
+func (qs *QsPlugin) collectRequestsCode() map[string]float64 {
+	data := make(map[string]float64, len(qs.smoothedData)+5)
+
+	qs.mu.RLock()
+	defer qs.mu.RUnlock()
+
+	for code, smoothedValue := range qs.smoothedData {
+		switch code {
+		case "total":
+			data["total"] = smoothedValue
+		case "200", "206":
+			data["2xx"] += smoothedValue
+		case "400", "401", "403", "404":
+			data["4xx"] += smoothedValue
+		case "499":
+			data["499"] += smoothedValue
+		case "500", "502", "503", "504":
+			data["5xx"] += smoothedValue
+		}
+	}
+
+	data["cpu_percent"] = float64(qs.cpuPercent.Load())
+	data["mem_usage"] = float64(qs.memUsage.Load())
+	data["mem_total"] = float64(qs.memTotal.Load())
+	data["disk_usage"] = float64(qs.diskUsage.Load())
+	data["disk_total"] = float64(qs.diskTotal.Load())
+
+	return data
 }
 
 func convRange(parts bitmap.Bitmap) string {
