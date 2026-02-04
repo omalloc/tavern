@@ -387,13 +387,21 @@ func (c *Caching) doProxy(req *http.Request, subRequest bool) (*http.Response, e
 		c.md.Size = respRange.ObjSize
 
 		// error code cache feature.
-		if statusCode >= http.StatusBadRequest &&
-			resp.Header.Get(constants.InternalCacheErrCode) != "1" {
-			c.cacheable = false // 禁止缓存错误码缓存
+		if statusCode >= http.StatusBadRequest {
 
-			copiedHeaders := make(http.Header)
-			xhttp.CopyHeader(copiedHeaders, resp.Header)
-			c.md.Headers = copiedHeaders
+			// Caching is disabled
+			// restoring the default behavior for error codes.
+			if resp.Header.Get(constants.InternalCacheErrCode) != constants.FlagOn {
+				c.cacheable = false
+
+				copiedHeaders := make(http.Header)
+				xhttp.CopyHeader(copiedHeaders, resp.Header)
+				c.md.Headers = copiedHeaders
+			} else {
+				// Caching is allowed (or rather, not disabled),
+				// and the proxy error is suppressed
+				proxyErr = nil
+			}
 		}
 
 		// `cacheable` means can write to cache storage

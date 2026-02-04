@@ -16,3 +16,9 @@ const (
 	InternalCacheErrCode     = "i-x-ct-code"
 	InternalUpstreamAddr     = "i-x-ups-addr"
 )
+
+// define flag constants
+const (
+	FlagOn  = "1" // gateway control flag ON
+	FlagOff = "0" // gateway control flag OFF
+)
