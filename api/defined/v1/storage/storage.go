@@ -99,6 +99,8 @@ type Bucket interface {
 	StoreType() string
 	// Path returns the Bucket path.
 	Path() string
+	// TopK returns the top k most frequently used keys
+	TopK(k int) []string
 }
 
 type PurgeControl struct {

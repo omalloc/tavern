@@ -117,6 +117,10 @@ func (e *emptyBucket) Path() string {
 	return e.path
 }
 
+func (e *emptyBucket) TopK(k int) []string {
+	return nil
+}
+
 func (e *emptyBucket) WriteChunkFile(ctx context.Context, id *object.ID, index uint32) (io.WriteCloser, string, error) {
 	return nil, "/dev/null", os.ErrNotExist
 }

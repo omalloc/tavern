@@ -136,6 +136,31 @@ func (c *Cache[K, V]) Keys() []K {
 	return keys
 }
 
+// TopK returns the top k most frequently used keys
+func (c *Cache[K, V]) TopK(k int) []K {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+
+	keys := make([]K, 0, k)
+	// Iterate from highest frequency (Back) to lowest (Front)
+	for freqNode := c.freqs.Back(); freqNode != nil; freqNode = freqNode.Prev() {
+		li := freqNode.Value.(*listEntry[K, V])
+		// Inside bucket, most recently added/promoted are at Back?
+		// increment() uses PushBack.
+		// So Back are the newest in this frequency.
+		// We iterate from Back to Front to resolve ties with recency if needed,
+		// or just simply collect them.
+		for entryNode := li.entries.Back(); entryNode != nil; entryNode = entryNode.Prev() {
+			entry := entryNode.Value.(*cacheEntry[K, V])
+			keys = append(keys, entry.key)
+			if len(keys) >= k {
+				return keys
+			}
+		}
+	}
+	return keys
+}
+
 // Remove removes the given key from the cache.
 func (c *Cache[K, V]) Remove(key K) bool {
 	c.mu.Lock()
@@ -211,6 +236,11 @@ func (c *Cache[K, V]) increment(e *cacheEntry[K, V]) {
 		nextPlace = currentPlace.Next()
 	}
 
+	var oldEntryNode *list.Element[*cacheEntry[K, V]]
+	if currentPlace != nil {
+		oldEntryNode = e.entryNode
+	}
+
 	if nextPlace == nil || nextPlace.Value.(*listEntry[K, V]).freq != nextFreq {
 		// create a new list entry
 		li := new(listEntry[K, V])
@@ -226,7 +256,11 @@ func (c *Cache[K, V]) increment(e *cacheEntry[K, V]) {
 	e.entryNode = nextPlace.Value.(*listEntry[K, V]).entries.PushBack(e)
 	if currentPlace != nil {
 		// remove from current position
-		c.remEntry(currentPlace, e)
+		li := currentPlace.Value.(*listEntry[K, V])
+		li.entries.Remove(oldEntryNode)
+		if li.entries.Len() == 0 {
+			c.freqs.Remove(currentPlace)
+		}
 	}
 }
 

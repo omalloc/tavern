@@ -38,11 +38,23 @@ func newDashboard() {
 	}
 	defer terminal.Close()
 
+	termWidth, _ := terminal.TerminalDimensions()
+
 	collected := atomic.Bool{}
 	cpuPercent := atomic.Uint32{}
 	memUsage := atomic.Uint64{}
 	memTotal := atomic.Uint64{}
 	diskPercent := atomic.Uint64{} // mock
+	diskUsage := atomic.Uint64{}
+	diskTotal := atomic.Uint64{}
+
+	// 高级监控指标 { 热点url 热点域名 热点磁盘 }
+	list := widgets.NewList()
+	list.Title = "Hot URLs"
+	list.SetRect(0, 12, termWidth, 30)
+	list.BorderStyle.Fg = terminal.ColorWhite
+	list.TitleStyle.Fg = terminal.ColorCyan
+	list.TextStyle.Fg = terminal.ColorYellow
 
 	client := &http.Client{
 		Timeout:   time.Second,
@@ -69,16 +81,18 @@ func newDashboard() {
 		}
 
 		collected.Store(true)
-		var data map[string]float64
-		json.NewDecoder(resp.Body).Decode(&data)
+		var rsp Graph
+		_ = json.NewDecoder(resp.Body).Decode(&rsp)
 
-		cpuPercent.Store(uint32(data["cpu_percent"]))
-		memUsage.Store(uint64(data["mem_usage"]))
-		memTotal.Store(uint64(data["mem_total"]))
-		return data
+		cpuPercent.Store(uint32(rsp.Data["cpu_percent"]))
+		memUsage.Store(uint64(rsp.Data["mem_usage"]))
+		memTotal.Store(uint64(rsp.Data["mem_total"]))
+		diskUsage.Store(uint64(rsp.Data["disk_usage"]))
+		diskTotal.Store(uint64(rsp.Data["disk_total"]))
+		list.Rows = rsp.HotUrls
+
+		return rsp.Data
 	}
-
-	termWidth, _ := terminal.TerminalDimensions()
 
 	// 基础监控指标 { qps, cpu, memory }
 	metricGrid := terminal.NewGrid()
@@ -133,7 +147,7 @@ func newDashboard() {
 		load.TitleStyle.Fg = terminal.ColorCyan
 
 		return load, func() {
-			load.Percent = int(cpuPercent.Load()) + 10
+			load.Percent = int(cpuPercent.Load())
 		}
 	}()
 
@@ -166,13 +180,18 @@ func newDashboard() {
 	disk, diskDraw := func() (*widgets.Gauge, func()) {
 		disk := widgets.NewGauge()
 		disk.Title = "Disk Usage"
-		disk.Percent = int(diskPercent.Load()) + 70
+		disk.Percent = int(diskPercent.Load())
 		disk.BarColor = terminal.ColorYellow
 		disk.BorderStyle.Fg = terminal.ColorWhite
 		disk.TitleStyle.Fg = terminal.ColorCyan
 
 		return disk, func() {
-			disk.Percent = int(diskPercent.Load()) + 70
+			disk.Percent = int(diskPercent.Load())
+			disk.Label = fmt.Sprintf("%d%% | Disk: %s / %s",
+				0,
+				humanize.Bytes(diskUsage.Load()),
+				humanize.Bytes(diskTotal.Load()),
+			)
 		}
 	}()
 
@@ -186,14 +205,6 @@ func newDashboard() {
 			),
 		),
 	)
-
-	// 高级监控指标 { 热点url 热点域名 热点磁盘 }
-	list := widgets.NewList()
-	list.Title = "Hot URLs"
-	list.SetRect(0, 12, termWidth, 30)
-	list.BorderStyle.Fg = terminal.ColorWhite
-	list.TitleStyle.Fg = terminal.ColorCyan
-	list.TextStyle.Fg = terminal.ColorYellow
 
 	terminal.Render(banner, metricGrid, list)
 
@@ -231,4 +242,9 @@ func newDashboard() {
 			terminal.Render(banner, metricGrid, list)
 		}
 	}
+}
+
+type Graph struct {
+	Data    map[string]float64 `json:"data"`
+	HotUrls []string           `json:"hot_urls"`
 }
