@@ -197,10 +197,8 @@ func getContents(c *Caching, reqChunks []uint32, from uint32) (io.ReadCloser, in
 
 			// Identify an anchor block and synchronize any missing blocks prior to the current index.
 			toByte := min(c.md.Size-1, uint64(availableChunks[index]*uint32(partSize))-1)
-			req := c.req.Clone(context.Background())
-			newRange := fmt.Sprintf("bytes=%d-%d", fromByte, toByte)
-			req.Header.Set("Range", newRange)
 
+			// Request is automatically cloned by getUpstreamReader
 			reader, err := c.getUpstreamReader(fromByte, toByte, true)
 			if err != nil {
 				return nil, 0, err
@@ -218,10 +216,8 @@ func getContents(c *Caching, reqChunks []uint32, from uint32) (io.ReadCloser, in
 		tailChunkSize = uint64(rng.End)
 	}
 	toByte := min(c.md.Size-1, tailChunkSize)
-	newRange := fmt.Sprintf("bytes=%d-%d", fromByte, toByte)
-	req := c.req.Clone(context.Background())
-	req.Header.Set("Range", newRange)
 
+	// Request is automatically cloned by getUpstreamReader
 	reader, err := c.getUpstreamReader(fromByte, toByte, true)
 	if err != nil {
 		return nil, 0, err
