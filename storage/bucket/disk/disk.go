@@ -34,12 +34,14 @@ type diskBucket struct {
 	driver    string
 	storeType string
 	asyncLoad bool
+	tiering   *conf.Tiering
 	weight    int
 	sharedkv  storage.SharedKV
 	indexdb   storage.IndexDB
 	cache     *lru.Cache[object.IDHash, storage.Mark]
 	fileFlag  int
 	fileMode  fs.FileMode
+	migration storage.Migration
 	stop      chan struct{}
 }
 
@@ -50,6 +52,7 @@ func New(config *conf.Bucket, sharedkv storage.SharedKV) (storage.Bucket, error)
 		driver:    config.Driver,
 		storeType: config.Type,
 		asyncLoad: config.AsyncLoad,
+		tiering:   config.Tiering,
 		weight:    100, // default weight
 		sharedkv:  sharedkv,
 		cache:     lru.New[object.IDHash, storage.Mark](config.MaxObjectLimit),
@@ -91,16 +94,45 @@ func (d *diskBucket) evict() {
 
 	clog.Debugf("start evict goroutine for %s", d.ID())
 
+	migration := d.tiering != nil && d.tiering.Enabled
+
+	demote := func(evicted lru.Eviction[object.IDHash, storage.Mark]) error {
+		if d.migration != nil {
+			md, err := d.indexdb.Get(context.Background(), evicted.Key[:])
+			if err != nil {
+				return err
+			}
+			if md == nil || md.ID == nil {
+				return fmt.Errorf("metadata not found for demotion")
+			}
+			log.Debugf("demote %s to %s", d.storeType, md.ID.Key())
+			return d.migration.Demote(context.Background(), md.ID, d)
+		}
+		return nil
+	}
+
+	discard := func(evicted lru.Eviction[object.IDHash, storage.Mark]) {
+		fd := evicted.Key.WPath(d.path)
+		clog.Debugf("evict file %s, last-access %d", fd, evicted.Value.LastAccess())
+		d.DiscardWithHash(context.Background(), evicted.Key)
+	}
+
 	go func() {
 		for {
 			select {
 			case <-d.stop:
 				return
 			case evicted := <-ch:
-				fd := evicted.Key.WPath(d.path)
-				clog.Debugf("evict file %s, last-access %d", fd, evicted.Value.LastAccess())
-				// TODO: discard expired cachefile or Move to cold storage
-				d.DiscardWithHash(context.Background(), evicted.Key)
+				// expired cachefile Demote to cold bucket
+				if migration {
+					if err := demote(evicted); err != nil {
+						// fallback to discard
+						discard(evicted)
+					}
+					continue
+				}
+
+				discard(evicted)
 			}
 		}
 	}()
@@ -246,7 +278,7 @@ func (d *diskBucket) discard(ctx context.Context, md *object.Metadata) error {
 
 // Exist implements storage.Bucket.
 func (d *diskBucket) Exist(ctx context.Context, id []byte) bool {
-	return d.indexdb.Exist(ctx, id)
+	return d.cache.Has(object.IDHash(id))
 }
 
 // Expired implements storage.Bucket.
@@ -266,6 +298,49 @@ func (d *diskBucket) Iterate(ctx context.Context, fn func(*object.Metadata) erro
 func (d *diskBucket) Lookup(ctx context.Context, id *object.ID) (*object.Metadata, error) {
 	md, err := d.indexdb.Get(ctx, id.Bytes())
 	return md, err
+}
+
+// Touch implements [storage.Bucket]. Update LRU mark and maybe trigger promotion.
+func (d *diskBucket) Touch(ctx context.Context, id *object.ID) error {
+	mark := d.cache.Get(id.Hash())
+	if mark.LastAccess() <= 0 {
+		return nil
+	}
+
+	mark.SetLastAccess(time.Now().Unix())
+	mark.SetRefs(mark.Refs() + 1)
+
+	d.cache.Set(id.Hash(), mark)
+
+	// Promotion logic (hit counting within window)
+	if d.tiering == nil || !d.tiering.Enabled || d.migration == nil {
+		return nil
+	}
+	if d.storeType == storage.TypeHot || d.storeType == storage.TypeInMemory {
+		return nil
+	}
+
+	minHits := d.tiering.Promote.MinHits
+	window := d.tiering.Promote.Window
+	maxSize := d.tiering.Promote.MaxObjectSize
+	if minHits <= 0 || window <= 0 {
+		return nil
+	}
+
+	hits := mark.Refs()
+	if int(hits) < minHits {
+		return nil
+	}
+	if maxSize > 0 {
+		if md, err := d.indexdb.Get(ctx, id.Bytes()); err == nil && md != nil {
+			if uint64(md.Size) > maxSize {
+				return nil
+			}
+		}
+	}
+
+	log.Infof("promote %s", id.WPath(d.path))
+	return d.migration.Promote(context.Background(), id, d)
 }
 
 // Remove implements storage.Bucket.
@@ -381,6 +456,59 @@ func (d *diskBucket) ReadChunkFile(ctx context.Context, id *object.ID, index uin
 // Close implements storage.Bucket.
 func (d *diskBucket) Close() error {
 	return d.indexdb.Close()
+}
+
+func (d *diskBucket) MoveTo(ctx context.Context, id *object.ID, target storage.Bucket) error {
+	md, err := d.indexdb.Get(ctx, id.Bytes())
+	if err != nil {
+		return err
+	}
+
+	clog := log.Context(ctx)
+
+	// 1. Move all chunks
+	var moveErr error
+	md.Chunks.Range(func(x uint32) {
+		if moveErr != nil {
+			return
+		}
+
+		rf, _, err1 := d.ReadChunkFile(ctx, id, x)
+		if err1 != nil {
+			moveErr = err1
+			return
+		}
+		defer rf.Close()
+
+		wf, _, err2 := target.WriteChunkFile(ctx, id, x)
+		if err2 != nil {
+			moveErr = err2
+			return
+		}
+		defer wf.Close()
+
+		if _, err2 = io.Copy(wf, rf); err2 != nil {
+			moveErr = err2
+		}
+	})
+
+	if moveErr != nil {
+		clog.Errorf("failed to move object %s chunks: %v", id.Key(), moveErr)
+		return moveErr
+	}
+
+	// 2. Store metadata in target
+	if err := target.Store(ctx, md); err != nil {
+		clog.Errorf("failed to store metadata in target bucket for %s: %v", id.Key(), err)
+		return err
+	}
+
+	// 3. Discard locally
+	return d.discard(ctx, md)
+}
+
+func (d *diskBucket) SetMigration(migration storage.Migration) {
+	d.migration = migration
 }
 
 func (d *diskBucket) initWorkdir() {

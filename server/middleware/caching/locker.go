@@ -66,3 +66,10 @@ func (c *Caching) RUnlock() {
 	}
 	globalLocker.getLock(c.Key()).RUnlock()
 }
+
+func (c *Caching) TryLock() bool {
+	if c.id == nil {
+		return false
+	}
+	return globalLocker.getLock(c.Key()).TryLock()
+}

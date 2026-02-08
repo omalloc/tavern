@@ -24,12 +24,15 @@ type nativeStorage struct {
 	mu     sync.Mutex
 	log    *log.Helper
 
-	selector     storage.Selector
+	warmSelector storage.Selector // warm selector
+	hotSelector  storage.Selector // hot selector
+	coldSelector storage.Selector // cold selector
 	sharedkv     storage.SharedKV
 	nopBucket    storage.Bucket
 	memoryBucket storage.Bucket
 	hotBucket    []storage.Bucket
 	normalBucket []storage.Bucket
+	coldBucket   []storage.Bucket
 }
 
 func New(config *conf.Storage, logger log.Logger) (storage.Storage, error) {
@@ -39,7 +42,9 @@ func New(config *conf.Storage, logger log.Logger) (storage.Storage, error) {
 		mu:     sync.Mutex{},
 		log:    log.NewHelper(logger),
 
-		selector:     selector.New([]storage.Bucket{}, config.SelectionPolicy),
+		warmSelector: nil,
+		hotSelector:  nil,
+		coldSelector: nil,
 		sharedkv:     sharedkv.NewMemSharedKV(),
 		nopBucket:    nopBucket,
 		memoryBucket: nil,
@@ -69,6 +74,7 @@ func (n *nativeStorage) reinit(config *conf.Storage) error {
 		Driver:          config.Driver,
 		DBType:          config.DBType,
 		DBPath:          config.DBPath,
+		Tiering:         config.Tiering,
 	}
 
 	for _, c := range config.Buckets {
@@ -78,15 +84,16 @@ func (n *nativeStorage) reinit(config *conf.Storage) error {
 		}
 
 		switch bucket.StoreType() {
-		case storage.TypeNormal:
+		case storage.TypeNormal, storage.TypeWarm:
 			n.normalBucket = append(n.normalBucket, bucket)
 		case storage.TypeHot:
 			n.hotBucket = append(n.hotBucket, bucket)
+		case storage.TypeCold:
+			n.coldBucket = append(n.coldBucket, bucket)
 		case storage.TypeInMemory:
 			if n.memoryBucket != nil {
 				return fmt.Errorf("only one inmemory bucket is allowed")
 			}
-
 			n.memoryBucket = bucket
 		}
 	}
@@ -96,22 +103,123 @@ func (n *nativeStorage) reinit(config *conf.Storage) error {
 	// load lru
 	// load purge queue
 
+	// warm / normal
 	if len(n.normalBucket) <= 0 {
+		n.log.Infof("no warm bucket configured")
 		// no normal bucket, use nop bucket
 		if n.memoryBucket != nil {
 			n.normalBucket = append(n.normalBucket, n.memoryBucket)
 		}
 	}
+	n.warmSelector = selector.New(n.normalBucket, config.SelectionPolicy)
 
-	n.selector = selector.New(n.normalBucket, config.SelectionPolicy)
+	// cold
+	if len(n.coldBucket) > 0 {
+		n.coldSelector = selector.New(n.coldBucket, config.SelectionPolicy)
+	} else {
+		n.log.Infof("no cold bucket configured")
+	}
+
+	// hot
+	if len(n.hotBucket) > 0 {
+		n.hotSelector = selector.New(n.hotBucket, config.SelectionPolicy)
+	} else {
+		n.log.Infof("no hot bucket configured")
+	}
+
+	// register demoter and promoter
+	for _, b := range n.Buckets() {
+		b.SetMigration(n)
+	}
 
 	return nil
 }
 
 // Select implements storage.Selector.
 func (n *nativeStorage) Select(ctx context.Context, id *object.ID) storage.Bucket {
-	bucket := n.selector.Select(ctx, id)
-	return bucket
+	// find bucket: Hot → Warm → Cold
+	return n.chainSelector(ctx, id,
+		n.hotSelector,
+		n.warmSelector,
+		n.coldSelector,
+	)
+}
+
+// SelectByTier implements storage.Storage.
+func (n *nativeStorage) SelectWithType(ctx context.Context, id *object.ID, tier string) storage.Bucket {
+	switch tier {
+	case storage.TypeHot:
+		if n.hotSelector != nil {
+			return n.hotSelector.Select(ctx, id)
+		}
+	case storage.TypeNormal, storage.TypeWarm: // TypeWarm is same as TypeNormal
+		if n.warmSelector != nil {
+			return n.warmSelector.Select(ctx, id)
+		}
+	case storage.TypeCold:
+		if n.coldSelector != nil {
+			return n.coldSelector.Select(ctx, id)
+		}
+	case storage.TypeInMemory:
+		return n.memoryBucket
+	}
+	return nil
+}
+
+// Demote implements storage.Demoter.
+func (n *nativeStorage) Demote(ctx context.Context, id *object.ID, src storage.Bucket) error {
+	// Hot -> Warm -> Cold
+	var targetTier string
+	switch src.StoreType() {
+	case storage.TypeHot:
+		targetTier = storage.TypeNormal
+	case storage.TypeNormal: // TypeWarm is same as TypeNormal
+		targetTier = storage.TypeCold
+	default:
+		return nil // no demotion for other types
+	}
+
+	target := n.SelectWithType(ctx, id, targetTier)
+	if target == nil {
+		return fmt.Errorf("no target bucket found for demotion from %s to %s", src.StoreType(), targetTier)
+	}
+
+	return src.MoveTo(ctx, id, target)
+}
+
+// Promote implements storage.Promoter.
+func (n *nativeStorage) Promote(ctx context.Context, id *object.ID, src storage.Bucket) error {
+	// Cold -> Warm -> Hot
+	var targetTier string
+	switch src.StoreType() {
+	case storage.TypeCold:
+		targetTier = storage.TypeWarm
+	case storage.TypeWarm:
+		targetTier = storage.TypeHot
+	default:
+		return nil // no promotion for other types
+	}
+
+	target := n.SelectWithType(ctx, id, targetTier)
+	if target == nil {
+		return fmt.Errorf("no target bucket found for promotion from %s to %s", src.StoreType(), targetTier)
+	}
+
+	return src.MoveTo(ctx, id, target)
+}
+
+func (n *nativeStorage) chainSelector(ctx context.Context, id *object.ID, selectors ...storage.Selector) storage.Bucket {
+	for _, sel := range selectors {
+		if sel == nil {
+			continue
+		}
+		if bucket := sel.Select(ctx, id); bucket != nil && bucket.Exist(ctx, id.Bytes()) {
+			return bucket
+		}
+	}
+
+	// fallback to warm selector
+	return n.warmSelector.Select(ctx, id)
 }
 
 // Rebuild implements storage.Selector.
@@ -121,7 +229,11 @@ func (n *nativeStorage) Rebuild(ctx context.Context, buckets []storage.Bucket) e
 
 // Buckets implements storage.Storage.
 func (n *nativeStorage) Buckets() []storage.Bucket {
-	return append(n.normalBucket, n.hotBucket...)
+	buckets := make([]storage.Bucket, 0, len(n.normalBucket)+len(n.hotBucket)+len(n.coldBucket))
+	buckets = append(buckets, n.normalBucket...)
+	buckets = append(buckets, n.hotBucket...)
+	buckets = append(buckets, n.coldBucket...)
+	return buckets
 }
 
 // PURGE implements storage.Storage.
@@ -229,6 +341,10 @@ func (n *nativeStorage) Close() error {
 	}
 
 	for _, bucket := range n.hotBucket {
+		errs = append(errs, bucket.Close())
+	}
+
+	for _, bucket := range n.coldBucket {
 		errs = append(errs, bucket.Close())
 	}
 
