@@ -9,6 +9,8 @@ import (
 	"github.com/omalloc/tavern/api/defined/v1/storage/object"
 )
 
+var _ storagev1.Bucket = (*wrappedBucket)(nil)
+
 type wrappedBucket struct {
 	base    storagev1.Bucket
 	checker Checker
@@ -85,6 +87,15 @@ func (b *wrappedBucket) WriteChunkFile(ctx context.Context, id *object.ID, index
 
 func (b *wrappedBucket) ReadChunkFile(ctx context.Context, id *object.ID, index uint32) (storagev1.File, string, error) {
 	return b.base.ReadChunkFile(ctx, id, index)
+}
+
+// Migrate implements [storage.Bucket].
+func (b *wrappedBucket) Migrate(ctx context.Context, id *object.ID, dest storagev1.Bucket) error {
+	return b.base.Migrate(ctx, id, dest)
+}
+
+func (b *wrappedBucket) SetMigration(m storagev1.Migration) error {
+	return b.base.SetMigration(m)
 }
 
 func (b *wrappedBucket) ID() string {

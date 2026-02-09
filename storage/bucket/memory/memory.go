@@ -34,6 +34,7 @@ type memoryBucket struct {
 	weight    int
 	sharedkv  storage.SharedKV
 	indexdb   storage.IndexDB
+	migration storage.Migration
 	cache     *lru.Cache[object.IDHash, storage.Mark]
 	fileFlag  int
 	fileMode  fs.FileMode
@@ -271,6 +272,17 @@ func (m *memoryBucket) ReadChunkFile(_ context.Context, id *object.ID, index uin
 		return nil, wpath, err
 	}
 	return storage.WrapVFSFile(f), wpath, err
+}
+
+// Migrate implements [storage.Bucket].
+func (m *memoryBucket) Migrate(ctx context.Context, id *object.ID, dest storage.Bucket) error {
+	panic("unimplemented")
+}
+
+// SetMigration implements [storage.Bucket].
+func (m *memoryBucket) SetMigration(migration storage.Migration) error {
+	m.migration = migration
+	return nil
 }
 
 // StoreType implements [storage.Bucket].

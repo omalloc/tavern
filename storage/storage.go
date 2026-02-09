@@ -38,6 +38,11 @@ func New(config *conf.Storage, logger log.Logger) (storage.Storage, error) {
 	// 填充默认配置
 	config.FillDefault()
 
+	// support migrator mode
+	if config.Migration != nil && config.Migration.Enabled {
+		return NewMigrator(config, logger)
+	}
+
 	nopBucket, _ := empty.New(&conf.Bucket{}, sharedkv.NewEmpty())
 	n := &nativeStorage{
 		closed: false,
