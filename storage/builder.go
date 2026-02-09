@@ -20,6 +20,7 @@ type globalBucketOption struct {
 	Driver          string
 	DBType          string
 	DBPath          string
+	Migration       *conf.Migration
 }
 
 // implements storage.Bucket map.

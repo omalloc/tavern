@@ -122,6 +122,16 @@ func (e *emptyBucket) ReadChunkFile(ctx context.Context, id *object.ID, index ui
 	return nil, "discard", nil
 }
 
+// Migrate implements [storage.Bucket].
+func (e *emptyBucket) Migrate(ctx context.Context, id *object.ID, dest storage.Bucket) error {
+	return nil
+}
+
+// SetMigration implements [storage.Bucket].
+func (e *emptyBucket) SetMigration(migration storage.Migration) error {
+	return nil
+}
+
 func New(c *conf.Bucket, _ storage.SharedKV) (storage.Bucket, error) {
 	path := c.Path
 	if path == "" {

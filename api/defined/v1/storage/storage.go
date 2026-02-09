@@ -42,6 +42,12 @@ type Operation interface {
 	WriteChunkFile(ctx context.Context, id *object.ID, index uint32) (io.WriteCloser, string, error)
 	// ReadChunkFile open chunk file and returns io.ReadCloser
 	ReadChunkFile(ctx context.Context, id *object.ID, index uint32) (File, string, error)
+	// Migrate migrates the object from this bucket to the destination bucket.
+	// It should copy the object data and metadata to the destination, and then
+	// remove it from the source bucket upon success.
+	Migrate(ctx context.Context, id *object.ID, dest Bucket) error
+	// SetMigration sets the migration for the bucket.
+	SetMigration(m Migration) error
 }
 
 type Storage interface {
@@ -53,6 +59,21 @@ type Storage interface {
 	SharedKV() SharedKV
 
 	PURGE(storeUrl string, typ PurgeControl) error
+}
+
+type Migration interface {
+	// Demote demotes the object from the source bucket to the destination bucket.
+	Demote(ctx context.Context, id *object.ID, src Bucket) error
+	// Promote promotes the object from the source bucket to the destination bucket.
+	Promote(ctx context.Context, id *object.ID, src Bucket) error
+}
+
+type Migrator interface {
+	Migration
+	Storage
+
+	// SelectLayer selects the Bucket by the object ID and layer.
+	SelectLayer(ctx context.Context, id *object.ID, layer string) Bucket
 }
 
 type Bucket interface {

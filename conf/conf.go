@@ -70,15 +70,16 @@ type Upstream struct {
 }
 
 type Storage struct {
-	Driver          string    `json:"driver" yaml:"driver"`
-	DBType          string    `json:"db_type" yaml:"db_type"`
-	DBPath          string    `json:"db_path" yaml:"db_path"` // default db path
-	AsyncLoad       bool      `json:"async_load" yaml:"async_load"`
-	EvictionPolicy  string    `json:"eviction_policy" yaml:"eviction_policy"`
-	SelectionPolicy string    `json:"selection_policy" yaml:"selection_policy"`
-	SliceSize       uint64    `json:"slice_size" yaml:"slice_size"`
-	DirAware        *DirAware `json:"diraware" yaml:"diraware"`
-	Buckets         []*Bucket `json:"buckets" yaml:"buckets"`
+	Driver          string     `json:"driver" yaml:"driver"`
+	DBType          string     `json:"db_type" yaml:"db_type"`
+	DBPath          string     `json:"db_path" yaml:"db_path"` // default db path
+	AsyncLoad       bool       `json:"async_load" yaml:"async_load"`
+	EvictionPolicy  string     `json:"eviction_policy" yaml:"eviction_policy"`
+	SelectionPolicy string     `json:"selection_policy" yaml:"selection_policy"`
+	SliceSize       uint64     `json:"slice_size" yaml:"slice_size"`
+	DirAware        *DirAware  `json:"diraware" yaml:"diraware"`
+	Migration       *Migration `json:"migration" yaml:"migration"`
+	Buckets         []*Bucket  `json:"buckets" yaml:"buckets"`
 }
 
 func (r *Storage) FillDefault() {
@@ -109,6 +110,23 @@ type DirAware struct {
 	AutoClear bool   `json:"auto_clear" yaml:"auto_clear"` // 自动清理过期任务(凌晨2点左右执行)
 }
 
+type (
+	Promote struct {
+		MinHits       int           `json:"min_hits" yaml:"min_hits"`               // 时间窗口内命中 >= N
+		Window        time.Duration `json:"window" yaml:"window"`                   // 时间窗口 10m
+		MaxObjectSize uint64        `json:"max_object_size" yaml:"max_object_size"` // 最大对象大小
+	}
+	Demote struct {
+		MinHits   int           `json:"min_hits" yaml:"min_hits"`   // 时间窗口内命中 <= N
+		Window    time.Duration `json:"window" yaml:"window"`       // 时间窗口 10m
+		Occupancy float64       `json:"occupancy" yaml:"occupancy"` // 热盘存储占用率 >= N%
+	}
+	Migration struct {
+		Enabled bool    `json:"enabled" yaml:"enabled"`
+		Promote Promote `json:"promote" yaml:"promote"` // 升温
+		Demote  Demote  `json:"demote" yaml:"demote"`   // 降温
+	}
+)
 type Plugin struct {
 	Name    string         `json:"name" yaml:"name"`
 	Options map[string]any `json:"options" yaml:"options"`

@@ -37,6 +37,7 @@ type diskBucket struct {
 	weight    int
 	sharedkv  storage.SharedKV
 	indexdb   storage.IndexDB
+	migration storage.Migration
 	cache     *lru.Cache[object.IDHash, storage.Mark]
 	fileFlag  int
 	fileMode  fs.FileMode
@@ -91,16 +92,43 @@ func (d *diskBucket) evict() {
 
 	clog.Debugf("start evict goroutine for %s", d.ID())
 
+	demote := func(evicted lru.Eviction[object.IDHash, storage.Mark]) error {
+		if d.migration != nil {
+			md, err := d.indexdb.Get(context.Background(), evicted.Key[:])
+			if err != nil {
+				return err
+			}
+			if md == nil || md.ID == nil {
+				return fmt.Errorf("metadata not found for demotion")
+			}
+			log.Debugf("demote %s to %s", d.storeType, md.ID.Key())
+			return d.migration.Demote(context.Background(), md.ID, d)
+		}
+		return nil
+	}
+
+	discard := func(evicted lru.Eviction[object.IDHash, storage.Mark]) {
+		fd := evicted.Key.WPath(d.path)
+		clog.Debugf("evict file %s, last-access %d", fd, evicted.Value.LastAccess())
+		_ = d.DiscardWithHash(context.Background(), evicted.Key)
+	}
+
 	go func() {
 		for {
 			select {
 			case <-d.stop:
 				return
 			case evicted := <-ch:
-				fd := evicted.Key.WPath(d.path)
-				clog.Debugf("evict file %s, last-access %d", fd, evicted.Value.LastAccess())
-				// TODO: discard expired cachefile or Move to cold storage
-				d.DiscardWithHash(context.Background(), evicted.Key)
+				// expired cachefile Demote to other bucket
+				if d.migration != nil {
+					if err := demote(evicted); err != nil {
+						// fallback to discard
+						discard(evicted)
+					}
+					continue
+				}
+
+				discard(evicted)
 			}
 		}
 	}()
@@ -376,6 +404,17 @@ func (d *diskBucket) ReadChunkFile(ctx context.Context, id *object.ID, index uin
 	wpath := id.WPathSlice(d.path, index)
 	f, err := os.OpenFile(wpath, d.fileFlag, d.fileMode)
 	return f, wpath, err
+}
+
+// Migrate implements [storage.Bucket].
+func (d *diskBucket) Migrate(ctx context.Context, id *object.ID, dest storage.Bucket) error {
+	panic("unimplemented")
+}
+
+// SetMigration implements storage.Bucket.
+func (d *diskBucket) SetMigration(migration storage.Migration) error {
+	d.migration = migration
+	return nil
 }
 
 // Close implements storage.Bucket.
