@@ -69,7 +69,7 @@ func New(config *conf.Bucket, sharedkv storage.SharedKV) (storage.Bucket, error)
 	db, err := indexdb.Create(config.DBType,
 		indexdb.NewOption(config.DBPath, indexdb.WithType("pebble"), indexdb.WithDBConfig(config.DBConfig)))
 	if err != nil {
-		log.Errorf("failed to create %s indexdb %v", config.DBType, err)
+		log.Errorf("failed to create %s(%s) indexdb %v", config.DBType, config.DBPath, err)
 		return nil, err
 	}
 	bucket.indexdb = db

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -13,6 +14,7 @@ import (
 	"github.com/omalloc/tavern/conf"
 	"github.com/omalloc/tavern/contrib/log"
 	"github.com/omalloc/tavern/storage/bucket/empty"
+	"github.com/omalloc/tavern/storage/diraware"
 	"github.com/omalloc/tavern/storage/selector"
 	"github.com/omalloc/tavern/storage/sharedkv"
 )
@@ -33,6 +35,9 @@ type nativeStorage struct {
 }
 
 func New(config *conf.Storage, logger log.Logger) (storage.Storage, error) {
+	// 填充默认配置
+	config.FillDefault()
+
 	nopBucket, _ := empty.New(&conf.Bucket{}, sharedkv.NewEmpty())
 	n := &nativeStorage{
 		closed: false,
@@ -49,6 +54,20 @@ func New(config *conf.Storage, logger log.Logger) (storage.Storage, error) {
 
 	if err := n.reinit(config); err != nil {
 		return nil, err
+	}
+
+	// diraware adapter
+	if config.DirAware != nil && config.DirAware.Enabled {
+		if config.DirAware.StorePath != "" {
+			_ = os.MkdirAll(config.DirAware.StorePath, 0755)
+			// replace memkv with storekv
+			n.sharedkv = sharedkv.NewStoreSharedKV(config.DirAware.StorePath)
+		}
+
+		// sharedkv used no-mem typ.
+		return diraware.New(n, diraware.NewChecker(n.sharedkv,
+			diraware.WithAutoClear(config.DirAware.AutoClear),
+		)), nil
 	}
 
 	return n, nil

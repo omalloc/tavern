@@ -1,4 +1,4 @@
-package marked
+package diraware
 
 import (
 	"context"
@@ -37,7 +37,7 @@ func WithAutoClear(clear bool) SharedKVOption {
 	}
 }
 
-func NewSharedKVChecker(kv storagev1.SharedKV, opts ...SharedKVOption) Checker {
+func NewChecker(kv storagev1.SharedKV, opts ...SharedKVOption) Checker {
 	c := &checker{
 		KV:        kv,
 		pathtrie:  pathtrie.NewPathTrie[string, int64](),

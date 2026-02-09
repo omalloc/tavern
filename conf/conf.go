@@ -44,8 +44,9 @@ type Server struct {
 }
 
 type ServerPProf struct {
-	Username string `json:"username" yaml:"username"`
-	Password string `json:"password" yaml:"password"`
+	AllowLocalRequest bool   `json:"allow_local_request" yaml:"allow_local_request"`
+	Username          string `json:"username" yaml:"username"`
+	Password          string `json:"password" yaml:"password"`
 }
 
 type ServerAccessLog struct {
@@ -76,7 +77,18 @@ type Storage struct {
 	EvictionPolicy  string    `json:"eviction_policy" yaml:"eviction_policy"`
 	SelectionPolicy string    `json:"selection_policy" yaml:"selection_policy"`
 	SliceSize       uint64    `json:"slice_size" yaml:"slice_size"`
+	DirAware        *DirAware `json:"diraware" yaml:"diraware"`
 	Buckets         []*Bucket `json:"buckets" yaml:"buckets"`
+}
+
+func (r *Storage) FillDefault() {
+	if r.DirAware == nil {
+		r.DirAware = &DirAware{
+			Enabled:   true,
+			StorePath: "/tmp/.diraware",
+			AutoClear: true,
+		}
+	}
 }
 
 type Bucket struct {
@@ -89,6 +101,12 @@ type Bucket struct {
 	SliceSize      uint64         `json:"slice_size" yaml:"slice_size"`             // slice size for each part
 	MaxObjectLimit int            `json:"max_object_limit" yaml:"max_object_limit"` // max object limit, upper Bound discard
 	DBConfig       map[string]any `json:"db_config" yaml:"db_config"`               // custom db config
+}
+
+type DirAware struct {
+	Enabled   bool   `json:"enabled" yaml:"enabled"`       // 目录推送标记删除功能开关
+	StorePath string `json:"store_path" yaml:"store_path"` // 推送任务储存路径(建议SSD)
+	AutoClear bool   `json:"auto_clear" yaml:"auto_clear"` // 自动清理过期任务(凌晨2点左右执行)
 }
 
 type Plugin struct {

@@ -1,4 +1,4 @@
-package marked
+package diraware
 
 import (
 	"context"
@@ -14,9 +14,9 @@ type Checker interface {
 	TrieAdd(ctx context.Context, storePath string)
 }
 
-// WrapStorage wraps a storage with push-mark logic.
+// New wraps a storage with push-mark logic.
 // If checker is nil, returns the original storage.
-func WrapStorage(base storagev1.Storage, checker Checker) storagev1.Storage {
+func New(base storagev1.Storage, checker Checker) storagev1.Storage {
 	if base == nil || checker == nil {
 		return base
 	}

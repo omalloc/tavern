@@ -6,22 +6,20 @@ import (
 	"errors"
 
 	"github.com/cockroachdb/pebble/v2"
-	"github.com/cockroachdb/pebble/v2/vfs"
 	"github.com/omalloc/tavern/api/defined/v1/storage"
-	"github.com/omalloc/tavern/contrib/log"
 )
 
-var _ storage.SharedKV = (*memSharedKV)(nil)
+var _ storage.SharedKV = (*noneSharedKV)(nil)
 
-type memSharedKV struct {
+type noneSharedKV struct {
 	db *pebble.DB
 }
 
-func (r *memSharedKV) Close() error {
+func (r *noneSharedKV) Close() error {
 	return r.db.Close()
 }
 
-func (r *memSharedKV) Get(_ context.Context, key []byte) ([]byte, error) {
+func (r *noneSharedKV) Get(_ context.Context, key []byte) ([]byte, error) {
 	val, c, err := r.db.Get(key)
 	if err != nil {
 		if errors.Is(err, pebble.ErrNotFound) {
@@ -35,11 +33,11 @@ func (r *memSharedKV) Get(_ context.Context, key []byte) ([]byte, error) {
 	return val, nil
 }
 
-func (r *memSharedKV) Set(_ context.Context, key []byte, val []byte) error {
+func (r *noneSharedKV) Set(_ context.Context, key []byte, val []byte) error {
 	return r.db.Set(key, val, pebble.NoSync)
 }
 
-func (r *memSharedKV) Incr(_ context.Context, key []byte, delta uint32) (uint32, error) {
+func (r *noneSharedKV) Incr(_ context.Context, key []byte, delta uint32) (uint32, error) {
 	batch := r.db.NewIndexedBatch()
 	defer func() { _ = batch.Close() }()
 
@@ -70,7 +68,7 @@ func (r *memSharedKV) Incr(_ context.Context, key []byte, delta uint32) (uint32,
 	return counter, nil
 }
 
-func (r *memSharedKV) Decr(_ context.Context, key []byte, delta uint32) (uint32, error) {
+func (r *noneSharedKV) Decr(_ context.Context, key []byte, delta uint32) (uint32, error) {
 	batch := r.db.NewIndexedBatch()
 	defer func() { _ = batch.Close() }()
 
@@ -105,7 +103,7 @@ func (r *memSharedKV) Decr(_ context.Context, key []byte, delta uint32) (uint32,
 	return counter, nil
 }
 
-func (r *memSharedKV) GetCounter(_ context.Context, key []byte) (uint32, error) {
+func (r *noneSharedKV) GetCounter(_ context.Context, key []byte) (uint32, error) {
 	val, closer, err := r.db.Get(key)
 	if err != nil {
 		return 0, err
@@ -115,11 +113,11 @@ func (r *memSharedKV) GetCounter(_ context.Context, key []byte) (uint32, error) 
 	return binary.BigEndian.Uint32(val), nil
 }
 
-func (r *memSharedKV) Delete(_ context.Context, key []byte) error {
+func (r *noneSharedKV) Delete(_ context.Context, key []byte) error {
 	return r.db.Delete(key, pebble.NoSync)
 }
 
-func (r *memSharedKV) DropPrefix(ctx context.Context, prefix []byte) error {
+func (r *noneSharedKV) DropPrefix(ctx context.Context, prefix []byte) error {
 	end := make([]byte, len(prefix))
 	copy(end, prefix)
 	end[len(end)-1]++
@@ -127,7 +125,7 @@ func (r *memSharedKV) DropPrefix(ctx context.Context, prefix []byte) error {
 	return r.db.DeleteRange(prefix, end, pebble.NoSync)
 }
 
-func (r *memSharedKV) Iterate(ctx context.Context, f func(key []byte, val []byte) error) error {
+func (r *noneSharedKV) Iterate(ctx context.Context, f func(key []byte, val []byte) error) error {
 	iter, err := r.db.NewIterWithContext(ctx, &pebble.IterOptions{})
 	if err != nil {
 		return err
@@ -148,7 +146,7 @@ func (r *memSharedKV) Iterate(ctx context.Context, f func(key []byte, val []byte
 	return nil
 }
 
-func (r *memSharedKV) IteratePrefix(ctx context.Context, prefix []byte, f func(key []byte, val []byte) error) error {
+func (r *noneSharedKV) IteratePrefix(ctx context.Context, prefix []byte, f func(key []byte, val []byte) error) error {
 	iter, err := r.db.NewIterWithContext(ctx, &pebble.IterOptions{
 		LowerBound: prefix,
 		UpperBound: keyUpperBound(prefix),
@@ -184,17 +182,14 @@ func keyUpperBound(b []byte) []byte {
 	return nil // no upper-bound
 }
 
-func NewMemSharedKV() storage.SharedKV {
-	db, err := pebble.Open("", &pebble.Options{
-		FS:     vfs.NewMem(),
-		Logger: log.NewHelper(log.NewFilter(log.GetLogger(), log.FilterLevel(log.LevelWarn))),
-	})
+func newNoneKV(storePath string, opts *pebble.Options) (storage.SharedKV, error) {
+	db, err := pebble.Open(storePath, opts)
 	if err != nil {
-		panic(err)
+		return nil, err
 	}
 
-	r := &memSharedKV{
+	r := &noneSharedKV{
 		db: db,
 	}
-	return r
+	return r, nil
 }
