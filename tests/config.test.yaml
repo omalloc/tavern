@@ -91,6 +91,19 @@ storage:
   eviction_policy: fifo # fifo, lru, lfu
   selection_policy: hashring # hashring, roundrobin
   slice_size: 524288 # 1MB
+  migration:
+    enabled: false # enable tiering bucket
+    promote:
+      min_hits: 10 # window hits to promote
+      window: 1m # 1 minute window
+    demote:
+      min_hits: 2 # window hits to demote
+      window: 5m # 5 minutes window
+      occupancy: 75 # percent useage
+  diraware:
+    enabled: false # 默认 true
+    store_path: /tmp/.diraware
+    auto_clear: true 
   buckets:
     - path: inmemory
       driver: memory

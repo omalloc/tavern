@@ -7,7 +7,6 @@ import (
 
 	"github.com/omalloc/tavern/api/defined/v1/storage"
 	"github.com/omalloc/tavern/api/defined/v1/storage/object"
-	"github.com/omalloc/tavern/conf"
 )
 
 var _ storage.Bucket = (*emptyBucket)(nil)
@@ -132,7 +131,7 @@ func (e *emptyBucket) SetMigration(migration storage.Migration) error {
 	return nil
 }
 
-func New(c *conf.Bucket, _ storage.SharedKV) (storage.Bucket, error) {
+func New(c *storage.BucketConfig, _ storage.SharedKV) (storage.Bucket, error) {
 	path := c.Path
 	if path == "" {
 		path = "/dev/null"

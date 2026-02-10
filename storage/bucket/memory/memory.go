@@ -16,7 +16,6 @@ import (
 
 	"github.com/omalloc/tavern/api/defined/v1/storage"
 	"github.com/omalloc/tavern/api/defined/v1/storage/object"
-	"github.com/omalloc/tavern/conf"
 	"github.com/omalloc/tavern/contrib/log"
 	"github.com/omalloc/tavern/pkg/algorithm/lru"
 	"github.com/omalloc/tavern/pkg/iobuf"
@@ -43,16 +42,16 @@ type memoryBucket struct {
 	stop      chan struct{}
 }
 
-func New(config *conf.Bucket, sharedkv storage.SharedKV) (storage.Bucket, error) {
+func New(opt *storage.BucketConfig, sharedkv storage.SharedKV) (storage.Bucket, error) {
 	mb := &memoryBucket{
 		fs:        vfs.NewMem(),
 		path:      "/",
+		driver:    opt.Driver,
 		dbPath:    storage.TypeInMemory,
-		driver:    config.Driver,
 		storeType: storage.TypeInMemory,
 		weight:    100, // default weight
 		sharedkv:  sharedkv,
-		cache:     lru.New[object.IDHash, storage.Mark](config.MaxObjectLimit), // in-memory object size
+		cache:     lru.New[object.IDHash, storage.Mark](opt.MaxObjectLimit), // in-memory object size
 		fileFlag:  os.O_RDONLY,
 		fileMode:  fs.FileMode(0o755),
 		maxSize:   1024 * 1024 * 100, // e.g. 100 MB
@@ -62,7 +61,7 @@ func New(config *conf.Bucket, sharedkv storage.SharedKV) (storage.Bucket, error)
 	// create indexdb only in-memory
 	db, err := indexdb.Create("pebble", indexdb.NewOption(mb.dbPath, indexdb.WithType("pebble")))
 	if err != nil {
-		log.Errorf("failed to create %s indexdb %v", config.DBType, err)
+		log.Errorf("failed to create %s indexdb %v", opt.DBType, err)
 		return nil, err
 	}
 	mb.indexdb = db
@@ -232,7 +231,7 @@ func (m *memoryBucket) Store(ctx context.Context, meta *object.Metadata) error {
 	}
 
 	// update lru
-	m.cache.Set(meta.ID.Hash(), storage.NewMark(meta.LastRefUnix, uint64(meta.Refs)))
+	m.cache.Set(meta.ID.Hash(), storage.NewMark(meta.LastRefUnix, meta.Refs))
 
 	// save domains counter
 	if u, err1 := url.Parse(meta.ID.Path()); err1 == nil {

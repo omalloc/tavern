@@ -37,7 +37,7 @@ type migratorStorage struct {
 }
 
 func NewMigrator(config *conf.Storage, logger log.Logger) (storage.Migrator, error) {
-	nopBucket, _ := empty.New(&conf.Bucket{}, sharedkv.NewEmpty())
+	nopBucket, _ := empty.New(&storage.BucketConfig{}, sharedkv.NewEmpty())
 
 	m := &migratorStorage{
 		closed: false,
@@ -60,6 +60,7 @@ func NewMigrator(config *conf.Storage, logger log.Logger) (storage.Migrator, err
 	}
 
 	// diraware adapter
+	// 关闭可以提升性能，但是目录推送只能使用硬删除模式，无法使用过期标记
 	if config.DirAware != nil && config.DirAware.Enabled {
 		if config.DirAware.StorePath != "" {
 			_ = os.MkdirAll(config.DirAware.StorePath, 0755)
@@ -91,7 +92,17 @@ func (m *migratorStorage) reinit(config *conf.Storage) error {
 		Driver:          config.Driver,
 		DBType:          config.DBType,
 		DBPath:          config.DBPath,
-		Migration:       config.Migration,
+		Migration: &storage.MigrationConfig{
+			Enabled: config.Migration.Enabled,
+			Promote: storage.PromoteConfig{
+				MinHits: config.Migration.Promote.MinHits,
+				Window:  config.Migration.Promote.Window,
+			},
+			Demote: storage.DemoteConfig{
+				MinHits: config.Migration.Demote.MinHits,
+				Window:  config.Migration.Demote.Window,
+			},
+		},
 	}
 
 	for _, c := range config.Buckets {

@@ -112,9 +112,8 @@ type DirAware struct {
 
 type (
 	Promote struct {
-		MinHits       int           `json:"min_hits" yaml:"min_hits"`               // 时间窗口内命中 >= N
-		Window        time.Duration `json:"window" yaml:"window"`                   // 时间窗口 10m
-		MaxObjectSize uint64        `json:"max_object_size" yaml:"max_object_size"` // 最大对象大小
+		MinHits int           `json:"min_hits" yaml:"min_hits"` // 时间窗口内命中 >= N
+		Window  time.Duration `json:"window" yaml:"window"`     // 时间窗口 10m
 	}
 	Demote struct {
 		MinHits   int           `json:"min_hits" yaml:"min_hits"`   // 时间窗口内命中 <= N

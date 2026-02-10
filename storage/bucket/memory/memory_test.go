@@ -7,7 +7,6 @@ import (
 
 	"github.com/omalloc/tavern/api/defined/v1/storage"
 	"github.com/omalloc/tavern/api/defined/v1/storage/object"
-	"github.com/omalloc/tavern/conf"
 	"github.com/omalloc/tavern/storage/bucket/memory"
 	"github.com/omalloc/tavern/storage/sharedkv"
 	"github.com/stretchr/testify/assert"
@@ -19,7 +18,7 @@ import (
 func TestMemoryBucket(t *testing.T) {
 	var m runtime.MemStats
 
-	bucket, err := memory.New(&conf.Bucket{
+	bucket, err := memory.New(&storage.BucketConfig{
 		Path:   "inmemory",
 		DBType: storage.TypeInMemory,
 	}, sharedkv.NewMemSharedKV())

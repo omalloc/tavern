@@ -43,7 +43,7 @@ func New(config *conf.Storage, logger log.Logger) (storage.Storage, error) {
 		return NewMigrator(config, logger)
 	}
 
-	nopBucket, _ := empty.New(&conf.Bucket{}, sharedkv.NewEmpty())
+	nopBucket, _ := empty.New(&storage.BucketConfig{}, sharedkv.NewEmpty())
 	n := &nativeStorage{
 		closed: false,
 		mu:     sync.Mutex{},
