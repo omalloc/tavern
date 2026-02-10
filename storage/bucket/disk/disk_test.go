@@ -11,13 +11,13 @@ import (
 
 	storagev1 "github.com/omalloc/tavern/api/defined/v1/storage"
 	"github.com/omalloc/tavern/api/defined/v1/storage/object"
-	"github.com/omalloc/tavern/conf"
-	"github.com/omalloc/tavern/storage"
+	"github.com/omalloc/tavern/storage/bucket/disk"
+	_ "github.com/omalloc/tavern/storage/indexdb/pebble"
 	"github.com/omalloc/tavern/storage/sharedkv"
 )
 
 func newTestBucket(t *testing.T, basepath string) storagev1.Bucket {
-	bucket, err := storage.NewBucket(&conf.Bucket{
+	bucket, err := disk.New(&storagev1.BucketConfig{
 		Path:      basepath,
 		Driver:    "native",
 		Type:      "normal",
@@ -30,7 +30,7 @@ func newTestBucket(t *testing.T, basepath string) storagev1.Bucket {
 	return bucket
 }
 
-func TesMissKey(t *testing.T) {
+func TestMissKey(t *testing.T) {
 	basepath := t.TempDir()
 	bucket := newTestBucket(t, basepath)
 

@@ -8,8 +8,8 @@ import (
 	"testing"
 
 	"github.com/kelindar/bitmap"
+	"github.com/omalloc/tavern/api/defined/v1/storage"
 	"github.com/omalloc/tavern/api/defined/v1/storage/object"
-	"github.com/omalloc/tavern/conf"
 	"github.com/omalloc/tavern/contrib/log"
 	"github.com/omalloc/tavern/proxy"
 	"github.com/omalloc/tavern/storage/bucket/memory"
@@ -28,7 +28,7 @@ func makebuf(size int) []byte {
 }
 
 func Test_getContents(t *testing.T) {
-	memoryBucket, _ := memory.New(&conf.Bucket{}, sharedkv.NewEmpty())
+	memoryBucket, _ := memory.New(&storage.BucketConfig{}, sharedkv.NewEmpty())
 
 	req, _ := http.NewRequestWithContext(t.Context(), http.MethodGet, "http://www.example.com/path/to/1.apk", nil)
 	objectID, _ := newObjectIDFromRequest(req, "", true)

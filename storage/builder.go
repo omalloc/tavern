@@ -20,17 +20,17 @@ type globalBucketOption struct {
 	Driver          string
 	DBType          string
 	DBPath          string
-	Migration       *conf.Migration
+	Migration       *storage.MigrationConfig
 }
 
 // implements storage.Bucket map.
-var bucketMap = map[string]func(opt *conf.Bucket, sharedkv storage.SharedKV) (storage.Bucket, error){
+var bucketMap = map[string]func(opt *storage.BucketConfig, sharedkv storage.SharedKV) (storage.Bucket, error){
 	"empty":  empty.New,
 	"native": disk.New,   // disk is an alias of native
 	"memory": memory.New, // in-memory disk. restart as lost.
 }
 
-func NewBucket(opt *conf.Bucket, sharedkv storage.SharedKV) (storage.Bucket, error) {
+func NewBucket(opt *storage.BucketConfig, sharedkv storage.SharedKV) (storage.Bucket, error) {
 	factory, exist := bucketMap[opt.Driver]
 	if !exist {
 		return nil, errors.New("bucket factory not found")
@@ -38,16 +38,17 @@ func NewBucket(opt *conf.Bucket, sharedkv storage.SharedKV) (storage.Bucket, err
 	return factory(opt, sharedkv)
 }
 
-func mergeConfig(global *globalBucketOption, bucket *conf.Bucket) *conf.Bucket {
+func mergeConfig(global *globalBucketOption, bucket *conf.Bucket) *storage.BucketConfig {
 	// copied from conf bucket.
-	copied := &conf.Bucket{
+	copied := &storage.BucketConfig{
 		Path:           bucket.Path,
 		Driver:         bucket.Driver,
 		Type:           bucket.Type,
 		DBType:         bucket.DBType,
 		DBPath:         bucket.DBPath,
 		MaxObjectLimit: bucket.MaxObjectLimit,
-		DBConfig:       bucket.DBConfig, // custom db config
+		Migration:      global.Migration, // migration config
+		DBConfig:       bucket.DBConfig,  // custom db config
 	}
 
 	if copied.Driver == "" {

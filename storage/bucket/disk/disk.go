@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/omalloc/tavern/pkg/iobuf"
@@ -20,8 +21,8 @@ import (
 
 	"github.com/omalloc/tavern/api/defined/v1/storage"
 	"github.com/omalloc/tavern/api/defined/v1/storage/object"
-	"github.com/omalloc/tavern/conf"
 	"github.com/omalloc/tavern/contrib/log"
+	"github.com/omalloc/tavern/pkg/algorithm/heavykeeper"
 	"github.com/omalloc/tavern/pkg/algorithm/lru"
 	"github.com/omalloc/tavern/storage/indexdb"
 )
@@ -29,34 +30,49 @@ import (
 var _ storage.Bucket = (*diskBucket)(nil)
 
 type diskBucket struct {
-	path      string
-	dbPath    string
-	driver    string
-	storeType string
-	asyncLoad bool
-	weight    int
-	sharedkv  storage.SharedKV
-	indexdb   storage.IndexDB
-	migration storage.Migration
-	cache     *lru.Cache[object.IDHash, storage.Mark]
-	fileFlag  int
-	fileMode  fs.FileMode
-	stop      chan struct{}
+	opt              *storage.BucketConfig
+	path             string
+	dbPath           string
+	driver           string
+	storeType        string
+	asyncLoad        bool
+	weight           int
+	sharedkv         storage.SharedKV
+	indexdb          storage.IndexDB
+	migration        storage.Migration
+	hkPromote        *heavykeeper.HeavyKeeper
+	lastPromoteReset time.Time
+	promMu           sync.Mutex
+	cache            *lru.Cache[object.IDHash, storage.Mark]
+	fileFlag         int
+	fileMode         fs.FileMode
+	stop             chan struct{}
 }
 
-func New(config *conf.Bucket, sharedkv storage.SharedKV) (storage.Bucket, error) {
+func New(opt *storage.BucketConfig, sharedkv storage.SharedKV) (storage.Bucket, error) {
 	bucket := &diskBucket{
-		path:      config.Path,
-		dbPath:    config.DBPath,
-		driver:    config.Driver,
-		storeType: config.Type,
-		asyncLoad: config.AsyncLoad,
+		opt:       opt,
+		path:      opt.Path,
+		dbPath:    opt.DBPath,
+		driver:    opt.Driver,
+		storeType: opt.Type,
+		asyncLoad: opt.AsyncLoad,
 		weight:    100, // default weight
 		sharedkv:  sharedkv,
-		cache:     lru.New[object.IDHash, storage.Mark](config.MaxObjectLimit),
+		cache:     lru.New[object.IDHash, storage.Mark](opt.MaxObjectLimit),
 		fileFlag:  os.O_RDONLY,
 		fileMode:  fs.FileMode(0o755),
 		stop:      make(chan struct{}, 1),
+	}
+
+	if opt.Migration != nil && opt.Migration.Enabled {
+		// Default width 4096 if not set or small
+		width := opt.MaxObjectLimit
+		if width < 4096 {
+			width = 4096
+		}
+		bucket.hkPromote = heavykeeper.New(3, width, 0.9)
+		bucket.lastPromoteReset = time.Now()
 	}
 
 	// hard code of check os.
@@ -67,10 +83,13 @@ func New(config *conf.Bucket, sharedkv storage.SharedKV) (storage.Bucket, error)
 	bucket.initWorkdir()
 
 	// create indexdb
-	db, err := indexdb.Create(config.DBType,
-		indexdb.NewOption(config.DBPath, indexdb.WithType("pebble"), indexdb.WithDBConfig(config.DBConfig)))
+	db, err := indexdb.Create(opt.DBType, indexdb.NewOption(
+		opt.DBPath,
+		indexdb.WithType("pebble"),
+		indexdb.WithDBConfig(opt.DBConfig),
+	))
 	if err != nil {
-		log.Errorf("failed to create %s(%s) indexdb %v", config.DBType, config.DBPath, err)
+		log.Errorf("failed to create %s(%s) indexdb %v", opt.DBType, opt.DBPath, err)
 		return nil, err
 	}
 	bucket.indexdb = db
@@ -121,9 +140,12 @@ func (d *diskBucket) evict() {
 			case evicted := <-ch:
 				// expired cachefile Demote to other bucket
 				if d.migration != nil {
+
 					if err := demote(evicted); err != nil {
+						log.Warnf("demote failed: %v", err)
 						// fallback to discard
 						discard(evicted)
+						continue
 					}
 					continue
 				}
@@ -163,7 +185,7 @@ func (d *diskBucket) loadLRU() {
 			if meta != nil {
 				mdCount++
 				chunkCount += meta.Chunks.Count()
-				d.cache.Set(meta.ID.Hash(), storage.NewMark(meta.LastRefUnix, uint64(meta.Refs)))
+				d.cache.Set(meta.ID.Hash(), storage.NewMark(meta.LastRefUnix, meta.Refs))
 
 				// store service domains
 				// TODO: add Debounce incr
@@ -293,6 +315,9 @@ func (d *diskBucket) Iterate(ctx context.Context, fn func(*object.Metadata) erro
 // Lookup implements storage.Bucket.
 func (d *diskBucket) Lookup(ctx context.Context, id *object.ID) (*object.Metadata, error) {
 	md, err := d.indexdb.Get(ctx, id.Bytes())
+	if err == nil && md != nil {
+		d.touch(ctx, id)
+	}
 	return md, err
 }
 
@@ -319,7 +344,7 @@ func (d *diskBucket) Store(ctx context.Context, meta *object.Metadata) error {
 	meta.Headers.Del("X-Protocol-Request-Id")
 
 	if !d.cache.Has(meta.ID.Hash()) {
-		d.cache.Set(meta.ID.Hash(), storage.NewMark(meta.LastRefUnix, uint64(meta.Refs)))
+		d.cache.Set(meta.ID.Hash(), storage.NewMark(meta.LastRefUnix, meta.Refs))
 	}
 
 	if err := d.indexdb.Set(ctx, meta.ID.Bytes(), meta); err != nil {
@@ -338,6 +363,44 @@ func (d *diskBucket) Store(ctx context.Context, meta *object.Metadata) error {
 		_ = err
 	}
 	return nil
+}
+
+func (d *diskBucket) touch(ctx context.Context, id *object.ID) {
+	mark := d.cache.Get(id.Hash())
+	if mark == nil {
+		return
+	}
+	if mark.LastAccess() <= 0 {
+		return
+	}
+
+	mark.SetLastAccess(time.Now().Unix())
+	mark.SetRefs(mark.Refs() + 1)
+
+	d.cache.Set(id.Hash(), *mark)
+
+	// 如果迁移开启的，则进行计算窗口期是否满足迁移配置
+	if d.opt.Migration != nil && d.opt.Migration.Enabled {
+		// promote check
+		d.promMu.Lock()
+		if d.opt.Migration.Promote.Window > 0 && time.Since(d.lastPromoteReset) > d.opt.Migration.Promote.Window {
+			d.hkPromote.Clear()
+			d.lastPromoteReset = time.Now()
+		}
+		d.promMu.Unlock()
+
+		d.hkPromote.Add(id.Bytes())
+		if d.hkPromote.Query(id.Bytes()) >= uint32(d.opt.Migration.Promote.MinHits) {
+			go func() {
+				// check migration interface
+				if d.migration != nil {
+					if err := d.migration.Promote(context.Background(), id, d); err != nil {
+						log.Warnf("promote %s failed: %v", id.Key(), err)
+					}
+				}
+			}()
+		}
+	}
 }
 
 // HasBad implements storage.Bucket.

@@ -69,7 +69,6 @@ type Migration interface {
 }
 
 type Migrator interface {
-	Migration
 	Storage
 
 	// SelectLayer selects the Bucket by the object ID and layer.
@@ -152,7 +151,7 @@ const (
 	RefsMask    = (1 << CounterBits) - 1
 )
 
-func NewMark(clock int64, refs uint64) Mark {
+func NewMark(clock, refs int64) Mark {
 	return Mark(clock)<<CounterBits | Mark(refs)
 }
 
