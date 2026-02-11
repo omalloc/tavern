@@ -107,6 +107,7 @@ func (pc *ProcessorChain) preCacheProcessor(proxyClient proxy.Proxy, store stora
 
 	caching := &Caching{
 		log:         log.Context(req.Context()),
+		ctx:         req.Context(),
 		proxyClient: proxyClient,
 		opt:         opt,
 		id:          objectID,
@@ -151,7 +152,8 @@ func (pc *ProcessorChain) postCacheProcessor(caching *Caching, req *http.Request
 		_, _ = io.Copy(io.Discard, resp.Body)
 	}
 
-	// TODO: incr index ref count.
+	// incr index ref count.
+	caching.bucket.Touch(caching.ctx, caching.id)
 
 	return resp, nil
 }

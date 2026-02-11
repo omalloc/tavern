@@ -78,9 +78,9 @@ func TestMigration_Promote(t *testing.T) {
 	// Lookup calls touch.
 
 	// Lookup 1
-	_, _ = b.Lookup(context.Background(), id)
+	b.Touch(context.Background(), id)
 	// Lookup 2
-	_, _ = b.Lookup(context.Background(), id)
+	b.Touch(context.Background(), id)
 
 	// Wait for async promote
 	time.Sleep(time.Second * 1)
