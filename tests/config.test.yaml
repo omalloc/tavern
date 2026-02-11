@@ -92,7 +92,7 @@ storage:
   selection_policy: hashring # hashring, roundrobin
   slice_size: 524288 # 1MB
   migration:
-    enabled: false # enable tiering bucket
+    enabled: true # enable tiering bucket
     promote:
       min_hits: 10 # window hits to promote
       window: 1m # 1 minute window
