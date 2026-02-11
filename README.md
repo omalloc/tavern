@@ -30,8 +30,8 @@ Other languages: [简体中文](README.zh-CN.md)
   - [x] Fuzzy refresh (Fuzzing fetch)
   - [x] Auto refresh
   - [x] Cache validation
-  - [ ] Hot migration
-  - [ ] Warm/cold split
+  - [x] Hot migration
+  - [x] Warm/cold split
   - [x] Upstream collapse request (request coalescing)
   - [ ] ~~Image compression adaptation (WebP support)~~
   - [x] Vary-based versioned cache (Vary cache)
@@ -53,7 +53,6 @@ Other languages: [简体中文](README.zh-CN.md)
 ## Ecosystem
 
 - Cache CRC verification service: [CRC-Center](https://github.com/omalloc/trust-receive)
-
 
 ## 🚀 Quick Start
 

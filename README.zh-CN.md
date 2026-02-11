@@ -30,8 +30,8 @@ Tavern 是一个 Go 实现的高性能 HTTP 缓存代理服务器，旨在利用
   - [x] 模糊刷新 (Fuzzing fetch)
   - [x] 自动刷新 (Auto Refresh)
   - [x] 缓存变更校验 (Cache Validation)
-  - [ ] 热点迁移 (Hot Migration)
-  - [ ] 冷热分离 (Warm Cold Split)
+  - [x] 热点迁移 (Hot Migration)
+  - [x] 冷热分离 (Warm Cold Split)
   - [x] 上游请求合并 (Upstream Collapse Request)
   - [ ] ~~图像压缩自适应 (Webp Support)~~
   - [x] Vary 分版本缓存 (Vary Cache)
@@ -53,7 +53,6 @@ Tavern 是一个 Go 实现的高性能 HTTP 缓存代理服务器，旨在利用
 ## 生态环境
 
 - 缓存校验服务: [缓存校验中心](https://github.com/omalloc/trust-receive)
-
 
 ## 🚀 快速开始 (Quick Start)
 
