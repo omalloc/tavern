@@ -37,7 +37,7 @@ func TestMigration_Promote(t *testing.T) {
 
 	cfg := &storage.BucketConfig{
 		Path:   basepath,
-		DBPath: filepath.Join(basepath, "/.indexdb"),
+		DBPath: filepath.Join(basepath, ".indexdb"),
 		DBType: "pebble",
 		Driver: "native",
 		Type:   "normal",
@@ -94,7 +94,7 @@ func TestMigration_Demote(t *testing.T) {
 
 	cfg := &storage.BucketConfig{
 		Path:   basepath,
-		DBPath: filepath.Join(basepath, "/.indexdb"),
+		DBPath: filepath.Join(basepath, ".indexdb"),
 		DBType: "pebble",
 		Driver: "native",
 		Type:   "normal",

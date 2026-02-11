@@ -478,7 +478,55 @@ func (d *diskBucket) ReadChunkFile(ctx context.Context, id *object.ID, index uin
 
 // Migrate implements [storage.Bucket].
 func (d *diskBucket) Migrate(ctx context.Context, id *object.ID, dest storage.Bucket) error {
-	panic("unimplemented")
+	md, err := d.indexdb.Get(ctx, id.Bytes())
+	if err != nil {
+		return err
+	}
+	clog := log.Context(ctx)
+
+	var moveErr error
+	md.Chunks.Range(func(x uint32) {
+		if moveErr != nil {
+			return
+		}
+
+		rf, _, err1 := d.ReadChunkFile(ctx, id, x)
+		if err1 != nil {
+			moveErr = err1
+			return
+		}
+		defer rf.Close()
+
+		wf, _, err2 := dest.WriteChunkFile(ctx, id, x)
+		if err2 != nil {
+			moveErr = err2
+			return
+		}
+		defer wf.Close()
+
+		if _, err2 = io.Copy(wf, rf); err2 != nil {
+			moveErr = err2
+		}
+	})
+
+	if moveErr != nil {
+		clog.Errorf("failed to move object %s chunks: %v", id.Key(), moveErr)
+		return moveErr
+	}
+
+	// 2. Store metadata in target
+	if err := dest.Store(ctx, md); err != nil {
+		clog.Errorf("failed to store metadata in target bucket for %s: %v", id.Key(), err)
+		return err
+	}
+
+	// 3. Discard locally
+	if err := d.discard(ctx, md); err != nil {
+		clog.Errorf("failed to discard object %s from source bucket: %v", id.Key(), err)
+		return err
+	}
+
+	return nil
 }
 
 // SetMigration implements storage.Bucket.
