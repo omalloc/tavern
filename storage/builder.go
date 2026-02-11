@@ -55,7 +55,7 @@ func mergeConfig(global *globalBucketOption, bucket *conf.Bucket) *storage.Bucke
 		copied.Driver = global.Driver
 	}
 	if copied.Type == "" {
-		copied.Type = "normal"
+		copied.Type = storage.TypeWarm
 	}
 	if copied.DBType == "" {
 		copied.DBType = global.DBType

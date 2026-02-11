@@ -20,6 +20,8 @@ type Selector interface {
 type Operation interface {
 	// Lookup retrieves the metadata for the specified object ID.
 	Lookup(ctx context.Context, id *object.ID) (*object.Metadata, error)
+	// Touch updates the last access time and refs count of the object.
+	Touch(ctx context.Context, id *object.ID)
 	// Store store the metadata for the specified object ID.
 	Store(ctx context.Context, meta *object.Metadata) error
 	// Exist checks if the object exists.

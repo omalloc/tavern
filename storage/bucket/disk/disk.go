@@ -39,6 +39,7 @@ type diskBucket struct {
 	weight           int
 	sharedkv         storage.SharedKV
 	indexdb          storage.IndexDB
+	hasMigration     bool
 	migration        storage.Migration
 	hkPromote        *heavykeeper.HeavyKeeper
 	lastPromoteReset time.Time
@@ -51,18 +52,19 @@ type diskBucket struct {
 
 func New(opt *storage.BucketConfig, sharedkv storage.SharedKV) (storage.Bucket, error) {
 	bucket := &diskBucket{
-		opt:       opt,
-		path:      opt.Path,
-		dbPath:    opt.DBPath,
-		driver:    opt.Driver,
-		storeType: opt.Type,
-		asyncLoad: opt.AsyncLoad,
-		weight:    100, // default weight
-		sharedkv:  sharedkv,
-		cache:     lru.New[object.IDHash, storage.Mark](opt.MaxObjectLimit),
-		fileFlag:  os.O_RDONLY,
-		fileMode:  fs.FileMode(0o755),
-		stop:      make(chan struct{}, 1),
+		opt:          opt,
+		path:         opt.Path,
+		dbPath:       opt.DBPath,
+		driver:       opt.Driver,
+		storeType:    opt.Type,
+		asyncLoad:    opt.AsyncLoad,
+		hasMigration: opt.Migration != nil && opt.Migration.Enabled,
+		weight:       100, // default weight
+		sharedkv:     sharedkv,
+		cache:        lru.New[object.IDHash, storage.Mark](opt.MaxObjectLimit),
+		fileFlag:     os.O_RDONLY,
+		fileMode:     fs.FileMode(0o755),
+		stop:         make(chan struct{}, 1),
 	}
 
 	if opt.Migration != nil && opt.Migration.Enabled {
@@ -321,6 +323,11 @@ func (d *diskBucket) Lookup(ctx context.Context, id *object.ID) (*object.Metadat
 	return md, err
 }
 
+// Touch implements [storage.Bucket].
+func (d *diskBucket) Touch(ctx context.Context, id *object.ID) {
+	d.touch(ctx, id)
+}
+
 // Remove implements storage.Bucket.
 func (d *diskBucket) Remove(ctx context.Context, id *object.ID) error {
 	return d.indexdb.Delete(ctx, id.Bytes())
@@ -380,7 +387,7 @@ func (d *diskBucket) touch(ctx context.Context, id *object.ID) {
 	d.cache.Set(id.Hash(), *mark)
 
 	// 如果迁移开启的，则进行计算窗口期是否满足迁移配置
-	if d.opt.Migration != nil && d.opt.Migration.Enabled {
+	if d.hasMigration {
 		// promote check
 		d.promMu.Lock()
 		if d.opt.Migration.Promote.Window > 0 && time.Since(d.lastPromoteReset) > d.opt.Migration.Promote.Window {

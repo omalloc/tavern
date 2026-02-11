@@ -39,6 +39,7 @@ type Caching struct {
 	processor    *ProcessorChain
 	opt          *cachingOption
 	req          *http.Request
+	ctx          context.Context
 	id           *object.ID
 	md           *object.Metadata
 	rootmd       *object.Metadata
