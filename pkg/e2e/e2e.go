@@ -16,7 +16,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 
-	"github.com/omalloc/tavern/internal/constants"
+	"github.com/omalloc/tavern/internal/protocol"
 )
 
 var (
@@ -92,7 +92,7 @@ func (e *E2E) Do(rewrite func(r *http.Request)) (*http.Response, error) {
 
 	method := e.req.Method
 
-	e.req.Header.Set(constants.InternalUpstreamAddr, e.ts.Listener.Addr().String())
+	e.req.Header.Set(protocol.InternalUpstreamAddr, e.ts.Listener.Addr().String())
 
 	if dumpReq.Load() && method != "PURGE" {
 		DumpReq(e.req)

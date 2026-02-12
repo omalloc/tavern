@@ -21,7 +21,7 @@ import (
 	"github.com/omalloc/tavern/api/defined/v1/storage"
 	"github.com/omalloc/tavern/api/defined/v1/storage/object"
 	"github.com/omalloc/tavern/contrib/log"
-	"github.com/omalloc/tavern/internal/constants"
+	"github.com/omalloc/tavern/internal/protocol"
 	"github.com/omalloc/tavern/metrics"
 	"github.com/omalloc/tavern/pkg/iobuf"
 	xhttp "github.com/omalloc/tavern/pkg/x/http"
@@ -92,15 +92,15 @@ func (c *Caching) setXCache(resp *http.Response) {
 		return
 	}
 
-	resp.Header.Set(constants.ProtocolCacheStatusKey, strings.Join([]string{c.cacheStatus.String(), "from", c.opt.Hostname, "(tavern/4.0)"}, " "))
+	resp.Header.Set(protocol.ProtocolCacheStatusKey, strings.Join([]string{c.cacheStatus.String(), "from", c.opt.Hostname, c.bucket.StoreType(), "(tavern/4.0)"}, " "))
 
 	metric := metrics.FromContext(c.req.Context())
 	metric.CacheStatus = c.cacheStatus.String()
 
 	// debug header
-	if trace := c.req.Header.Get(constants.InternalTraceKey); trace != "" {
-		resp.Header.Set(constants.InternalStoreUrl, strconv.FormatInt(int64(c.cacheStatus), 10))
-		resp.Header.Set(constants.InternalSwapfile, c.id.WPath(c.bucket.Path()))
+	if trace := c.req.Header.Get(protocol.InternalTraceKey); trace != "" {
+		resp.Header.Set(protocol.InternalStoreUrl, strconv.FormatInt(int64(c.cacheStatus), 10))
+		resp.Header.Set(protocol.InternalSwapfile, c.id.WPath(c.bucket.Path()))
 	}
 }
 
@@ -302,7 +302,7 @@ func cloneRequest(req *http.Request) *http.Request {
 	xhttp.RemoveHopByHopHeaders(proxyReq.Header)
 
 	// custom upstream addr
-	if upsAddr := req.Header.Get(constants.InternalUpstreamAddr); upsAddr != "" {
+	if upsAddr := req.Header.Get(protocol.InternalUpstreamAddr); upsAddr != "" {
 		proxyReq = proxyReq.WithContext(
 			selector.NewPeerContext(context.Background(), selector.NewPeer(selector.NewNode("http", upsAddr, map[string]string{}))),
 		)

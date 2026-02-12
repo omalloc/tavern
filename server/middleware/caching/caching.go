@@ -18,7 +18,7 @@ import (
 	"github.com/omalloc/tavern/api/defined/v1/storage"
 	"github.com/omalloc/tavern/api/defined/v1/storage/object"
 	"github.com/omalloc/tavern/contrib/log"
-	"github.com/omalloc/tavern/internal/constants"
+	"github.com/omalloc/tavern/internal/protocol"
 	"github.com/omalloc/tavern/pkg/iobuf"
 	"github.com/omalloc/tavern/pkg/iobuf/ioindexes"
 	xhttp "github.com/omalloc/tavern/pkg/x/http"
@@ -140,7 +140,7 @@ func Middleware(c *configv1.Middleware) (middleware.Middleware, func(), error) {
 
 				if resp != nil {
 					// set cache-staus header BYPASS
-					resp.Header.Set(constants.ProtocolCacheStatusKey, BYPASS)
+					resp.Header.Set(protocol.ProtocolCacheStatusKey, BYPASS)
 				}
 				return
 			}
@@ -260,7 +260,7 @@ func (c *Caching) getUpstreamReader(fromByte, toByte uint64, async bool) (io.Rea
 	// req.Header.Set("X-Request-ID", fmt.Sprintf("%s-%d", req.Header.Get(appctx.ProtocolRequestIDKey), fromByte)) // 附加 Request-ID suffix
 
 	// remove all internal header
-	req.Header.Del(constants.ProtocolCacheStatusKey)
+	req.Header.Del(protocol.ProtocolCacheStatusKey)
 
 	doSubRequest := func() (*http.Response, error) {
 		now := time.Now()
@@ -366,7 +366,7 @@ func (c *Caching) doProxy(req *http.Request, subRequest bool) (*http.Response, e
 	}
 
 	// parsed cache-control header
-	expiredAt, cacheable := xhttp.ParseCacheTime(constants.CacheTime, resp.Header)
+	expiredAt, cacheable := xhttp.ParseCacheTime(protocol.CacheTime, resp.Header)
 
 	// expire time
 	c.md.ExpiresAt = now.Add(expiredAt).Unix()
@@ -391,7 +391,7 @@ func (c *Caching) doProxy(req *http.Request, subRequest bool) (*http.Response, e
 
 			// Caching is disabled
 			// restoring the default behavior for error codes.
-			if resp.Header.Get(constants.InternalCacheErrCode) != constants.FlagOn {
+			if resp.Header.Get(protocol.InternalCacheErrCode) != protocol.FlagOn {
 				c.cacheable = false
 
 				copiedHeaders := make(http.Header)
@@ -469,7 +469,7 @@ func (c *Caching) flushbufferSlice(respRange xhttp.ContentRange) (iobuf.EventSuc
 
 				// trigger file crc check
 				// has InMemory store type skip crc check
-				if c.bucket.StoreType() == storage.TypeInMemory {
+				if c.bucket.Type() == storage.TypeInMemory {
 					return
 				}
 

@@ -27,7 +27,7 @@ type globalBucketOption struct {
 var bucketMap = map[string]func(opt *storage.BucketConfig, sharedkv storage.SharedKV) (storage.Bucket, error){
 	"empty":  empty.New,
 	"native": disk.New,   // disk is an alias of native
-	"memory": memory.New, // in-memory disk. restart as lost.
+	"memory": memory.New, // in-memory disk. restart as lost. @ storage.TypeInMemory
 }
 
 func NewBucket(opt *storage.BucketConfig, sharedkv storage.SharedKV) (storage.Bucket, error) {
@@ -55,6 +55,10 @@ func mergeConfig(global *globalBucketOption, bucket *conf.Bucket) *storage.Bucke
 		copied.Driver = global.Driver
 	}
 	if copied.Type == "" {
+		copied.Type = storage.TypeWarm
+	}
+	// replace normal to warm
+	if copied.Type == storage.TypeNormal {
 		copied.Type = storage.TypeWarm
 	}
 	if copied.DBType == "" {

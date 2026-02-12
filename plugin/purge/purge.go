@@ -13,7 +13,7 @@ import (
 	configv1 "github.com/omalloc/tavern/api/defined/v1/plugin"
 	storagev1 "github.com/omalloc/tavern/api/defined/v1/storage"
 	"github.com/omalloc/tavern/contrib/log"
-	"github.com/omalloc/tavern/internal/constants"
+	"github.com/omalloc/tavern/internal/protocol"
 	"github.com/omalloc/tavern/pkg/encoding"
 	"github.com/omalloc/tavern/plugin"
 	"github.com/omalloc/tavern/storage"
@@ -94,7 +94,7 @@ func (r *PurgePlugin) HandleFunc(next http.HandlerFunc) http.HandlerFunc {
 			return
 		}
 
-		storeUrl := req.Header.Get(constants.InternalStoreUrl)
+		storeUrl := req.Header.Get(protocol.InternalStoreUrl)
 		if storeUrl == "" {
 			storeUrl = req.URL.String()
 		}

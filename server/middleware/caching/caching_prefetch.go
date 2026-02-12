@@ -6,7 +6,7 @@ import (
 	"net/http"
 	"strconv"
 
-	"github.com/omalloc/tavern/internal/constants"
+	"github.com/omalloc/tavern/internal/protocol"
 	"github.com/omalloc/tavern/pkg/iobuf"
 	xhttp "github.com/omalloc/tavern/pkg/x/http"
 )
@@ -33,13 +33,13 @@ func (r *PrefetchProcessor) Lookup(c *Caching, req *http.Request) (bool, error) 
 }
 
 func (r *PrefetchProcessor) PreRequest(c *Caching, req *http.Request) (*http.Request, error) {
-	if key := req.Header.Get(constants.PrefetchCacheKey); key != "" {
+	if key := req.Header.Get(protocol.PrefetchCacheKey); key != "" {
 		if rawRange := req.Header.Get("Range"); rawRange != "" {
 			req.Header.Del("Range")
 			req = req.WithContext(context.WithValue(req.Context(), prefetchRangeKey{}, rawRange))
 		}
 		c.prefetch = true
-		req.Header.Del(constants.PrefetchCacheKey)
+		req.Header.Del(protocol.PrefetchCacheKey)
 		c.log.Debugf("prefetch request: %s %s", req.Method, req.URL.String())
 	}
 	return req, nil

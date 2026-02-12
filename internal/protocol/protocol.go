@@ -1,13 +1,15 @@
-package constants
+package protocol
 
 const AppName = "tavern"
 
 // define gw->backend Protocol constants
 const (
-	ProtocolRequestIDKey   = "X-Request-ID"
-	ProtocolCacheStatusKey = "X-Cache"
-	PrefetchCacheKey       = "X-Prefetch"
-	CacheTime              = "X-CacheTime"
+	ProtocolRequestIDKey     = "X-Request-ID"
+	ProtocolCacheStatusKey   = "X-Cache"
+	ProtocolForceStoreMemory = "X-FS-Mem"
+
+	PrefetchCacheKey = "X-Prefetch"
+	CacheTime        = "X-CacheTime"
 
 	InternalTraceKey         = "i-xtrace"
 	InternalStoreUrl         = "i-x-store-url"

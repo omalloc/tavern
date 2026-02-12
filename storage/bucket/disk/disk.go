@@ -372,7 +372,7 @@ func (d *diskBucket) Store(ctx context.Context, meta *object.Metadata) error {
 	return nil
 }
 
-func (d *diskBucket) touch(ctx context.Context, id *object.ID) {
+func (d *diskBucket) touch(_ context.Context, id *object.ID) {
 	mark := d.cache.Get(id.Hash())
 	if mark == nil {
 		return
@@ -397,7 +397,8 @@ func (d *diskBucket) touch(ctx context.Context, id *object.ID) {
 		d.promMu.Unlock()
 
 		d.hkPromote.Add(id.Bytes())
-		if d.hkPromote.Query(id.Bytes()) >= uint32(d.opt.Migration.Promote.MinHits) {
+		hits := d.hkPromote.Query(id.Bytes())
+		if hits >= uint32(d.opt.Migration.Promote.MinHits) {
 			go func() {
 				// check migration interface
 				if d.migration != nil {

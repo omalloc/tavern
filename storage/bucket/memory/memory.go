@@ -46,9 +46,9 @@ func New(opt *storage.BucketConfig, sharedkv storage.SharedKV) (storage.Bucket, 
 	mb := &memoryBucket{
 		fs:        vfs.NewMem(),
 		path:      "/",
-		driver:    opt.Driver,
+		driver:    opt.Driver, // storage.TypeInMemory
 		dbPath:    storage.TypeInMemory,
-		storeType: storage.TypeInMemory,
+		storeType: opt.Type,
 		weight:    100, // default weight
 		sharedkv:  sharedkv,
 		cache:     lru.New[object.IDHash, storage.Mark](opt.MaxObjectLimit), // in-memory object size

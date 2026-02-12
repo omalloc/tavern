@@ -7,7 +7,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 
-	"github.com/omalloc/tavern/internal/constants"
+	"github.com/omalloc/tavern/internal/protocol"
 	"github.com/omalloc/tavern/pkg/e2e"
 )
 
@@ -67,8 +67,8 @@ func TestErrCodeCache(t *testing.T) {
 		case1 := e2e.New("http://example.com.gslb.com/errcode/cache", e2e.RespCallback(func(w http.ResponseWriter, r *http.Request) {
 			payload := []byte(http.StatusText(http.StatusBadGateway))
 
-			w.Header().Set(constants.CacheTime, "30")           // 强制缓存30秒
-			w.Header().Set(constants.InternalCacheErrCode, "1") // 开启缓存错误状态码
+			w.Header().Set(protocol.CacheTime, "30")           // 强制缓存30秒
+			w.Header().Set(protocol.InternalCacheErrCode, "1") // 开启缓存错误状态码
 			w.Header().Set("Content-Length", strconv.Itoa(len(payload)))
 			w.WriteHeader(http.StatusBadGateway)
 			_, _ = w.Write(payload)
