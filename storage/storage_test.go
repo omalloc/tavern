@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	storagev1 "github.com/omalloc/tavern/api/defined/v1/storage"
 	"github.com/omalloc/tavern/api/defined/v1/storage/object"
 	"github.com/omalloc/tavern/conf"
 	"github.com/omalloc/tavern/contrib/log"
@@ -24,8 +25,8 @@ func TestSelect(t *testing.T) {
 		EvictionPolicy:  "lru",
 		SelectionPolicy: "hashring",
 		Buckets: []*conf.Bucket{
-			{Path: filepath.Join(dir, "/cache1"), Type: "normal"},
-			{Path: filepath.Join(dir, "/cache2"), Type: "normal"},
+			{Path: filepath.Join(dir, "/cache1"), Type: storagev1.TypeWarm},
+			{Path: filepath.Join(dir, "/cache2"), Type: storagev1.TypeWarm},
 		},
 	}, log.DefaultLogger)
 	if err != nil {

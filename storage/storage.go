@@ -31,7 +31,7 @@ type nativeStorage struct {
 	nopBucket    storage.Bucket
 	memoryBucket storage.Bucket
 	hotBucket    []storage.Bucket
-	normalBucket []storage.Bucket
+	warmlBucket  []storage.Bucket
 }
 
 func New(config *conf.Storage, logger log.Logger) (storage.Storage, error) {
@@ -54,7 +54,7 @@ func New(config *conf.Storage, logger log.Logger) (storage.Storage, error) {
 		nopBucket:    nopBucket,
 		memoryBucket: nil,
 		hotBucket:    make([]storage.Bucket, 0, len(config.Buckets)),
-		normalBucket: make([]storage.Bucket, 0, len(config.Buckets)),
+		warmlBucket:  make([]storage.Bucket, 0, len(config.Buckets)),
 	}
 
 	if err := n.reinit(config); err != nil {
@@ -102,8 +102,8 @@ func (n *nativeStorage) reinit(config *conf.Storage) error {
 		}
 
 		switch bucket.StoreType() {
-		case storage.TypeNormal:
-			n.normalBucket = append(n.normalBucket, bucket)
+		case storage.TypeNormal, storage.TypeWarm:
+			n.warmlBucket = append(n.warmlBucket, bucket)
 		case storage.TypeHot:
 			n.hotBucket = append(n.hotBucket, bucket)
 		case storage.TypeInMemory:
@@ -120,14 +120,14 @@ func (n *nativeStorage) reinit(config *conf.Storage) error {
 	// load lru
 	// load purge queue
 
-	if len(n.normalBucket) <= 0 {
+	if len(n.warmlBucket) <= 0 {
 		// no normal bucket, use nop bucket
 		if n.memoryBucket != nil {
-			n.normalBucket = append(n.normalBucket, n.memoryBucket)
+			n.warmlBucket = append(n.warmlBucket, n.memoryBucket)
 		}
 	}
 
-	n.selector = selector.New(n.normalBucket, config.SelectionPolicy)
+	n.selector = selector.New(n.warmlBucket, config.SelectionPolicy)
 
 	return nil
 }
@@ -145,7 +145,7 @@ func (n *nativeStorage) Rebuild(ctx context.Context, buckets []storage.Bucket) e
 
 // Buckets implements storage.Storage.
 func (n *nativeStorage) Buckets() []storage.Bucket {
-	return append(n.normalBucket, n.hotBucket...)
+	return append(n.warmlBucket, n.hotBucket...)
 }
 
 // PURGE implements storage.Storage.
@@ -248,7 +248,7 @@ func (n *nativeStorage) SharedKV() storage.SharedKV {
 func (n *nativeStorage) Close() error {
 	var errs []error
 	// close all buckets
-	for _, bucket := range n.normalBucket {
+	for _, bucket := range n.warmlBucket {
 		errs = append(errs, bucket.Close())
 	}
 
