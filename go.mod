@@ -22,6 +22,7 @@ require (
 	github.com/paulbellamy/ratecounter v0.2.0
 	github.com/prometheus/client_golang v1.23.2
 	github.com/prometheus/client_model v0.6.2
+	github.com/samber/lo v1.52.0
 	github.com/shirou/gopsutil/v4 v4.26.1
 	github.com/stretchr/testify v1.11.1
 	go.uber.org/zap v1.27.1

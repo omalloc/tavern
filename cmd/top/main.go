@@ -1,24 +1,26 @@
 package main
 
 import (
+	"bufio"
 	"encoding/json"
 	"flag"
 	"fmt"
 	"log"
 	"net/http"
+	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/dustin/go-humanize"
 	terminal "github.com/gizak/termui/v3"
 	"github.com/gizak/termui/v3/widgets"
+	"github.com/samber/lo"
 )
 
 var (
 	endpoint     = ""
 	tickInterval = time.Second * 1
-	startAt      = time.Now()
-	uptime       = time.Unix(1767060001, 0)
 )
 
 func init() {
@@ -47,6 +49,7 @@ func newDashboard() {
 	diskPercent := atomic.Uint64{} // mock
 	diskUsage := atomic.Uint64{}
 	diskTotal := atomic.Uint64{}
+	startedAt := atomic.Int64{}
 
 	// 高级监控指标 { 热点url 热点域名 热点磁盘 }
 	list := widgets.NewList()
@@ -57,42 +60,70 @@ func newDashboard() {
 	list.TextStyle.Fg = terminal.ColorYellow
 
 	client := &http.Client{
-		Timeout:   time.Second,
 		Transport: &http.Transport{},
 	}
 
-	graph, _ := http.NewRequest(http.MethodGet, endpoint, nil)
+	var (
+		dataMu        sync.RWMutex
+		latestData    = make(map[string]float64)
+		latestHotUrls []string
+	)
 
-	fetch := func() map[string]float64 {
-		resp, err := client.Do(graph)
-		if err != nil {
-			collected.Store(false)
-			return nil
-		}
-
-		if resp != nil {
-			if resp.StatusCode != http.StatusOK {
-				if resp.Body != nil {
-					_ = resp.Body.Close()
+	// Background SSE consumer
+	go func() {
+		for {
+			func() {
+				req, err := http.NewRequest(http.MethodGet, endpoint, nil)
+				if err != nil {
+					return
 				}
-				collected.Store(false)
-				return nil
-			}
+
+				resp, err := client.Do(req)
+				if err != nil {
+					collected.Store(false)
+					return
+				}
+				defer resp.Body.Close()
+
+				if resp.StatusCode != http.StatusOK {
+					collected.Store(false)
+					return
+				}
+
+				collected.Store(true)
+				reader := bufio.NewReader(resp.Body)
+				for {
+					line, err := reader.ReadString('\n')
+					if err != nil {
+						return
+					}
+					line = strings.TrimSpace(line)
+					if strings.HasPrefix(line, "data:") {
+						jsonStr := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
+						if jsonStr == "" {
+							continue
+						}
+
+						var rsp Graph
+						if err := json.Unmarshal([]byte(jsonStr), &rsp); err == nil {
+							dataMu.Lock()
+							latestData = rsp.Data
+							latestHotUrls = rsp.HotUrls
+							dataMu.Unlock()
+
+							startedAt.Store(rsp.StartedAt)
+							cpuPercent.Store(uint32(rsp.Data["cpu_percent"]))
+							memUsage.Store(uint64(rsp.Data["mem_usage"]))
+							memTotal.Store(uint64(rsp.Data["mem_total"]))
+							diskUsage.Store(uint64(rsp.Data["disk_usage"]))
+							diskTotal.Store(uint64(rsp.Data["disk_total"]))
+						}
+					}
+				}
+			}()
+			time.Sleep(time.Second) // Reconnect delay
 		}
-
-		collected.Store(true)
-		var rsp Graph
-		_ = json.NewDecoder(resp.Body).Decode(&rsp)
-
-		cpuPercent.Store(uint32(rsp.Data["cpu_percent"]))
-		memUsage.Store(uint64(rsp.Data["mem_usage"]))
-		memTotal.Store(uint64(rsp.Data["mem_total"]))
-		diskUsage.Store(uint64(rsp.Data["disk_usage"]))
-		diskTotal.Store(uint64(rsp.Data["disk_total"]))
-		list.Rows = rsp.HotUrls
-
-		return rsp.Data
-	}
+	}()
 
 	// 基础监控指标 { qps, cpu, memory }
 	metricGrid := terminal.NewGrid()
@@ -101,7 +132,7 @@ func newDashboard() {
 	banner, bannerDraw := func() (*widgets.Paragraph, func()) {
 		banner := widgets.NewParagraph()
 		banner.SetRect(0, 0, termWidth, 3)
-		banner.Title = "Tavern"
+		banner.Title = " Tavern    (PRESS q TO QUIT) "
 		banner.Border = true
 
 		textDraw := func() {
@@ -112,8 +143,10 @@ func newDashboard() {
 				status = "Connected"
 			}
 
+			startAt := time.UnixMilli(startedAt.Load())
+
 			banner.Text = fmt.Sprintf("%s | Sampling @ [%s](fg:blue) | [%s](%s) (%s) | Uptime %s",
-				endpoint, tickInterval.String(), status, color, startAt.Format(time.RFC1123), humanize.Time(uptime))
+				endpoint, tickInterval.String(), status, color, startAt.Format(time.RFC1123), humanize.Time(startAt))
 		}
 		textDraw()
 
@@ -128,10 +161,22 @@ func newDashboard() {
 		rater.TitleStyle.Fg = terminal.ColorCyan
 
 		draw := func() {
-			data := fetch()
+			dataMu.RLock()
+			data := make(map[string]float64, len(latestData))
+			for k, v := range latestData {
+				data[k] = v
+			}
+			hotUrls := make([]string, len(latestHotUrls))
+			copy(hotUrls, latestHotUrls)
+			dataMu.RUnlock()
 
 			rater.Text = fmt.Sprintf("\nRequests/sec: %d \nTotal: %d \n2xx : %d\n4xx : %d\n499 : %d\n5xx : %d",
 				int(data["total"]), int(data["total"]), int(data["2xx"]), int(data["4xx"]), int(data["499"]), int(data["5xx"]))
+
+			list.Rows = lo.Map(hotUrls, func(s string, i int) string {
+				parts := strings.Split(s, "@@")
+				return fmt.Sprintf("[%02d] LastAccess=%s %s ReqCount=%s", i, parts[1], parts[0], parts[2])
+			})
 		}
 
 		draw()
@@ -245,6 +290,7 @@ func newDashboard() {
 }
 
 type Graph struct {
-	Data    map[string]float64 `json:"data"`
-	HotUrls []string           `json:"hot_urls"`
+	Data      map[string]float64 `json:"data"`
+	HotUrls   []string           `json:"hot_urls"`
+	StartedAt int64              `json:"started_at"`
 }

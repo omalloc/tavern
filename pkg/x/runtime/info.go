@@ -1,9 +1,11 @@
 package runtime
 
 import (
+	"fmt"
 	"runtime"
 	"runtime/debug"
 	"strings"
+	"time"
 )
 
 type RuntimeInfo struct {
@@ -14,6 +16,7 @@ type RuntimeInfo struct {
 	VcsRevision string `json:"vcs.revision"`
 	VcsTime     string `json:"vcs.time"`
 	Dirty       bool   `json:"dirty"`
+	StartedAt   int64  `json:"started_at"`
 }
 
 var _ = ""
@@ -23,6 +26,7 @@ func init() {
 	BuildInfo.Dirty = true
 	BuildInfo.GoVersion = runtime.Version()
 	BuildInfo.GoArch = runtime.GOARCH
+	BuildInfo.StartedAt = time.Now().UnixMilli()
 
 	// -buildvcs=true / auto
 	if info, ok := debug.ReadBuildInfo(); ok {
@@ -42,4 +46,12 @@ func init() {
 			}
 		}
 	}
+}
+
+func (info RuntimeInfo) String() string {
+	return fmt.Sprintf(`Version: %s
+Commit: %s
+Built at: %s
+Dirty: %t`,
+		info.GoVersion, info.VcsRevision, info.VcsTime, info.Dirty)
 }
