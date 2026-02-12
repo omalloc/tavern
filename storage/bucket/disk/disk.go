@@ -458,12 +458,12 @@ func (d *diskBucket) Path() string {
 
 func (d *diskBucket) TopK(k int) []string {
 	arr := d.cache.TopK(k)
-	ret := make([]string, len(arr))
+	ret := make([]string, 0, len(arr))
 	for i := range arr {
 		mark := d.cache.Peek(arr[i])
 		md, _ := d.indexdb.Get(context.Background(), arr[i][:])
 		if md != nil {
-			ret[i] = fmt.Sprintf("%s@@%s@@%d", md.ID.Path(), time.Unix(int64(mark.LastAccess()), 0).Format(time.DateTime), mark.Refs())
+			ret = append(ret, fmt.Sprintf("%s@@%s@@%d", md.ID.Path(), time.Unix(int64(mark.LastAccess()), 0).Format(time.DateTime), mark.Refs()))
 		}
 	}
 	return ret

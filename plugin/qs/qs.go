@@ -100,7 +100,7 @@ func (qs *QsPlugin) HandleFunc(next http.HandlerFunc) http.HandlerFunc {
 // AddRouter implements plugin.Plugin.
 func (qs *QsPlugin) AddRouter(router *http.ServeMux) {
 
-	router.Handle("/plugin/store/disk", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	router.Handle("/plugin/qs/disk", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		buckets := storage.Current().Buckets()
 
 		bucketObjectCounter := make(map[string]uint64, len(buckets))
@@ -115,7 +115,7 @@ func (qs *QsPlugin) AddRouter(router *http.ServeMux) {
 		_, _ = w.Write(payload)
 	}))
 
-	router.Handle("/plugin/store/object/simple", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	router.Handle("/plugin/qs/object/simple", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		getHash := r.URL.Query().Get("hash") != ""
 
 		buckets := storage.Current().Buckets()
@@ -157,7 +157,7 @@ func (qs *QsPlugin) AddRouter(router *http.ServeMux) {
 	}))
 
 	// get this device's service domains
-	router.Handle("/plugin/store/service-domains", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	router.Handle("/plugin/qs/service-domains", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		sharedKV := storage.Current().SharedKV()
 		// type map[domain]counter
 		domainMap := make(map[string]uint32)
