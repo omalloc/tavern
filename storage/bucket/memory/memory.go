@@ -2,7 +2,6 @@ package memory
 
 import (
 	"context"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -227,9 +226,13 @@ func (m *memoryBucket) Path() string {
 // TopK implements [storage.Bucket].
 func (m *memoryBucket) TopK(k int) []string {
 	arr := m.cache.TopK(k)
-	ret := make([]string, len(arr))
+	ret := make([]string, 0, len(arr))
 	for i := range arr {
-		ret[i] = hex.EncodeToString(arr[i][:])
+		mark := m.cache.Peek(arr[i])
+		md, _ := m.indexdb.Get(context.Background(), arr[i][:])
+		if md != nil {
+			ret = append(ret, fmt.Sprintf("%s@@%s@@%d", md.ID.Path(), time.Unix(int64(mark.LastAccess()), 0).Format(time.DateTime), mark.Refs()))
+		}
 	}
 	return ret
 }

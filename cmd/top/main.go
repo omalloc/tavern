@@ -173,10 +173,7 @@ func newDashboard() {
 			rater.Text = fmt.Sprintf("\nRequests/sec: %d \nTotal: %d \n2xx : %d\n4xx : %d\n499 : %d\n5xx : %d",
 				int(data["total"]), int(data["total"]), int(data["2xx"]), int(data["4xx"]), int(data["499"]), int(data["5xx"]))
 
-			list.Rows = lo.Map(hotUrls, func(s string, i int) string {
-				parts := strings.Split(s, "@@")
-				return fmt.Sprintf("[%02d] LastAccess=%s %s ReqCount=%s", i, parts[1], parts[0], parts[2])
-			})
+			list.Rows = lo.Filter(lo.Map(hotUrls, toMap), filter)
 		}
 
 		draw()
@@ -287,6 +284,21 @@ func newDashboard() {
 			terminal.Render(banner, metricGrid, list)
 		}
 	}
+}
+
+func filter(s string, _ int) bool {
+	if s == "" {
+		return false
+	}
+	return true
+}
+
+func toMap(s string, i int) string {
+	parts := strings.Split(s, "@@")
+	if len(parts) != 3 {
+		return ""
+	}
+	return fmt.Sprintf("[%02d] LastAccess=%s %s ReqCount=%s", i, parts[1], parts[0], parts[2])
 }
 
 type Graph struct {
