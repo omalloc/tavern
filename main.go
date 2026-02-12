@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"flag"
+	"fmt"
 	stdlog "log"
 	"net/url"
 	"os"
@@ -46,12 +47,15 @@ var (
 	flagConf string = "config.yaml"
 	// flagVerbose is the verbose flag.
 	flagVerbose bool
+	// flagVersion is the version flag.
+	flagVersion bool
 )
 
 func init() {
 	// init flag
 	flag.StringVar(&flagConf, "c", "config.yaml", "config file path")
 	flag.BoolVar(&flagVerbose, "v", false, "enable verbose log")
+	flag.BoolVar(&flagVersion, "V", false, "show version info")
 
 	// init global encoding
 	encoding.SetDefaultCodec(json.JSONCodec{})
@@ -70,6 +74,11 @@ func init() {
 
 func main() {
 	flag.Parse()
+
+	if flagVersion {
+		fmt.Println(runtime.BuildInfo.String())
+		return
+	}
 
 	c := config.New[conf.Bootstrap](config.WithSource(file.NewSource(flagConf)))
 	defer c.Close()

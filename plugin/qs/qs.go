@@ -18,6 +18,7 @@ import (
 	"github.com/omalloc/tavern/api/defined/v1/storage/object"
 	"github.com/omalloc/tavern/contrib/log"
 	"github.com/omalloc/tavern/metrics"
+	"github.com/omalloc/tavern/pkg/x/runtime"
 	"github.com/omalloc/tavern/plugin"
 	"github.com/omalloc/tavern/storage"
 	"github.com/prometheus/client_golang/prometheus"
@@ -29,8 +30,9 @@ import (
 var _ configv1.Plugin = (*QsPlugin)(nil)
 
 type Graph struct {
-	Data    map[string]float64 `json:"data"`
-	HotUrls []string           `json:"hot_urls"`
+	Data      map[string]float64 `json:"data"`
+	HotUrls   []string           `json:"hot_urls"`
+	StartedAt int64              `json:"started_at"`
 }
 
 type SimpleMetadata struct {
@@ -180,30 +182,61 @@ func (qs *QsPlugin) AddRouter(router *http.ServeMux) {
 	}))
 
 	router.Handle("/plugin/qs/graph", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		qs.touchOrStart()
+		// Set headers for SSE
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.Header().Set("Cache-Control", "no-cache")
+		w.Header().Set("Connection", "keep-alive")
+		w.Header().Set("Access-Control-Allow-Origin", "*")
 
-		data := qs.collectRequestsCode()
-
-		qs.mu.RLock()
-		hotUrls := make([]string, len(qs.hotUrls))
-		copy(hotUrls, qs.hotUrls)
-		qs.mu.RUnlock()
-
-		g := Graph{
-			Data:    data,
-			HotUrls: hotUrls,
-		}
-
-		buf, err := json.Marshal(g)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+		flusher, ok := w.(http.Flusher)
+		if !ok {
+			http.Error(w, "Streaming unsupported!", http.StatusInternalServerError)
 			return
 		}
 
-		w.Header().Set("Content-Type", "application/json")
-		w.Header().Set("Content-Length", strconv.Itoa(len(buf)))
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write(buf)
+		// check if client is still connected
+		if r.Context().Err() != nil {
+			return
+		}
+
+		// send initial data
+		qs.touchOrStart()
+
+		ticker := time.NewTicker(time.Second)
+		defer ticker.Stop()
+
+		for {
+			select {
+			case <-r.Context().Done():
+				return
+			case <-ticker.C:
+				qs.touchOrStart()
+
+				data := qs.collectRequestsCode()
+
+				qs.mu.RLock()
+				hotUrls := make([]string, len(qs.hotUrls))
+				copy(hotUrls, qs.hotUrls)
+				qs.mu.RUnlock()
+
+				g := Graph{
+					Data:      data,
+					StartedAt: runtime.BuildInfo.StartedAt,
+					HotUrls:   hotUrls,
+				}
+
+				buf, err := json.Marshal(g)
+				if err != nil {
+					continue
+				}
+
+				_, err = fmt.Fprintf(w, "data: %s\n\n", buf)
+				if err != nil {
+					return
+				}
+				flusher.Flush()
+			}
+		}
 	}))
 }
 
@@ -244,6 +277,8 @@ func (qs *QsPlugin) touchOrStart() {
 	go qs.tickRequestsPerSecond(ctx)
 	// start the ticker to collect CPU and memory usage metrics
 	go qs.tickUsage(ctx)
+	// start the ticker to collect hot keys metrics
+	go qs.tickHotKeys(ctx)
 	// start the monitor to stop the collectors if no requests for a while
 	go qs.tickMonitor(ctx)
 }
@@ -305,7 +340,7 @@ func (qs *QsPlugin) tickRequestsPerSecond(ctx context.Context) {
 		case <-qs.stopCh:
 			return
 		case <-ticker.C:
-			log.Info("qs tickRequestsPerSecond")
+
 			familys, err := prometheus.DefaultGatherer.Gather()
 			if err != nil {
 				continue
@@ -344,7 +379,19 @@ func (qs *QsPlugin) tickRequestsPerSecond(ctx context.Context) {
 }
 
 func (qs *QsPlugin) tickUsage(ctx context.Context) {
-	buckets := storage.Current().Buckets()
+	collect := func() {
+		percent, err := cpu.Percent(0, false)
+		if err == nil && len(percent) > 0 {
+			qs.cpuPercent.Store(uint32(percent[0]))
+		}
+
+		vmem, _ := mem.VirtualMemory()
+		qs.memUsage.Store(vmem.Used)
+		qs.memTotal.Store(vmem.Total)
+	}
+
+	// collect once at the beginning
+	collect()
 
 	for {
 		select {
@@ -352,38 +399,54 @@ func (qs *QsPlugin) tickUsage(ctx context.Context) {
 			return
 		case <-qs.stopCh:
 			return
-		case <-time.Tick(time.Second):
-			log.Info("qs tickUsage")
-			percent, err := cpu.Percent(0, false)
-			if err == nil && len(percent) > 0 {
-				qs.cpuPercent.Store(uint32(percent[0]))
+		case <-time.Tick(time.Second * 2):
+			collect()
+		}
+	}
+}
+
+func (qs *QsPlugin) tickHotKeys(ctx context.Context) {
+
+	buckets := storage.Current().Buckets()
+
+	collectBucketMetrics := func() {
+		diskUsage := uint64(0)
+		diskTotal := uint64(0)
+
+		hotkeys := make([]string, 0, len(buckets)*10)
+		for _, bucket := range buckets {
+			if bucket.StoreType() == storagev1.TypeInMemory {
+				continue
 			}
 
-			vmem, _ := mem.VirtualMemory()
-			qs.memUsage.Store(vmem.Used)
-			qs.memTotal.Store(vmem.Total)
+			usage, _ := disk.Usage(bucket.Path())
+			diskUsage += usage.Used
+			diskTotal += usage.Total
 
-			diskUsage := uint64(0)
-			diskTotal := uint64(0)
-			hotkeys := make([]string, 0, len(buckets)*10)
-			for _, bucket := range buckets {
-				if bucket.StoreType() == storagev1.TypeInMemory {
-					continue
-				}
+			keys := bucket.TopK(10)
 
-				usage, _ := disk.Usage(bucket.Path())
-				diskUsage += usage.Used
-				diskTotal += usage.Total
+			hotkeys = append(hotkeys, keys...)
+		}
 
-				hotkeys = append(hotkeys, bucket.TopK(10)...)
-			}
+		qs.diskUsage.Store(diskUsage)
+		qs.diskTotal.Store(diskTotal)
 
-			qs.diskUsage.Store(diskUsage)
-			qs.diskTotal.Store(diskTotal)
+		qs.mu.Lock()
+		qs.hotUrls = hotkeys
+		qs.mu.Unlock()
+	}
 
-			qs.mu.Lock()
-			qs.hotUrls = hotkeys
-			qs.mu.Unlock()
+	// collect once at the beginning
+	collectBucketMetrics()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-qs.stopCh:
+			return
+		case <-time.Tick(time.Second * 5):
+			collectBucketMetrics()
 		}
 	}
 }

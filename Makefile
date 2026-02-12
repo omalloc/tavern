@@ -17,8 +17,9 @@ endif
 LDFLAGS=-ldflags "-w -s -extldflags=-static"
 
 default:
-	make clean
-	make build
+	@make clean
+	@make build
+	@make toolchain
 
 .PHONY: install
 install:
@@ -31,6 +32,7 @@ build:
 .PHONY: toolchain
 toolchain:
 	@env CGO_ENABLED=0 go build ${LDFLAGS} -o bin/tq cmd/tq/main.go
+	@env CGO_ENABLED=0 go build ${LDFLAGS} -o bin/ttop cmd/top/main.go
 
 .PHONY: run
 run:
