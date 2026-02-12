@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/omalloc/tavern/contrib/log"
-	"github.com/omalloc/tavern/internal/constants"
+	"github.com/omalloc/tavern/internal/protocol"
 )
 
 type requestMetricKey struct{}
@@ -53,7 +53,7 @@ func newContext(ctx context.Context, metric *RequestMetric) context.Context {
 }
 
 func MustParseRequestID(h http.Header) string {
-	id := h.Get(constants.ProtocolRequestIDKey)
+	id := h.Get(protocol.ProtocolRequestIDKey)
 	// protocol request id header not found, generate a new one
 	if id == "" {
 		return generateRequestID()

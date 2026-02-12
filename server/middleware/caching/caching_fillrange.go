@@ -7,7 +7,7 @@ import (
 	"net/http"
 	"strconv"
 
-	"github.com/omalloc/tavern/internal/constants"
+	"github.com/omalloc/tavern/internal/protocol"
 	"github.com/omalloc/tavern/pkg/iobuf"
 	xhttp "github.com/omalloc/tavern/pkg/x/http"
 )
@@ -189,7 +189,7 @@ func (f *fillRange) fill(c *Caching, req *http.Request, rawRange string) *http.R
 }
 
 func parseFillPercent(h http.Header, def uint64) uint64 {
-	fp := h.Get(constants.InternalFillRangePercent)
+	fp := h.Get(protocol.InternalFillRangePercent)
 	if fp != "" {
 		p, err := strconv.ParseUint(fp, 10, 64)
 		if err != nil {

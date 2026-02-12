@@ -6,7 +6,7 @@ import (
 
 	configv1 "github.com/omalloc/tavern/api/defined/v1/plugin"
 	"github.com/omalloc/tavern/contrib/log"
-	"github.com/omalloc/tavern/internal/constants"
+	"github.com/omalloc/tavern/internal/protocol"
 )
 
 type Registry interface {
@@ -49,5 +49,5 @@ func NewRegistry() Registry {
 }
 
 func fmtName(name string) string {
-	return strings.ToLower(fmt.Sprintf("%s.plugin.%s", constants.AppName, name))
+	return strings.ToLower(fmt.Sprintf("%s.plugin.%s", protocol.AppName, name))
 }

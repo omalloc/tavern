@@ -12,7 +12,7 @@ import (
 var ErrKeyNotFound = errors.New("key not found")
 
 const (
-	TypeInMemory = "inmemory"
+	TypeInMemory = "memory"
 	TypeNormal   = "normal" // normal, warm 同一个
 	TypeWarm     = "warm"   // normal, warm 同一个
 	TypeCold     = "cold"
