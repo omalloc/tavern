@@ -40,7 +40,7 @@ func TestMigration_Promote(t *testing.T) {
 		DBPath: filepath.Join(basepath, ".indexdb"),
 		DBType: "pebble",
 		Driver: "native",
-		Type:   "normal",
+		Type:   storage.TypeWarm,
 		Migration: &storage.MigrationConfig{
 			Enabled: true,
 			Promote: storage.PromoteConfig{
@@ -97,7 +97,7 @@ func TestMigration_Demote(t *testing.T) {
 		DBPath: filepath.Join(basepath, ".indexdb"),
 		DBType: "pebble",
 		Driver: "native",
-		Type:   "normal",
+		Type:   storage.TypeWarm,
 		Migration: &storage.MigrationConfig{
 			Enabled: true,
 			Demote: storage.DemoteConfig{

@@ -20,7 +20,7 @@ func newTestBucket(t *testing.T, basepath string) storagev1.Bucket {
 	bucket, err := disk.New(&storagev1.BucketConfig{
 		Path:      basepath,
 		Driver:    "native",
-		Type:      "normal",
+		Type:      storagev1.TypeWarm,
 		DBType:    "pebble",
 		DBPath:    path.Join(basepath, ".indexdb"),
 		AsyncLoad: false,
