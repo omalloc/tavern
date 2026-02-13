@@ -7,6 +7,7 @@ const (
 	ProtocolRequestIDKey     = "X-Request-ID"
 	ProtocolCacheStatusKey   = "X-Cache"
 	ProtocolForceStoreMemory = "X-FS-Mem"
+	ProtocolLayerKey         = "XT-LAYER"
 
 	PrefetchCacheKey = "X-Prefetch"
 	CacheTime        = "X-CacheTime"
@@ -23,4 +24,10 @@ const (
 const (
 	FlagOn  = "1" // gateway control flag ON
 	FlagOff = "0" // gateway control flag OFF
+)
+
+const (
+	Layer1 = "1"
+	Layer2 = "2"
+	Layer3 = "3"
 )

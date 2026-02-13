@@ -301,6 +301,9 @@ func cloneRequest(req *http.Request) *http.Request {
 	xhttp.CopyHeader(proxyReq.Header, req.Header)
 	xhttp.RemoveHopByHopHeaders(proxyReq.Header)
 
+	// set lifecycle header
+	proxyReq.Header.Set(protocol.ProtocolLayerKey, protocol.Layer2)
+
 	// custom upstream addr
 	if upsAddr := req.Header.Get(protocol.InternalUpstreamAddr); upsAddr != "" {
 		proxyReq = proxyReq.WithContext(
