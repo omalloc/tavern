@@ -171,7 +171,7 @@ func newDashboard() {
 			dataMu.RUnlock()
 
 			rater.Text = fmt.Sprintf("\nRequests/sec: %d \nTotal: %d \n2xx : %d\n4xx : %d\n499 : %d\n5xx : %d",
-				int(data["total"]), int(data["total"]), int(data["2xx"]), int(data["4xx"]), int(data["499"]), int(data["5xx"]))
+				int(data["rps"]), int(data["total"]), int(data["2xx"]), int(data["4xx"]), int(data["499"]), int(data["5xx"]))
 
 			list.Rows = lo.Filter(lo.Map(hotUrls, toMap), filter)
 		}

@@ -252,6 +252,10 @@ func (qs *QsPlugin) Stop(context.Context) error {
 
 	qs.stopCh <- struct{}{}
 
+	if qs.cancel != nil {
+		qs.cancel()
+	}
+
 	return nil
 }
 
@@ -329,6 +333,8 @@ func (qs *QsPlugin) tickRequestsPerSecond(ctx context.Context) {
 		"503": {Alpha: 0.3},
 		"504": {Alpha: 0.3},
 	}
+	totalSmoother := &metrics.CounterSmoother{Alpha: 0.3}
+	lastTotal := float64(0)
 
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
@@ -366,6 +372,12 @@ func (qs *QsPlugin) tickRequestsPerSecond(ctx context.Context) {
 					}
 				}
 			}
+			rps := totalSmoother.Update(totalCounter)
+			if totalCounter <= lastTotal {
+				_ = totalSmoother.Update(0)
+				rps = 0
+			}
+			lastTotal = totalCounter
 
 			// 使用写锁更新共享数据
 			qs.mu.Lock()
@@ -373,6 +385,7 @@ func (qs *QsPlugin) tickRequestsPerSecond(ctx context.Context) {
 				qs.smoothedData[code] = value
 			}
 			qs.smoothedData["total"] = totalCounter
+			qs.smoothedData["rps"] = rps
 			qs.mu.Unlock()
 		}
 	}
@@ -439,13 +452,16 @@ func (qs *QsPlugin) tickHotKeys(ctx context.Context) {
 	// collect once at the beginning
 	collectBucketMetrics()
 
+	ticker := time.NewTicker(5 * time.Second)
+	defer ticker.Stop()
+
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-qs.stopCh:
 			return
-		case <-time.Tick(time.Second * 5):
+		case <-ticker.C:
 			collectBucketMetrics()
 		}
 	}
@@ -461,6 +477,8 @@ func (qs *QsPlugin) collectRequestsCode() map[string]float64 {
 		switch code {
 		case "total":
 			data["total"] = smoothedValue
+		case "rps":
+			data["rps"] = smoothedValue
 		case "200", "206":
 			data["2xx"] += smoothedValue
 		case "400", "401", "403", "404":
