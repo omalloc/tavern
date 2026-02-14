@@ -10,6 +10,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 
 	"github.com/andybalholm/brotli"
@@ -27,6 +28,37 @@ var (
 	buf      = make([]byte, bufSize)
 )
 
+const testConfig = `{
+  "type": "chash",
+  "nodes": [
+    {
+      "url": "http://127.0.0.1:9000",
+      "weight": 1,
+      "enabled": true,
+      "metadata": {
+        "region": "xiamen",
+        "zone": "a"
+      }
+    },
+    {
+      "url": "http://127.0.0.1:9001",
+      "weight": 1,
+      "enabled": true,
+      "metadata": {
+        "region": "quanzhou",
+        "zone": "b"
+      }
+    }
+  ],
+  "health_check": {
+    "enabled": true,
+    "interval": 10,
+    "timeout": 3,
+    "path": "/health"
+  }
+}
+`
+
 func init() {
 	flag.IntVar(&flagPort, "p", 8000, "usage port")
 
@@ -39,6 +71,13 @@ func main() {
 	flag.Parse()
 
 	mux := http.NewServeMux()
+
+	mux.Handle("/api/configs/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Content-Length", strconv.Itoa(len(testConfig)))
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(testConfig))
+	}))
 
 	mux.Handle("/path/to/", http.StripPrefix("/path/to", http.FileServer(http.Dir("./files"))))
 
