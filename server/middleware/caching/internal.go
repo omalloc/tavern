@@ -174,6 +174,7 @@ func getContents(c *Caching, reqChunks []uint32, from uint32) (io.ReadCloser, in
 		if err := checkChunkSize(c, f, idx); err == nil {
 			return f, 1, nil
 		}
+		_ = f.Close()
 	}
 
 	// find all hit block.
@@ -192,6 +193,7 @@ func getContents(c *Caching, reqChunks []uint32, from uint32) (io.ReadCloser, in
 		chunkFile, _ := getSliceChunkFile(c, availableChunks[index])
 		if chunkFile != nil {
 			if err := checkChunkSize(c, chunkFile, idx); err != nil {
+				_ = chunkFile.Close()
 				_ = c.bucket.Discard(context.Background(), c.id)
 				return nil, 0, err
 			}
@@ -202,6 +204,7 @@ func getContents(c *Caching, reqChunks []uint32, from uint32) (io.ReadCloser, in
 			// Request is automatically cloned by getUpstreamReader
 			reader, err := c.getUpstreamReader(fromByte, toByte, true)
 			if err != nil {
+				_ = chunkFile.Close()
 				return nil, 0, err
 			}
 
