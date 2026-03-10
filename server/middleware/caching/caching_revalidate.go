@@ -30,12 +30,12 @@ func calculateSoftTTL(respUnix, expiresAt int64, fuzzyRate float64) int64 {
 	if hardTTL <= 0 {
 		return expiresAt
 	}
-	
+
 	// Ensure fuzzy rate is in valid range (0, 1.0]
 	if fuzzyRate <= 0 || fuzzyRate > 1 {
 		fuzzyRate = 0.8 // default to 0.8 if invalid
 	}
-	
+
 	softTTL := int64(float64(hardTTL) * fuzzyRate)
 	return respUnix + softTTL
 }
@@ -48,22 +48,22 @@ func shouldTriggerFuzzyRefresh(now, softTTL, hardTTL int64) bool {
 		// Before soft TTL, no refresh needed
 		return false
 	}
-	
+
 	if now >= hardTTL {
 		// After hard TTL, force refresh (handled by hasExpired)
 		return false
 	}
-	
+
 	// In the fuzzy refresh zone [soft_ttl, hard_ttl)
 	// Calculate linear probability: P = (now - soft_ttl) / (hard_ttl - soft_ttl)
 	totalWindow := float64(hardTTL - softTTL)
 	if totalWindow <= 0 {
 		return false
 	}
-	
+
 	elapsed := float64(now - softTTL)
 	probability := elapsed / totalWindow
-	
+
 	// Random trigger based on probability using math/rand/v2 which is thread-safe
 	return rand.Float64() < probability
 }
@@ -72,14 +72,14 @@ func (r *RevalidateProcessor) Lookup(c *Caching, req *http.Request) (bool, error
 	if c.md == nil {
 		return false, nil
 	}
-	
+
 	now := time.Now().Unix()
 	hardTTL := c.md.ExpiresAt
-	
+
 	// Fuzzy Refresh Logic
 	if c.opt.FuzzyRefresh && c.opt.FuzzyRefreshRate > 0 {
 		softTTL := calculateSoftTTL(c.md.RespUnix, c.md.ExpiresAt, c.opt.FuzzyRefreshRate)
-		
+
 		// Check if we're in the fuzzy refresh zone [soft_ttl, hard_ttl)
 		if now >= softTTL && now < hardTTL {
 			// We're in the fuzzy refresh zone
@@ -90,17 +90,17 @@ func (r *RevalidateProcessor) Lookup(c *Caching, req *http.Request) (bool, error
 						c.id.Key(),
 						time.Unix(softTTL, 0).Format(time.DateTime),
 						time.Unix(hardTTL, 0).Format(time.DateTime))
-					
+
 					// Trigger async revalidation in background
 					go r.asyncRevalidate(c, req)
 				}
 			}
-			
+
 			// Still return cache hit - serve stale content while refreshing
 			return true, nil
 		}
 	}
-	
+
 	// check if metadata is expired (hard expiration).
 	if !hasExpired(c.md) {
 		return true, nil
@@ -236,10 +236,10 @@ func (r *RevalidateProcessor) asyncRevalidate(c *Caching, req *http.Request) {
 	// Create a background context with timeout
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	
+
 	// Clone the request for background processing
 	bgReq := req.Clone(ctx)
-	
+
 	// Set conditional headers for revalidation
 	if c.md.Headers.Get("ETag") != "" {
 		bgReq.Header.Set("If-None-Match", c.md.Headers.Get("ETag"))
@@ -247,27 +247,28 @@ func (r *RevalidateProcessor) asyncRevalidate(c *Caching, req *http.Request) {
 	if c.md.Headers.Get("Last-Modified") != "" {
 		bgReq.Header.Set("If-Modified-Since", c.md.Headers.Get("Last-Modified"))
 	}
-	
+
 	// Remove Range header for full object revalidation
 	bgReq.Header.Del("Range")
-	
+
 	c.log.Debugf("async fuzzy refresh started for object: %s", c.id.Key())
-	
+
 	// Perform the upstream request
 	resp, err := c.doProxy(bgReq, false)
+	defer closeBody(resp) // always check resp nil
+
 	if err != nil {
 		c.log.Warnf("async fuzzy refresh failed for object %s: %v", c.id.Key(), err)
 		return
 	}
-	defer closeBody(resp)
-	
+
 	// Handle 304 Not Modified - just update freshness metadata
 	if resp.StatusCode == http.StatusNotModified {
 		r.freshness(c, resp)
 		c.log.Debugf("async fuzzy refresh completed (304) for object: %s", c.id.Key())
 		return
 	}
-	
+
 	// For non-304 responses, the content has changed
 	// The doProxy method has already wrapped the response body with cache writing logic
 	// We need to consume the body to trigger the cache update
@@ -282,7 +283,7 @@ func (r *RevalidateProcessor) asyncRevalidate(c *Caching, req *http.Request) {
 		c.log.Debugf("async fuzzy refresh completed (%d) for object: %s - content updated", resp.StatusCode, c.id.Key())
 		return
 	}
-	
+
 	c.log.Debugf("async fuzzy refresh completed (%d) for object: %s", resp.StatusCode, c.id.Key())
 }
 
