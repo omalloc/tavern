@@ -192,7 +192,7 @@ func getContents(c *Caching, reqChunks []uint32, from uint32) (io.ReadCloser, in
 	if index < len(availableChunks) {
 		chunkFile, _ := getSliceChunkFile(c, availableChunks[index])
 		if chunkFile != nil {
-			if err := checkChunkSize(c, chunkFile, idx); err != nil {
+			if err := checkChunkSize(c, chunkFile, availableChunks[index]); err != nil {
 				_ = chunkFile.Close()
 				_ = c.bucket.Discard(context.Background(), c.id)
 				return nil, 0, err
