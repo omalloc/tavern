@@ -10,3 +10,14 @@ func (rc AllCloser) Close() error {
 	}
 	return nil
 }
+
+type nopCloser struct {
+}
+
+func NopCloser() io.Closer {
+	return &nopCloser{}
+}
+
+func (nopCloser) Close() error {
+	return nil
+}

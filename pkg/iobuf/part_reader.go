@@ -16,7 +16,7 @@ type partsReader struct {
 }
 
 // PartsReadCloser combines multiple io.ReadCloser instances into a single io.ReadCloser, with optional final cleanup logic.
-func PartsReadCloser(closer io.Closer, readers ...io.ReadCloser) io.ReadCloser {
+func PartsReadCloser(optionalCloser io.Closer, readers ...io.ReadCloser) io.ReadCloser {
 	// if no more reader
 	if len(readers) <= 0 {
 		return nil
@@ -24,7 +24,7 @@ func PartsReadCloser(closer io.Closer, readers ...io.ReadCloser) io.ReadCloser {
 
 	return &partsReader{
 		R:      readers,
-		closer: closer,
+		closer: optionalCloser,
 	}
 }
 
