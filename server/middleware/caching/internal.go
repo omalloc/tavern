@@ -177,14 +177,15 @@ func getContents(c *Caching, reqChunks []uint32, from uint32) (io.ReadCloser, in
 		_ = f.Close()
 	}
 
-	// find all hit block.
+	// get all hit block
 	availableChunks := c.getAvailableChunks()
 	slices.SortFunc(availableChunks, func(i, j uint32) int {
 		return int(i - j)
 	})
+	// find last hit block index
 	index := sort.Search(len(availableChunks), func(i int) bool {
 		return availableChunks[i] > reqChunks[from] &&
-			availableChunks[i] <= reqChunks[len(reqChunks)-1]
+			availableChunks[i] <= reqChunks[len(reqChunks)-1] // last request chunk index
 	})
 
 	c.log.Debugf("find available chunk index %d, availableChunks: %v", index, availableChunks)
@@ -208,7 +209,7 @@ func getContents(c *Caching, reqChunks []uint32, from uint32) (io.ReadCloser, in
 				return nil, 0, err
 			}
 
-			return iobuf.PartsReadCloser(reader, chunkFile), int(availableChunks[index]-reqChunks[from]) + 1, nil
+			return iobuf.PartsReadCloser(iobuf.NopCloser(), reader, chunkFile), int(availableChunks[index]-reqChunks[from]) + 1, nil
 		}
 	}
 
@@ -232,7 +233,7 @@ func getContents(c *Caching, reqChunks []uint32, from uint32) (io.ReadCloser, in
 
 func getSliceChunkFile(c *Caching, from uint32) (storage.File, error) {
 	f, wpath, err := c.bucket.ReadChunkFile(c.req.Context(), c.id, from)
-	c.log.Debugf("loading chunk slice from path: %s", wpath)
+	c.log.Debugf("loading chunk slice from path: %s buf-range: %d-%d", wpath, from*uint32(c.md.BlockSize), (from+1)*uint32(c.md.BlockSize)-1)
 	if err == nil {
 		return f, nil
 	}
