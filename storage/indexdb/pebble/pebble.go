@@ -3,6 +3,7 @@ package pebble
 import (
 	"context"
 	"errors"
+	"sync"
 	"time"
 
 	"github.com/cockroachdb/pebble/v2"
@@ -22,6 +23,7 @@ type PebbleDB struct {
 	db            *pebble.DB
 	writeMode     *pebble.WriteOptions
 	skipErrRecord bool
+	closed        sync.Once
 }
 
 func init() {
@@ -112,9 +114,13 @@ func (p *PebbleDB) Expired(ctx context.Context, f storage.IterateFunc) error {
 
 // Close implements storage.IndexDB.
 func (p *PebbleDB) Close() error {
-	// force flush data to disk
-	_ = p.db.Flush()
-	return p.db.Close()
+	var err error
+	p.closed.Do(func() {
+		_ = p.db.Flush()
+		// force flush data to disk
+		err = p.db.Close()
+	})
+	return err
 }
 
 // GC implements storage.IndexDB.
@@ -178,5 +184,6 @@ func New(path string, option storage.Option) (storage.IndexDB, error) {
 		db:            pdb,
 		writeMode:     writeMode, // 是否异步写操作
 		skipErrRecord: true,
+		closed:        sync.Once{},
 	}, nil
 }
