@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/binary"
 	"errors"
+	"sync"
 
 	"github.com/cockroachdb/pebble/v2"
 	"github.com/omalloc/tavern/api/defined/v1/storage"
@@ -12,11 +13,16 @@ import (
 var _ storage.SharedKV = (*noneSharedKV)(nil)
 
 type noneSharedKV struct {
-	db *pebble.DB
+	db     *pebble.DB
+	closed sync.Once
 }
 
 func (r *noneSharedKV) Close() error {
-	return r.db.Close()
+	var err error
+	r.closed.Do(func() {
+		err = r.db.Close()
+	})
+	return err
 }
 
 func (r *noneSharedKV) Get(_ context.Context, key []byte) ([]byte, error) {
@@ -189,7 +195,8 @@ func newNoneKV(storePath string, opts *pebble.Options) (storage.SharedKV, error)
 	}
 
 	r := &noneSharedKV{
-		db: db,
+		db:     db,
+		closed: sync.Once{},
 	}
 	return r, nil
 }
