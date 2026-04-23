@@ -366,7 +366,7 @@ func (c *Caching) doProxy(req *http.Request, subRequest bool) (*http.Response, e
 	}
 
 	// parsed cache-control header
-	expiredAt, cacheable := xhttp.ParseCacheTime(protocol.CacheTime, resp.Header)
+	expiredAt, cacheable := xhttp.ParseCacheTime(protocol.ProtocolCacheTime, resp.Header)
 
 	// expire time
 	c.md.ExpiresAt = now.Add(expiredAt).Unix()

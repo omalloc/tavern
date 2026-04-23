@@ -1,10 +1,19 @@
-## custom internal protocol defined
+## Protocol Custom
+
+> Protocol custom header, all Key start with `Protocol` or `Internal`, like `ProtocolRequestIDKey = "X-Request-ID"`
+
+
+### Generate protocol code
+```shell
+$ go generate ./...
+```
+
 
 ### ProtocolRequestIDKey
 
 Set request id
 
-### X-FS-Mem
+### ProtocolForceStoreMemory
 
 force store in memory
 
@@ -12,11 +21,11 @@ force store in memory
 
 Response cache status with name, like X-Cache: HIT from memory
 
-### PrefetchCacheKey
+### ProtocolPrefetchCacheKey
 
 Prefetch cache, value 1 mean prefetch, 0 mean not prefetch
 
-### CacheTime
+### ProtocolPrefetchCacheTime
 
 Set force `Cache-Control` Cache time, value is seconds, like `CacheTime: 60` mean `Cache-Control: max-age=60`
 

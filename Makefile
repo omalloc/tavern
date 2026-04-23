@@ -29,6 +29,10 @@ install:
 build:
 	@env CGO_ENABLED=0 go build ${LDFLAGS} -o bin/tavern .
 
+.PHONY: generate
+generate:
+	@go generate ./...
+
 .PHONY: toolchain
 toolchain:
 	@env CGO_ENABLED=0 go build ${LDFLAGS} -o bin/tq cmd/tq/main.go
