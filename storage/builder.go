@@ -9,6 +9,7 @@ import (
 	"github.com/omalloc/tavern/storage/bucket/disk"
 	"github.com/omalloc/tavern/storage/bucket/empty"
 	"github.com/omalloc/tavern/storage/bucket/memory"
+	"github.com/omalloc/tavern/storage/bucket/rawdisk"
 	_ "github.com/omalloc/tavern/storage/indexdb/nutsdb"
 	_ "github.com/omalloc/tavern/storage/indexdb/pebble"
 )
@@ -25,9 +26,10 @@ type globalBucketOption struct {
 
 // implements storage.Bucket map.
 var bucketMap = map[string]func(opt *storage.BucketConfig, sharedkv storage.SharedKV) (storage.Bucket, error){
-	"empty":  empty.New,
-	"native": disk.New,   // disk is an alias of native
-	"memory": memory.New, // in-memory disk. restart as lost. @ storage.TypeInMemory
+	"empty":   empty.New,
+	"native":  disk.New,   // disk is an alias of native
+	"memory":  memory.New, // in-memory disk. restart as lost. @ storage.TypeInMemory
+	"rawdisk": rawdisk.New,
 }
 
 func NewBucket(opt *storage.BucketConfig, sharedkv storage.SharedKV) (storage.Bucket, error) {
