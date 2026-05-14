@@ -25,8 +25,6 @@ import (
 	"github.com/omalloc/tavern/proxy"
 	"github.com/omalloc/tavern/server/middleware"
 	storagev1 "github.com/omalloc/tavern/storage"
-
-	"github.com/prometheus/client_golang/prometheus"
 )
 
 const BYPASS = "BYPASS"
@@ -114,6 +112,12 @@ func Middleware(c *configv1.Middleware) (middleware.Middleware, func(), error) {
 		proxyClient := proxy.GetProxy()
 		store := storagev1.Current()
 
+		// Flight groups for collapsed forwarding at object and chunk level.
+		// These mirror Squid's collapsed_forwarding: one origin request
+		// serves many waiting clients.
+		objectFlight := &ObjectFlightGroup{}
+		chunkFlight := &ChunkFlightGroup{}
+
 		return middleware.RoundTripperFunc(func(req *http.Request) (resp *http.Response, err error) {
 			// only cache GET/HEAD request
 			if req.Method != http.MethodGet && req.Method != http.MethodHead {
@@ -132,9 +136,12 @@ func Middleware(c *configv1.Middleware) (middleware.Middleware, func(), error) {
 			//	cachingPool.Put(caching)
 			//}()
 
+			// Wire up chunk-level collapsed forwarding.
+			caching.chunkFlight = chunkFlight
+
 			// err to BYPASS caching
 			if err != nil {
-				caching.log.Warnf("Precache processor failed: %v, BYPASS", err)
+				caching.log.Warnf("Precache processor failed: %v BYPASS", err)
 				resp, err = caching.doProxy(req, false) // do reverse proxy
 				if err != nil {
 					return nil, err
@@ -144,55 +151,68 @@ func Middleware(c *configv1.Middleware) (middleware.Middleware, func(), error) {
 					// set cache-staus header BYPASS
 					resp.Header.Set(protocol.ProtocolCacheStatusKey, BYPASS)
 				}
-				cacheRequestTotal.WithLabelValues(storage.BYPASS.String(), caching.bucket.StoreType()).Inc()
 				return
 			}
 
 			// cache HIT
 			if caching.hit {
-				caching.cacheStatus = storage.CacheHit
+				return caching.respondFromCache(req)
+			}
 
-				rng, err1 := xhttp.SingleRange(req.Header.Get("Range"), caching.md.Size)
-				if err1 != nil {
-					// 无效 Range 处理
-					headers := make(http.Header)
-					xhttp.CopyHeader(caching.md.Headers, headers)
-					headers.Set("Content-Range", fmt.Sprintf("bytes */%d", caching.md.Size))
-					cacheRequestTotal.WithLabelValues(caching.cacheStatus.String(), caching.bucket.StoreType()).Inc()
-					return nil, xhttp.NewBizError(http.StatusRequestedRangeNotSatisfiable, headers)
+			// full MISS — use object-level collapsed forwarding so that
+			// concurrent requests for the same cache object share one
+			// origin fetch (Squid-style collapsed_forwarding).
+			if opts.CollapsedRequest {
+				flightResp, _, flightErr := objectFlight.Do(caching.id.HashStr(), opts.CollapsedRequestWaitTimeout.AsDuration(), func() (*http.Response, error) {
+					r, e := caching.doProxy(req, false)
+					if e != nil {
+						return nil, e
+					}
+					return processor.postCacheProcessor(caching, req, r)
+				})
+				if flightErr != nil {
+					return nil, flightErr
 				}
-
-				// mark cache status with Range requests.
-				caching.markCacheStatus(rng.Start, rng.End)
-
-				// find file seek(start, end)
-				resp, err = caching.lazilyRespond(req, rng.Start, rng.End)
-				if err != nil {
-					// fd leak
-					closeBody(resp)
-					cacheRequestTotal.WithLabelValues(caching.cacheStatus.String(), caching.bucket.StoreType()).Inc()
-					return nil, err
-				}
-
-				// response now
-				resp, err = caching.processor.postCacheProcessor(caching, req, resp)
-				cacheRequestTotal.WithLabelValues(caching.cacheStatus.String(), caching.bucket.StoreType()).Inc()
+				resp = flightResp
 				return
 			}
 
-			// full MISS
+			// full MISS (collapsed forwarding disabled)
 			resp, err = caching.doProxy(req, false)
 			if err != nil {
-				cacheRequestTotal.WithLabelValues(caching.cacheStatus.String(), caching.bucket.StoreType()).Inc()
 				return nil, err
 			}
 
 			resp, err = processor.postCacheProcessor(caching, req, resp)
-			cacheRequestTotal.WithLabelValues(caching.cacheStatus.String(), caching.bucket.StoreType()).Inc()
 			return
 		})
 
 	}, middleware.EmptyCleanup, nil
+}
+
+// respondFromCache assembles a response from cached chunks for a cache HIT.
+// It parses the Range header, builds a multi-part reader from disk, and
+// runs post-cache processing (headers, cache status, store).
+func (c *Caching) respondFromCache(req *http.Request) (*http.Response, error) {
+	c.cacheStatus = storage.CacheHit
+
+	rng, err := xhttp.SingleRange(req.Header.Get("Range"), c.md.Size)
+	if err != nil {
+		headers := make(http.Header)
+		xhttp.CopyHeader(c.md.Headers, headers)
+		headers.Set("Content-Range", fmt.Sprintf("bytes */%d", c.md.Size))
+		return nil, xhttp.NewBizError(http.StatusRequestedRangeNotSatisfiable, headers)
+	}
+
+	c.markCacheStatus(rng.Start, rng.End)
+
+	resp, err := c.lazilyRespond(req, rng.Start, rng.End)
+	if err != nil {
+		closeBody(resp)
+		return nil, err
+	}
+
+	return c.processor.postCacheProcessor(c, req, resp)
 }
 
 func (c *Caching) lazilyRespond(req *http.Request, start, end int64) (*http.Response, error) {
@@ -279,14 +299,24 @@ func (c *Caching) getUpstreamReader(fromByte, toByte uint64, async bool) (io.Rea
 			closeBody(resp)
 			return nil, err
 		}
-		// 部分命中
-		c.cacheStatus = storage.CachePartHit
-		// 发起的是 206 请求，但是返回的非 206
 		if resp.StatusCode != http.StatusPartialContent {
 			c.log.Warnf("getUpstreamReader doProxy[chunk]: status code: %d, bod size: %d", resp.StatusCode, resp.ContentLength)
 			return resp, xhttp.NewBizError(resp.StatusCode, resp.Header)
 		}
 		return resp, nil
+	}
+
+	// Chunk-level collapsed forwarding: if another goroutine is already
+	// fetching the same byte range for this object, wait and share the
+	// response body (io.MultiWriter fan-out). This mirrors Squid's
+	// collapsed_forwarding at the chunk/segment level.
+	if c.chunkFlight != nil && c.opt.CollapsedRequest && c.id != nil {
+		key := fmt.Sprintf("%s:%d-%d", c.id.HashStr(), fromByte, toByte)
+		reader, shared, err := c.chunkFlight.Do(key, c.opt.CollapsedRequestWaitTimeout.AsDuration(), doSubRequest)
+		if shared {
+			c.cacheStatus = storage.CachePartHit
+		}
+		return reader, err
 	}
 
 	if async {
@@ -464,7 +494,6 @@ func (c *Caching) flushbufferSlice(respRange xhttp.ContentRange) (iobuf.EventSuc
 	writerBuffer := func(buf []byte, index uint32, current uint64, eof bool) error {
 		f, wpath, err := c.bucket.WriteChunkFile(c.req.Context(), c.id, index)
 		if err != nil {
-			cacheChunkWriteTotal.With(prometheus.Labels{"result": "failed", "store_type": c.bucket.StoreType()}).Inc()
 			return err
 		}
 		defer func() {
@@ -506,7 +535,6 @@ func (c *Caching) flushbufferSlice(respRange xhttp.ContentRange) (iobuf.EventSuc
 		c.log.Debugf("flushBuffer wpath=%s isChunked=%t fileChunk=%d/%d", wpath, chunked, index+1, endPart)
 
 		if nn, err1 := f.Write(buf); err1 != nil || nn != len(buf) {
-			cacheChunkWriteTotal.With(prometheus.Labels{"result": "failed", "store_type": c.bucket.StoreType()}).Inc()
 			return fmt.Errorf("writeBuffer wpath[%s] chunk[%d] failed nn[%d] want[%d] err %v", wpath, index+1, nn, len(buf), err1)
 		}
 
@@ -518,7 +546,6 @@ func (c *Caching) flushbufferSlice(respRange xhttp.ContentRange) (iobuf.EventSuc
 			_ = c.bucket.Store(c.req.Context(), c.md)
 		}
 
-		cacheChunkWriteTotal.With(prometheus.Labels{"result": "success", "store_type": c.bucket.StoreType()}).Inc()
 		return nil
 	}
 
@@ -541,6 +568,5 @@ func (c *Caching) flushbufferSlice(respRange xhttp.ContentRange) (iobuf.EventSuc
 // flushFailed flush cache file to bucket failed callback
 func (c *Caching) flushFailed(err error) {
 	c.log.Errorf("flush body to disk failed: %v", err)
-	cacheFlushFailedTotal.WithLabelValues(c.bucket.StoreType()).Inc()
 	_ = c.bucket.DiscardWithMetadata(c.req.Context(), c.md)
 }
