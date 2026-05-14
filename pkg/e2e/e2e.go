@@ -88,14 +88,16 @@ func (e *E2E) Do(rewrite func(r *http.Request)) (*http.Response, error) {
 	// wait for a while to let the server ready
 	time.Sleep(time.Millisecond * 100)
 
-	rewrite(e.req)
+	nr := e.req.Clone(context.Background())
 
-	method := e.req.Method
+	rewrite(nr)
 
-	e.req.Header.Set(protocol.InternalUpstreamAddr, e.ts.Listener.Addr().String())
+	method := nr.Method
+
+	nr.Header.Set(protocol.InternalUpstreamAddr, e.ts.Listener.Addr().String())
 
 	if dumpReq.Load() && method != "PURGE" {
-		DumpReq(e.req)
+		DumpReq(nr)
 	}
 
 	if manual.Load() {
@@ -103,7 +105,7 @@ func (e *E2E) Do(rewrite func(r *http.Request)) (*http.Response, error) {
 		time.Sleep(time.Second * 20)
 	}
 
-	resp, err := e.cs.Do(e.req)
+	resp, err := e.cs.Do(nr)
 	e.resp = resp
 	e.err = err
 

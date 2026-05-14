@@ -1,0 +1,302 @@
+package caching
+
+import (
+	"io"
+	"net/http"
+	"strconv"
+	"strings"
+	"sync"
+	"sync/atomic"
+	"testing"
+	"time"
+
+	"github.com/omalloc/tavern/pkg/e2e"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+func TestCollapsedForwardingObjectFlight(t *testing.T) {
+	f := e2e.GenFile(t, 2<<20)
+	var originCallCount atomic.Int32
+
+	t.Run("test Collapsed Forwarding ObjectFlight Collapse", func(t *testing.T) {
+		case1 := e2e.New("http://objflight.example.com/cf/object/collapse.bin", e2e.RespCallbackFile(f, func(w http.ResponseWriter, r *http.Request) {
+			originCallCount.Add(1)
+			time.Sleep(80 * time.Millisecond) // window for concurrent registrations
+
+			t.Logf("X-Request-Idx: %s", r.Header.Get("X-Request-Idx"))
+
+			w.Header().Set("Cache-Control", "max-age=10")
+			w.Header().Set("ETag", "obj-flight-etag")
+		}))
+		defer case1.Close()
+
+		const N = 5
+		var wg sync.WaitGroup
+		start := make(chan struct{})
+		bodies := make([]string, N)
+		codes := make([]int, N)
+		xCaches := make([]string, N)
+
+		for i := 0; i < N; i++ {
+			wg.Add(1)
+			go func(idx int) {
+				defer wg.Done()
+				<-start
+
+				resp, err := case1.Do(func(r *http.Request) {
+					r.Header.Set("X-Request-Idx", strconv.Itoa(idx))
+				})
+
+				require.NoError(t, err, "caller %d: request should not error", idx)
+				defer resp.Body.Close()
+
+				hash := e2e.HashBody(resp)
+
+				bodies[idx] = hash
+				codes[idx] = resp.StatusCode
+				xCaches[idx] = resp.Header.Get("X-Cache")
+			}(i)
+		}
+
+		time.Sleep(10 * time.Millisecond)
+		close(start)
+		wg.Wait()
+
+		// Verify only one origin call — ObjectFlightGroup collapsed all 5.
+		assert.Equal(t, int32(1), originCallCount.Load(),
+			"object flight should collapse concurrent full-MISS requests")
+
+		// All callers must receive identical response bodies.
+		for i := 0; i < N; i++ {
+			assert.Equal(t, http.StatusOK, codes[i], "caller %d: status mismatch", i)
+			assert.Equal(t, f.MD5, bodies[i], "caller %d: body mismatch", i)
+		}
+
+		// At least one should be MISS (the first), the rest may be HIT
+		// depending on whether they re-looked up metadata in time.
+		hasMiss := false
+		for _, c := range xCaches {
+			if c != "" {
+				hasMiss = hasMiss || strings.Contains(c, "MISS")
+			}
+		}
+		assert.True(t, hasMiss, "at least one response should report MISS")
+	})
+
+	t.Run("test Collapsed Forwarding ObjectFlight Sequential", func(t *testing.T) {
+		originCallCount.Store(0)
+
+		case1 := e2e.New("http://objflight.example.com/cf/object/sequential.bin", e2e.RespCallbackFile(f, func(w http.ResponseWriter, r *http.Request) {
+			originCallCount.Add(1)
+			w.Header().Set("Cache-Control", "max-age=10")
+			w.Header().Set("ETag", "obj-flight-etag")
+		}))
+		defer case1.Close()
+
+		const N = 3
+
+		bodies := make([]string, N)
+
+		// Sequential requests should not be collapsed.
+		for i := 0; i < N; i++ {
+			resp, err := case1.Do(func(r *http.Request) {
+				r.Header.Set("X-Request-Idx", strconv.Itoa(i))
+			})
+
+			require.NoError(t, err, "request %d should not error", i)
+
+			bodies[i] = e2e.HashBody(resp)
+		}
+
+		assert.Equal(t, int32(1), originCallCount.Load(),
+			"object flight should not collapse sequential requests")
+
+		for i := 0; i < N; i++ {
+			assert.Equal(t, f.MD5, bodies[i], "request %d body-hash mismatch", i)
+		}
+
+	})
+
+	t.Run("test Collapsed Forwarding ObjectFlight KeyIsolation", func(t *testing.T) {
+		originCallCount.Store(0)
+
+		case1 := e2e.New("http://keys.example.com/cf/object/", func(w http.ResponseWriter, r *http.Request) {
+			originCallCount.Add(1)
+			time.Sleep(80 * time.Millisecond)
+
+			w.Header().Set("Cache-Control", "max-age=10")
+		})
+		defer case1.Close()
+
+		var wg sync.WaitGroup
+		start := make(chan struct{})
+
+		for _, key := range []string{"key-a", "key-b", "key-c"} {
+			wg.Add(1)
+			go func(k string) {
+				defer wg.Done()
+				<-start
+
+				resp, err := case1.Do(func(r *http.Request) {
+					r.URL.Path += k
+					t.Logf("Requesting key: %s", k)
+				})
+
+				require.NoError(t, err)
+				io.Copy(io.Discard, resp.Body)
+				resp.Body.Close()
+			}(key)
+		}
+
+		time.Sleep(10 * time.Millisecond)
+		close(start)
+		wg.Wait()
+
+		// Three different keys → three independent origin calls.
+		assert.Equal(t, int32(3), originCallCount.Load(),
+			"different URLs should have independent object flights")
+
+	})
+}
+
+func TestCollapsedForwardingChunkFlight(t *testing.T) {
+	file := e2e.GenFile(t, 3<<20) // 3MB → 6 chunks at 512KB
+	var originCallCount atomic.Int32
+
+	t.Run("test Collapsed Forwarding ChunkFlight", func(t *testing.T) {
+		case1 := e2e.New("http://chunkflight.example.com/cf/chunk/collapse.bin", e2e.RespCallbackFile(file, func(w http.ResponseWriter, r *http.Request) {
+			originCallCount.Add(1)
+			w.Header().Set("Cache-Control", "max-age=30")
+			w.Header().Set("ETag", file.MD5)
+		}))
+		defer case1.Close()
+
+		resp, err := case1.Do(func(r *http.Request) {
+			r.Header.Set("Range", "bytes=0-524287")
+		})
+
+		require.NoError(t, err)
+		io.Copy(io.Discard, resp.Body)
+		resp.Body.Close()
+		require.Equal(t, http.StatusPartialContent, resp.StatusCode)
+
+		// Give storage time to finish writing indexdb metadata.
+		time.Sleep(300 * time.Millisecond)
+
+		// Phase 2 — concurrent requests for a range that needs missing chunks.
+		originCallCount.Store(0)
+
+		const N = 3
+		var wg sync.WaitGroup
+		start := make(chan struct{})
+		bodies := make([]string, N)
+		codes := make([]int, N)
+
+		for i := 0; i < N; i++ {
+			wg.Add(1)
+			go func(idx int) {
+				defer wg.Done()
+				<-start
+
+				resp1, err1 := case1.Do(func(r *http.Request) {
+					r.Header.Set("Range", "bytes=524288-2097151")
+				})
+
+				require.NoError(t, err1, "caller %d: request should not error", idx)
+				defer resp1.Body.Close()
+
+				body, _ := io.ReadAll(resp1.Body)
+				bodies[idx] = string(body)
+				codes[idx] = resp1.StatusCode
+			}(i)
+		}
+
+		time.Sleep(10 * time.Millisecond)
+		close(start)
+		wg.Wait()
+
+		t.Logf("origin call count for concurrent phase: %d", originCallCount.Load())
+
+		// All callers must receive correct 206 responses.
+		for i := 0; i < N; i++ {
+			assert.Equal(t, http.StatusPartialContent, codes[i], "caller %d: status mismatch", i)
+			assert.NotEmpty(t, bodies[i], "caller %d: body should not be empty", i)
+		}
+
+		// Verify body correctness: compare against the source file.
+		expected := e2e.HashFile(file.Path, 524288, 2097151-524288+1)
+		for i := 0; i < N; i++ {
+			actual := e2e.SumMD5([]byte(bodies[i]))
+			assert.Equal(t, expected, actual, "caller %d: body hash mismatch", i)
+		}
+
+		// The concurrent chunk fetch for the missing range must be collapsed.
+		assert.Equal(t, int32(1), originCallCount.Load(),
+			"chunk flight should collapse concurrent chunk fetches to 1 origin call")
+	})
+
+	t.Run("test Collapsed Forwarding ChunkFlight KeyIsolation", func(t *testing.T) {
+		originCallCount.Store(0)
+		case1 := e2e.New("http://chunkflight.example.com/cf/chunk/keys.bin", e2e.RespCallbackFile(file, func(w http.ResponseWriter, r *http.Request) {
+			originCallCount.Add(1)
+			w.Header().Set("Cache-Control", "max-age=30")
+			w.Header().Set("ETag", file.MD5)
+		}))
+		defer case1.Close()
+
+		// Phase 1 — cache only the middle chunk (chunk 1, bytes 524288-1048575).
+		resp, err := case1.Do(func(r *http.Request) {
+			r.Header.Set("Range", "bytes=524288-1048575")
+		})
+
+		require.NoError(t, err)
+		io.Copy(io.Discard, resp.Body)
+		resp.Body.Close()
+		require.Equal(t, http.StatusPartialContent, resp.StatusCode)
+
+		time.Sleep(300 * time.Millisecond)
+
+		originCallCount.Store(0)
+
+		// Phase 2 — request two different missing ranges concurrently.
+		// Range A: bytes=0-524287 (needs chunk 0, not cached)
+		// Range B: bytes=1048576-2097151 (needs chunk 2+, not cached)
+		// Different chunk flight keys → independent origin calls.
+		var wg sync.WaitGroup
+		start := make(chan struct{})
+		ranges := []string{"bytes=0-524287", "bytes=1048576-2097151"}
+		errs := make([]error, len(ranges))
+
+		for i, rng := range ranges {
+			wg.Add(1)
+			go func(idx int, rng string) {
+				defer wg.Done()
+				<-start
+
+				resp2, e := case1.Do(func(r *http.Request) {
+					r.Header.Set("Range", rng)
+				})
+				if e != nil {
+					errs[idx] = e
+					return
+				}
+				io.Copy(io.Discard, resp2.Body)
+				resp2.Body.Close()
+			}(i, rng)
+		}
+
+		time.Sleep(10 * time.Millisecond)
+		close(start)
+		wg.Wait()
+
+		for i, e := range errs {
+			assert.NoError(t, e, "request %d should not error", i)
+		}
+
+		// Different chunk ranges → different flight keys → 2 origin calls.
+		assert.Equal(t, int32(2), originCallCount.Load(),
+			"different byte ranges should use independent chunk flights")
+
+	})
+}

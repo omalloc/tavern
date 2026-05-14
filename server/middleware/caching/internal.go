@@ -45,6 +45,7 @@ type Caching struct {
 	rootmd       *object.Metadata
 	bucket       storage.Bucket
 	proxyClient  proxy.Proxy
+	chunkFlight  *ChunkFlightGroup
 	cacheStatus  storage.CacheStatus
 	cacheable    bool
 	hit          bool
