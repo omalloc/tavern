@@ -60,7 +60,7 @@ server:
       secret: "123"
     path: ./logs/access.log
 plugin:
-  - name: example-plugin
+  - name: qs-plugin
     options:
       option1: value1
       option2: 2

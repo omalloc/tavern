@@ -123,6 +123,7 @@ func (r *RevalidateProcessor) Lookup(c *Caching, req *http.Request) (bool, error
 	c.cacheStatus = storagev1.CacheMiss
 
 	// drop metadata
+	c.md.Chunks.Clear()
 	if discardErr := c.bucket.DiscardWithMessage(req.Context(), c.id, "revalidate cache with expired"); discardErr != nil {
 		c.log.Errorf("cache revalidate storage error when discarding of object's data: %s, err: %s",
 			c.id.Key(), discardErr)
@@ -152,6 +153,7 @@ func (r *RevalidateProcessor) PreRequest(c *Caching, req *http.Request) (*http.R
 
 		if !conditionHeader {
 			c.log.Warnf("refresh error while get 'Etag' & 'Last-Modified' is nil, delete cache do proxy")
+			c.md.Chunks.Clear()
 			_ = c.bucket.DiscardWithMessage(req.Context(), c.id, "refresh cache no condition header")
 			return req, nil
 		}
@@ -177,6 +179,7 @@ func (r *RevalidateProcessor) revalidate(c *Caching, resp *http.Response, req *h
 	if resp.StatusCode != http.StatusNotModified {
 		c.cacheStatus = storagev1.CacheRevalidateMiss
 		c.setXCache(resp)
+		c.md.Chunks.Clear()
 		_ = c.bucket.DiscardWithMessage(req.Context(), c.id, "revalidate cache not StatusNotModified")
 		return resp, nil
 	}
@@ -216,13 +219,15 @@ func (r *RevalidateProcessor) freshness(c *Caching, resp *http.Response) bool {
 	metadata.RespUnix = now.Unix()
 	metadata.LastRefUnix = now.Unix()
 
-	cloneHeaders := []string{"Last-Modified", "ETag", "Cache-Control"}
-	for _, name := range cloneHeaders {
-		value := resp.Header.Get(name)
-		if value != "" {
-			metadata.Headers.Set(name, value)
-		}
-	}
+	xhttp.CopyHeader(metadata.Headers, resp.Header)
+
+	// cloneHeaders := []string{"Last-Modified", "ETag", "Cache-Control"}
+	// for _, name := range cloneHeaders {
+	// 	value := resp.Header.Get(name)
+	// 	if value != "" {
+	// 		metadata.Headers.Set(name, value)
+	// 	}
+	// }
 	c.cacheable = true
 	c.md = metadata
 
