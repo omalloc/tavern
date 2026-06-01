@@ -82,41 +82,37 @@ func (pc *ProcessorChain) PostRequest(caching *Caching, req *http.Request, resp 
 }
 
 func (pc *ProcessorChain) preCacheProcessor(proxyClient proxy.Proxy, store storage.Storage, opt *cachingOption, req *http.Request) (*Caching, error) {
-	objectID, err := newObjectIDFromRequest(req, "", opt.IncludeQueryInCacheKey)
-	if err != nil {
-		return nil, fmt.Errorf("failed new object-objectID from request err: %w", err)
-	}
-
-	// Select storage bucket by object ID
-	// hashring or diskhash
-	bucket := store.Select(req.Context(), objectID)
-	// lookup cache with cache-key
-	md, _ := bucket.Lookup(req.Context(), objectID)
-
-	// TODO: object pool.
-	//caching := cachingPool.Get().(*Caching)
-	//caching.log = log.Context(req.Context())
-	//caching.proxyClient = proxyClient
-	//caching.opt = opt
-	//caching.id = objectID
-	//caching.bucket = bucket
-	//caching.req = req
-	//caching.md = md
-	//caching.processor = pc
-	//caching.cacheStatus = storagev1.CacheMiss
-
+	// Initialize the Caching struct with the request context, logger, proxy client, processor chain, and caching options.
 	caching := &Caching{
 		log:         log.Context(req.Context()),
 		ctx:         req.Context(),
 		proxyClient: proxyClient,
-		opt:         opt,
-		id:          objectID,
-		bucket:      bucket,
-		req:         req,
-		md:          md,
 		processor:   pc,
-		cacheStatus: storage.CacheMiss,
+		opt:         opt,
+		req:         req,
 	}
+
+	objectID, err := newObjectIDFromRequest(req, "", opt.IncludeQueryInCacheKey)
+	if err != nil {
+		return caching, fmt.Errorf("failed new object-objectID from request err: %w", err)
+	}
+	caching.id = objectID
+
+	// Select storage bucket by object ID
+	// hashring or diskhash
+	bucket := store.Select(req.Context(), objectID)
+	if bucket == nil {
+		return caching, fmt.Errorf("failed select bucket for objectID: %s", objectID)
+	}
+	caching.bucket = bucket
+
+	// lookup cache with cache-key
+	md, _ := bucket.Lookup(req.Context(), objectID)
+
+	// TODO: object pool for Caching struct
+
+	caching.md = md
+	caching.cacheStatus = storage.CacheMiss
 
 	hit, err := pc.Lookup(caching, req)
 	if err != nil {

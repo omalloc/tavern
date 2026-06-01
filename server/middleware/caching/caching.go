@@ -132,7 +132,7 @@ func Middleware(c *configv1.Middleware) (middleware.Middleware, func(), error) {
 
 			// err to BYPASS caching
 			if err != nil {
-				caching.log.Warnf("Precache processor failed: %v BYPASS", err)
+				caching.log.Warnf("Precache processor failed: %v, BYPASS", err)
 				resp, err = caching.doProxy(req, false) // do reverse proxy
 				if err != nil {
 					return nil, err
