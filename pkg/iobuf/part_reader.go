@@ -42,6 +42,7 @@ func (r *partsReader) Read(p []byte) (n int, err error) {
 		// If a part response fails, next part responses should be stopped immediately;
 		// otherwise, the client will receive bad file content.
 		if closeErr := r.R[r.index].Close(); closeErr != nil {
+			r.index++
 			return size, closeErr
 		}
 		r.index++
@@ -68,6 +69,7 @@ func (r *partsReader) WriteTo(w io.Writer) (n int64, err error) {
 		nn, err = io.Copy(w, reader)
 		n += nn
 		if err != nil {
+			r.index++
 			if closeErr := reader.Close(); closeErr != nil {
 				return n, closeErr
 			}
