@@ -68,18 +68,19 @@ func (r *partsReader) WriteTo(w io.Writer) (n int64, err error) {
 	for _, reader := range rrs {
 		nn, err = io.Copy(w, reader)
 		n += nn
-		if err != nil {
-			r.index++
-			if closeErr := reader.Close(); closeErr != nil {
-				return n, closeErr
-			}
 
+		r.index++
+		if closeErr := reader.Close(); closeErr != nil {
+			return n, closeErr
+		}
+
+		if err != nil {
 			if err != io.EOF {
 				return n, err
 			}
 			return
 		}
-		r.index++
+
 		if r.index == len(r.R) {
 			err = io.EOF
 		}

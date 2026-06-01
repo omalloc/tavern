@@ -162,4 +162,18 @@ func TestPartsReader_WriteTo_AllSuccess(t *testing.T) {
 	if buf.String() != "helloworld" {
 		t.Fatalf("expected 'helloworld', got %q", buf.String())
 	}
+	if r1Closes != 1 {
+		t.Fatalf("r1 was closed %d times, expected 1", r1Closes)
+	}
+	if r2Closes != 1 {
+		t.Fatalf("r2 was closed %d times, expected 1", r2Closes)
+	}
+
+	_ = pr.Close()
+	if r1Closes != 1 {
+		t.Fatalf("r1 was closed %d times after outer Close, expected 1", r1Closes)
+	}
+	if r2Closes != 1 {
+		t.Fatalf("r2 was closed %d times after outer Close, expected 1", r2Closes)
+	}
 }
