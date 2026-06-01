@@ -195,6 +195,9 @@ func (r *RevalidateProcessor) revalidate(c *Caching, resp *http.Response, req *h
 			return nil, xhttp.NewBizError(http.StatusRequestedRangeNotSatisfiable, nil)
 		}
 		c.log.Debugf("freshness cache by RawRange bytes=%d-%d", rng.Start, rng.End)
+		// lazilyRespond already applies correct range trimming; clear fillRange context
+		// to prevent fillRange.PostRequest from double-skipping the response body.
+		*req = *req.WithContext(context.WithValue(req.Context(), fillRangeKey{}, nil))
 		return c.lazilyRespond(req, rng.Start, rng.End)
 	}
 
