@@ -180,7 +180,7 @@ func (r *RevalidateProcessor) revalidate(c *Caching, resp *http.Response, req *h
 		c.cacheStatus = storagev1.CacheRevalidateMiss
 		c.setXCache(resp)
 		c.md.Chunks.Clear()
-		_ = c.bucket.DiscardWithMessage(req.Context(), c.id, "revalidate cache not StatusNotModified")
+		_ = c.bucket.DiscardWithMessage(c.ctx, c.id, "revalidate cache not StatusNotModified")
 		return resp, nil
 	}
 
