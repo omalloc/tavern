@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+## [1.1.1](https://github.com/omalloc/tavern/compare/v1.1.0...v1.1.1) (2026-06-02)
+
+### Fixed
+
+- Return valid Caching struct on preCacheProcessor error to avoid nil dereference ([bb2191b](https://github.com/omalloc/tavern/commit/bb2191b))
+- Use c.ctx instead of req.Context() in revalidate DiscardWithMessage for correct request ID ([f8df9a2](https://github.com/omalloc/tavern/commit/f8df9a2))
+- Prevent double-skip in revalidate path by clearing fillRange context before lazyRespond ([10e0bfb](https://github.com/omalloc/tavern/commit/10e0bfb))
+- Fix partsReader WriteTo to close readers on success ([912df18](https://github.com/omalloc/tavern/commit/912df18))
+- Prevent double-close in partsReader by advancing index after Close ([269cd3a](https://github.com/omalloc/tavern/commit/269cd3a))
+- Clear metadata chunks during cache revalidation and add tests for revalidation logic ([d745ff1](https://github.com/omalloc/tavern/commit/d745ff1))
+
 ## [1.1.0](https://github.com/omalloc/tavern/compare/v1.0.0...v1.1.0) (2026-04-23)
 
 
@@ -40,3 +51,7 @@ All notable changes to this project will be documented in this file. See [standa
 * test case config apply `migration` ([34a8e28](https://github.com/omalloc/tavern/commit/34a8e280151952ee7fbc4696f3e1ccade52fd5c3))
 * **test:** add iobuf testcase ([fdff4dd](https://github.com/omalloc/tavern/commit/fdff4dd6145fbf01aa88b8e2ab404e493323b872))
 * **test:** lru coverage; remove kv_pebble log ([5208c71](https://github.com/omalloc/tavern/commit/5208c715ac45ebd73dd785e4ff24b7710dd65ffa))
+
+[Unreleased]: https://github.com/omalloc/tavern/compare/v1.1.1...HEAD
+[1.1.1]: https://github.com/omalloc/tavern/compare/v1.1.0...v1.1.1
+[1.1.0]: https://github.com/omalloc/tavern/compare/v1.0.0...v1.1.0
