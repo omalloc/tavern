@@ -64,6 +64,9 @@ func (v *VaryProcessor) Lookup(caching *Caching, req *http.Request) (bool, error
 	}
 
 	// HIT: Found matching Vary cache, update caching context.
+	// Touch the root index timestamp so LRU eviction won't remove it
+	// while variants are still being accessed.
+	caching.md.LastRefUnix = time.Now().Unix()
 	caching.rootmd = caching.md
 	caching.id = vmd.ID
 	caching.md = vmd
@@ -107,13 +110,29 @@ func (v *VaryProcessor) PostRequest(caching *Caching, req *http.Request, resp *h
 	caching.rootmd.Chunks = bitmap.Bitmap{}
 	caching.rootmd.Parts = bitmap.Bitmap{}
 	caching.rootmd.Headers = http.Header{
-		"Vary": varycontrol.Clean(originVary...),
+		"Vary": v.filterVaryKeys(varycontrol.Clean(originVary...)),
 	}
 
-	// Inherit timestamps from root metadata.
+	// Inherit timestamps from root metadata (but not ExpiresAt — each
+	// variant independently computes its own expiration from origin headers).
 	varyMetadata.RespUnix = caching.rootmd.RespUnix
 	varyMetadata.LastRefUnix = caching.rootmd.LastRefUnix
-	varyMetadata.ExpiresAt = caching.rootmd.ExpiresAt
+
+	// Sync root TTL: the Vary index must outlive its longest-lived variant
+	// so that the index is never evicted before the variants it references.
+	// Use max so the root stays alive as long as any variant is fresh.
+	if varyMetadata.ExpiresAt > caching.rootmd.ExpiresAt {
+		caching.rootmd.ExpiresAt = varyMetadata.ExpiresAt
+	}
+
+	// If all variants have been evicted (empty VirtualKey), downgrade the
+	// root from VaryIndex to a normal cache entry so it doesn't become an
+	// unreachable orphan index.
+	if len(caching.rootmd.VirtualKey) == 0 {
+		caching.rootmd.Flags = object.FlagCache
+		caching.rootmd.Headers.Del("Vary")
+		caching.log.Warnf("Vary index has no more variants, downgrading to normal cache")
+	}
 
 	caching.md = varyMetadata
 	caching.id = varyMetadata.ID
@@ -121,9 +140,30 @@ func (v *VaryProcessor) PostRequest(caching *Caching, req *http.Request, resp *h
 	return resp, nil
 }
 
+// filterVaryKeys filters out ignore keys from a Vary key list.
+func (v *VaryProcessor) filterVaryKeys(k varycontrol.Key) varycontrol.Key {
+	return k.FilterIgnore(v.varyIgnoreKey)
+}
+
+// evictOldestVariant discards the oldest variant cache entry for the current
+// Vary index. It uses the first entry in VirtualKey (oldest) as the eviction
+// target. This is called when the variant count exceeds maxLimit.
+// Callers must also remove the variant from VirtualKey.
+func (v *VaryProcessor) evictOldestVariant(caching *Caching, virtualKey []string) {
+	if len(virtualKey) == 0 {
+		return
+	}
+	oldest := virtualKey[0]
+	oid := object.NewVirtualID(caching.md.ID.Path(), oldest)
+	if err := caching.bucket.Discard(context.Background(), oid); err != nil && !os.IsNotExist(err) {
+		caching.log.Warnf("evictOldestVariant failed to discard %s: %v", oid, err)
+	}
+	caching.log.Infof("evicted oldest vary variant: %s", oldest)
+}
+
 // lookup finds the matching Vary cache entry based on request headers.
 func (v *VaryProcessor) lookup(caching *Caching, req *http.Request) *object.Metadata {
-	varyKey := varycontrol.Clean(caching.md.Headers.Values("Vary")...)
+	varyKey := v.filterVaryKeys(varycontrol.Clean(caching.md.Headers.Values("Vary")...))
 
 	// Generate object ID based on Vary data from request headers.
 	vid, err := newObjectIDFromRequest(req, varyKey.VaryData(req.Header), caching.opt.IncludeQueryInCacheKey)
@@ -144,8 +184,8 @@ func (v *VaryProcessor) lookup(caching *Caching, req *http.Request) *object.Meta
 //   - When the origin response has no Vary header but cached metadata has Vary info
 //   - When the origin response contains Vary header
 func (v *VaryProcessor) convertVaryMetadata(caching *Caching, resp *http.Response) (*object.Metadata, error) {
-	metaVary := varycontrol.Clean(caching.md.Headers.Values("Vary")...)
-	respVary := varycontrol.Clean(resp.Header.Values("Vary")...)
+	metaVary := v.filterVaryKeys(varycontrol.Clean(caching.md.Headers.Values("Vary")...))
+	respVary := v.filterVaryKeys(varycontrol.Clean(resp.Header.Values("Vary")...))
 
 	if caching.log.Enabled(log.LevelDebug) && (len(metaVary) > 0 || len(respVary) > 0) {
 		caching.log.Debugf("convertVaryMetadata: metaVaryKey: %s, respVaryKey: %s", metaVary, respVary)
@@ -182,8 +222,9 @@ func (v *VaryProcessor) handleNoResponseVary(caching *Caching, resp *http.Respon
 
 	// Check Vary version limit.
 	if len(caching.md.VirtualKey) >= v.maxLimit {
-		caching.log.Errorf("vary version exceed limit: %d", len(caching.md.VirtualKey))
-		return nil, ErrVarySizeLimited
+		caching.log.Infof("vary version exceed limit (%d), evicting oldest variant", v.maxLimit)
+		v.evictOldestVariant(caching, caching.md.VirtualKey)
+		caching.md.VirtualKey = caching.md.VirtualKey[1:]
 	}
 
 	// Append new Vary data if not already exists.
@@ -199,17 +240,21 @@ func (v *VaryProcessor) handleNoResponseVary(caching *Caching, resp *http.Respon
 	}
 
 	cl, _ := strconv.Atoi(resp.Header.Get("Content-Length"))
+	now := time.Now()
+	expiredAt, _ := xhttp.ParseCacheTime("", resp.Header)
+
 	return &object.Metadata{
-		ID:        l2MetaID,
-		RespUnix:  time.Now().Unix(),
-		Code:      resp.StatusCode,
-		Size:      uint64(cl),
-		BlockSize: caching.md.BlockSize,
-		Chunks:    bitmap.Bitmap{},
-		Parts:     bitmap.Bitmap{},
-		Headers:   resp.Header.Clone(),
-		ExpiresAt: caching.md.ExpiresAt,
-		Flags:     object.FlagVaryCache,
+		ID:          l2MetaID,
+		RespUnix:    now.Unix(),
+		LastRefUnix: now.Unix(),
+		Code:        resp.StatusCode,
+		Size:        uint64(cl),
+		BlockSize:   caching.md.BlockSize,
+		Chunks:      bitmap.Bitmap{},
+		Parts:       bitmap.Bitmap{},
+		Headers:     resp.Header.Clone(),
+		ExpiresAt:   now.Add(expiredAt).Unix(),
+		Flags:       object.FlagVaryCache,
 	}, nil
 }
 
@@ -274,8 +319,10 @@ func (v *VaryProcessor) upgrade(c *Caching, resp *http.Response, id *object.ID, 
 	virtualKey := varycontrol.Clean(append(c.md.VirtualKey, varyData)...)
 
 	if len(virtualKey) > v.maxLimit {
-		c.log.Errorf("Vary version limit exceeded: %d", len(c.md.VirtualKey))
-		return nil, ErrVarySizeLimited
+		c.log.Infof("Vary version limit exceeded (%d), evicting oldest variant", v.maxLimit)
+		// Evict the oldest variant and remove it from the key list.
+		v.evictOldestVariant(c, virtualKey)
+		virtualKey = virtualKey[1:]
 	}
 
 	c.md.VirtualKey = virtualKey
@@ -287,7 +334,7 @@ func (v *VaryProcessor) upgrade(c *Caching, resp *http.Response, id *object.ID, 
 	newVaryKey := resp.Header.Values("Vary")
 	newVaryKey = append(newVaryKey, headers.Values("Vary")...)
 	headers.Del("Vary")
-	for _, key := range varycontrol.Clean(newVaryKey...) {
+	for _, key := range v.filterVaryKeys(varycontrol.Clean(newVaryKey...)) {
 		headers.Add("Vary", key)
 	}
 
@@ -299,18 +346,20 @@ func (v *VaryProcessor) upgrade(c *Caching, resp *http.Response, id *object.ID, 
 	c.log.Infof("Vary upgrade completed, content-length: %d", cr.ObjSize)
 
 	// Create new Vary metadata.
-	now := time.Now().Unix()
+	now := time.Now()
+	expiredAt, _ := xhttp.ParseCacheTime("", resp.Header)
+
 	return &object.Metadata{
 		ID:          id,
-		RespUnix:    now,
-		LastRefUnix: now,
+		RespUnix:    now.Unix(),
+		LastRefUnix: now.Unix(),
 		Code:        resp.StatusCode,
 		Size:        cr.ObjSize,
 		BlockSize:   c.md.BlockSize,
 		Chunks:      bitmap.Bitmap{},
 		Parts:       bitmap.Bitmap{},
 		Headers:     headers,
-		ExpiresAt:   c.md.ExpiresAt,
+		ExpiresAt:   now.Add(expiredAt).Unix(),
 		Flags:       object.FlagVaryCache,
 	}, nil
 }
