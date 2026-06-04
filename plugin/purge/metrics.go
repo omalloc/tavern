@@ -1,6 +1,9 @@
 package purge
 
-import "github.com/prometheus/client_golang/prometheus"
+import (
+	"github.com/prometheus/client_golang/prometheus"
+	_ "github.com/omalloc/tavern/pkg/metrics" // ensures DefaultRegisterer is replaced before our init
+)
 
 var (
 	_metricPurgeRequestsTotal = prometheus.NewCounterVec(prometheus.CounterOpts{

@@ -1,4 +1,4 @@
-package metrics
+package traces
 
 import (
 	"context"
@@ -11,9 +11,9 @@ import (
 	"github.com/omalloc/tavern/internal/protocol"
 )
 
-type requestMetricKey struct{}
+type traceKey struct{}
 
-type RequestMetric struct {
+type Trace struct {
 	StartAt           time.Time
 	RequestID         string
 	RecvReq           uint64
@@ -24,37 +24,32 @@ type RequestMetric struct {
 	FirstResponseTime time.Time
 }
 
-func (r *RequestMetric) Clone() *RequestMetric {
-	out := *r
+func (t *Trace) Clone() *Trace {
+	out := *t
 	return &out
 }
 
-func WithRequestMetric(req *http.Request) (*http.Request, *RequestMetric) {
-	metric := &RequestMetric{
+func WithTrace(req *http.Request) (*http.Request, *Trace) {
+	t := &Trace{
 		StartAt:   time.Now(),
-		RequestID: MustParseRequestID(req.Header), // for example, generate a unique request ID. you can use ParseeaderRequestID to get it later.
+		RequestID: MustParseRequestID(req.Header),
 	}
-	return req.WithContext(newContext(req.Context(), metric)), metric
+	return req.WithContext(NewContext(req.Context(), t)), t
 }
 
-func FromContext(ctx context.Context) *RequestMetric {
-	if v, ok := ctx.Value(requestMetricKey{}).(*RequestMetric); ok {
+func FromContext(ctx context.Context) *Trace {
+	if v, ok := ctx.Value(traceKey{}).(*Trace); ok {
 		return v
 	}
-	return &RequestMetric{}
+	return &Trace{}
 }
 
-func NewContext(ctx context.Context, metric *RequestMetric) context.Context {
-	return newContext(ctx, metric)
-}
-
-func newContext(ctx context.Context, metric *RequestMetric) context.Context {
-	return context.WithValue(ctx, requestMetricKey{}, metric)
+func NewContext(ctx context.Context, t *Trace) context.Context {
+	return context.WithValue(ctx, traceKey{}, t)
 }
 
 func MustParseRequestID(h http.Header) string {
 	id := h.Get(protocol.ProtocolRequestIDKey)
-	// protocol request id header not found, generate a new one
 	if id == "" {
 		return generateRequestID()
 	}

@@ -7,7 +7,8 @@ import (
 	"sync"
 )
 
-// writeJob represents an async write task
+// writeJob carries one chunk of data to be written to disk by the background writer
+// goroutine in [savepartAsyncReader].
 type writeJob struct {
 	buf    []byte
 	bitIdx uint32
@@ -15,7 +16,13 @@ type writeJob struct {
 	eof    bool
 }
 
-// savepartAsyncReader decouples disk writes from the read path
+// savepartAsyncReader decouples disk writes from the read path by shunting complete
+// blocks through a buffered channel to a dedicated writer goroutine. This prevents
+// slow disk I/O from blocking the upstream body read.
+//
+// Like [savepartReader], it splits the incoming stream into fixed-size blocks and
+// fires an onSuccess callback per block. The difference is that the callback is
+// invoked from the background goroutine rather than inline in Read.
 type savepartAsyncReader struct {
 	R io.ReadCloser
 
@@ -159,7 +166,15 @@ func (s *savepartAsyncReader) enqueueWrite(eof bool) error {
 	return nil
 }
 
-// SavepartAsyncReader creates an async version that decouples disk I/O from read path
+// SavepartAsyncReader is the asynchronous variant of [SavepartReader]. It reads from r
+// in fixed blockSize chunks and sends complete blocks to a background goroutine via a
+// buffered channel. The onSuccess callback runs on the writer goroutine.
+//
+// startAt is the byte offset to skip (e.g. from a Range request). writeQueueSize
+// controls channel buffer depth (defaults to 16 when <= 0).
+//
+// Used in the caching middleware's production path where disk write latency must
+// not add backpressure to the upstream body stream.
 func SavepartAsyncReader(r io.ReadCloser, blockSize uint64, startAt uint,
 	flushBuffer EventSuccess, flushFailed EventError, cleanup EventClose,
 	writeQueueSize int) io.ReadCloser {

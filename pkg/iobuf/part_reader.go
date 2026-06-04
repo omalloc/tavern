@@ -5,17 +5,27 @@ import (
 	"io"
 )
 
-// partsReader is a composite reader that reads sequentially from a slice of io.ReadCloser instances.
-// It ensures that each reader is closed when fully read or upon encountering an error.
-// The closer field is an optional io.Closer for final cleanup operations after all readers are processed.
-// The index field tracks the current reader being processed in the slice.
+// partsReader concatenates multiple io.ReadCloser instances into a single sequential
+// read stream. When one part is exhausted (io.EOF), it is automatically closed and
+// reading continues from the next part.
+//
+// If closing a part returns an error, the reader stops immediately with that error
+// to avoid sending corrupted data to the client. The closer field (when non-nil) is
+// invoked after all parts are closed.
 type partsReader struct {
 	R      []io.ReadCloser
 	closer io.Closer
 	index  int
 }
 
-// PartsReadCloser combines multiple io.ReadCloser instances into a single io.ReadCloser, with optional final cleanup logic.
+// PartsReadCloser stitches multiple io.ReadCloser instances into a single
+// io.ReadCloser. Readers are consumed sequentially; each is closed when fully read.
+// An optionalCloser (may be nil) is called once during the final Close.
+//
+// Returns nil when readers is empty.
+//
+// This is the central combinator used by the caching middleware to join cached chunk
+// files and a live upstream reader into one continuous body for the HTTP client.
 func PartsReadCloser(optionalCloser io.Closer, readers ...io.ReadCloser) io.ReadCloser {
 	// if no more reader
 	if len(readers) <= 0 {
@@ -28,7 +38,9 @@ func PartsReadCloser(optionalCloser io.Closer, readers ...io.ReadCloser) io.Read
 	}
 }
 
-// Read reads data into p from the current part, advancing to the next part on EOF and closing completed parts.
+// Read reads from the current part. On io.EOF it closes the current part (propagating
+// any close error) and advances to the next part, returning nil error unless it was
+// the last part.
 func (r *partsReader) Read(p []byte) (n int, err error) {
 	if r.index == len(r.R) {
 		return 0, io.EOF
@@ -54,7 +66,8 @@ func (r *partsReader) Read(p []byte) (n int, err error) {
 	return size, err
 }
 
-// WriteTo writes the remaining unread parts to the provided writer and returns the number of bytes written and any error.
+// WriteTo implements io.WriterTo, using io.Copy on each remaining part for efficient
+// forwarding (avoids an extra copy through the Read buffer).
 func (r *partsReader) WriteTo(w io.Writer) (n int64, err error) {
 	if r.index == len(r.R) {
 		return 0, nil
@@ -88,7 +101,9 @@ func (r *partsReader) WriteTo(w io.Writer) (n int64, err error) {
 	return
 }
 
-// Close closes all remaining open readers in the partsReader and the associated closer, aggregating any errors encountered.
+// Close closes every remaining open part and the optional closer, collecting errors
+// with errors.Join. The index tracking ensures parts already closed by Read/WriteTo
+// are not double-closed.
 func (r *partsReader) Close() error {
 	var errs []error
 	for ; r.index < len(r.R); r.index++ {

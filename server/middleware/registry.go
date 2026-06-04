@@ -4,23 +4,11 @@ import (
 	"errors"
 	"strings"
 
-	"github.com/prometheus/client_golang/prometheus"
-
 	configv1 "github.com/omalloc/tavern/api/defined/v1/middleware"
 	"github.com/omalloc/tavern/contrib/log"
 )
 
 var globalRegistry = NewRegistry()
-var _failedMiddlewareCreate = prometheus.NewCounterVec(prometheus.CounterOpts{
-	Namespace: "tr",
-	Subsystem: "tavern",
-	Name:      "failed_middleware_create",
-	Help:      "The total number of failed middleware create",
-}, []string{"name", "required"})
-
-func init() {
-	prometheus.MustRegister(_failedMiddlewareCreate)
-}
 
 // ErrNotFound is middleware not found.
 var ErrNotFound = errors.New("Middleware has not been registered")

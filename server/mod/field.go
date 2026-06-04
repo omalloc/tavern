@@ -6,14 +6,14 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/omalloc/tavern/metrics"
+	"github.com/omalloc/tavern/pkg/traces"
 	xhttp "github.com/omalloc/tavern/pkg/x/http"
 )
 
 const layout = "[02/Jan/2006:15:04:05 -0700]"
 
 func WithNormalFields(req *http.Request, resp *xhttp.ResponseRecorder) []byte {
-	metric := metrics.FromContext(req.Context())
+	tr := traces.FromContext(req.Context())
 
 	buf := NewFieldBuffer(' ')
 
@@ -36,7 +36,7 @@ func WithNormalFields(req *http.Request, resp *xhttp.ResponseRecorder) []byte {
 	// 10. user-agent
 	buf.FAppend(req.Header.Get("User-Agent"))
 	// 11. response time (ms)
-	buf.Append(strconv.FormatInt(time.Since(metric.StartAt).Milliseconds(), 10))
+	buf.Append(strconv.FormatInt(time.Since(tr.StartAt).Milliseconds(), 10))
 	// 12. response body size
 	buf.Append(strconv.FormatUint(resp.Size(), 10))
 	// 13. content-length
@@ -46,9 +46,9 @@ func WithNormalFields(req *http.Request, resp *xhttp.ResponseRecorder) []byte {
 	// 15. x-forwarded-for
 	buf.FAppend(req.Header.Get("X-Forwarded-For"))
 	// 16. cache status
-	buf.Append(metric.CacheStatus)
+	buf.Append(tr.CacheStatus)
 	// 17. request-id
-	buf.Append(metric.RequestID)
+	buf.Append(tr.RequestID)
 
 	return buf.Bytes()
 }

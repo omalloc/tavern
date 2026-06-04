@@ -1,50 +1,47 @@
 package server
 
-import "github.com/prometheus/client_golang/prometheus"
+import (
+	pkgmetrics "github.com/omalloc/tavern/pkg/metrics"
+	"github.com/prometheus/client_golang/prometheus"
+)
 
-// dummy file to make sure server/metrics.go is included in the build
 var (
-	// tr_tavern_requests_code_total{protocol="http",code="200"} 11111
-	_metricRequestsTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
-		Namespace: "tr",
-		Subsystem: "tavern",
+	_metricRequestCodeCounterTotal = pkgmetrics.NewRequestsCounter(prometheus.Opts{
+		Namespace: pkgmetrics.Namespace,
 		Name:      "requests_code_total",
 		Help:      "The total number of processed requests",
 	}, []string{"protocol", "code"})
+
 	_metricRequestUnexpectedClosedTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
-		Namespace: "tr",
-		Subsystem: "tavern",
+		Namespace: pkgmetrics.Namespace,
 		Name:      "requests_unexpected_closed_total",
 		Help:      "The total number of unexpected closed requests",
 	}, []string{"protocol", "method"})
-	_metricDiskUsage = prometheus.NewGaugeVec(prometheus.GaugeOpts{
-		Namespace: "tr",
-		Subsystem: "tavern",
-		Name:      "disk_usage",
-		Help:      "The disk usage of the server",
-	}, []string{"dev", "path"})
-	_metricDiskIO = prometheus.NewCounterVec(prometheus.CounterOpts{
-		Namespace: "tr",
-		Subsystem: "tavern",
-		Name:      "disk_io",
-		Help:      "The disk io of the server",
-	}, []string{"dev", "path"})
 )
 
 func init() {
-	// register metrics
-	prometheus.MustRegister(_metricRequestsTotal)
-	prometheus.MustRegister(_metricRequestUnexpectedClosedTotal)
-	prometheus.MustRegister(_metricDiskUsage)
-	prometheus.MustRegister(_metricDiskIO)
-
-	// init metrics
-	_metricRequestsTotal.WithLabelValues("HTTP/1.1", "200")
-	_metricRequestsTotal.WithLabelValues("HTTP/1.1", "206")
-	_metricRequestsTotal.WithLabelValues("HTTP/1.1", "400")
-	_metricRequestsTotal.WithLabelValues("HTTP/1.1", "404")
-	_metricRequestsTotal.WithLabelValues("HTTP/1.1", "500")
+	prometheus.MustRegister(
+		_metricRequestCodeCounterTotal,
+		_metricRequestUnexpectedClosedTotal,
+	)
 
 	_metricRequestUnexpectedClosedTotal.WithLabelValues("HTTP/1.1", "GET")
 	_metricRequestUnexpectedClosedTotal.WithLabelValues("HTTP/1.1", "HEAD")
+
+	// Seed _metricRequestCodeCounterTotal so common label pairs appear in
+	// /metrics even before any real request increments them.
+	for _, code := range []string{"200", "206", "302", "304", "404", "500"} {
+		_metricRequestCodeCounterTotal.Seed("HTTP/1.1", code)
+	}
+}
+
+// SetRequestsCounter sets the shared requests counter. Must be called before
+// the server starts serving requests (typically from main.init).
+func SetRequestsCounter(rc *pkgmetrics.RequestsCounter) {
+	_metricRequestCodeCounterTotal = rc
+}
+
+// RequestsCounter returns the shared requests counter for external packages.
+func RequestsCounter() *pkgmetrics.RequestsCounter {
+	return _metricRequestCodeCounterTotal
 }

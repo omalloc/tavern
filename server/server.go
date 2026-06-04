@@ -233,7 +233,7 @@ func (s *HTTPServer) buildHandler(tripper http.RoundTripper) http.HandlerFunc {
 				w.Header().Set("X-Content-Type-Options", "nosniff")
 				w.WriteHeader(e.Code())
 				_, _ = w.Write([]byte(http.StatusText(e.Code())))
-				_metricRequestsTotal.WithLabelValues(req.Proto, strconv.Itoa(e.Code())).Inc()
+				_metricRequestCodeCounterTotal.Inc(req.Proto, strconv.Itoa(e.Code()))
 				return
 			}
 
@@ -244,7 +244,7 @@ func (s *HTTPServer) buildHandler(tripper http.RoundTripper) http.HandlerFunc {
 			w.WriteHeader(http.StatusInternalServerError)
 			_, _ = w.Write(bodyBytes)
 
-			_metricRequestsTotal.WithLabelValues(req.Proto, strconv.Itoa(http.StatusInternalServerError)).Inc()
+			_metricRequestCodeCounterTotal.Inc(req.Proto, strconv.Itoa(http.StatusInternalServerError))
 			return
 		}
 
@@ -258,7 +258,7 @@ func (s *HTTPServer) buildHandler(tripper http.RoundTripper) http.HandlerFunc {
 
 		doCopyBody := func() {
 			if resp.Body == nil {
-				_metricRequestsTotal.WithLabelValues(req.Proto, strconv.Itoa(resp.StatusCode)).Inc()
+				_metricRequestCodeCounterTotal.Inc(req.Proto, strconv.Itoa(resp.StatusCode))
 				return
 			}
 
@@ -272,7 +272,7 @@ func (s *HTTPServer) buildHandler(tripper http.RoundTripper) http.HandlerFunc {
 				_ = resp.Body.Close()
 				bufPool.Put(buf)
 
-				_metricRequestsTotal.WithLabelValues(req.Proto, strconv.Itoa(resp.StatusCode)).Inc()
+				_metricRequestCodeCounterTotal.Inc(req.Proto, strconv.Itoa(resp.StatusCode))
 			}()
 
 			want := resp.Header.Get("Content-Length")

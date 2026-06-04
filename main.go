@@ -16,8 +16,6 @@ import (
 	"github.com/cloudflare/tableflip"
 	"github.com/omalloc/proxy/selector"
 	"github.com/omalloc/proxy/selector/once"
-	"github.com/prometheus/client_golang/prometheus"
-	"github.com/prometheus/client_golang/prometheus/collectors"
 	"gopkg.in/natefinch/lumberjack.v2"
 
 	pluginv1 "github.com/omalloc/tavern/api/defined/v1/plugin"
@@ -27,9 +25,9 @@ import (
 	"github.com/omalloc/tavern/contrib/kratos"
 	"github.com/omalloc/tavern/contrib/log"
 	"github.com/omalloc/tavern/contrib/transport"
-	"github.com/omalloc/tavern/metrics"
 	"github.com/omalloc/tavern/pkg/encoding"
 	"github.com/omalloc/tavern/pkg/encoding/json"
+	"github.com/omalloc/tavern/pkg/traces"
 	"github.com/omalloc/tavern/pkg/x/runtime"
 	"github.com/omalloc/tavern/plugin"
 	_ "github.com/omalloc/tavern/plugin/purge"
@@ -62,14 +60,6 @@ func init() {
 
 	// init logger
 	log.SetLogger(log.With(log.DefaultLogger, "ts", log.Timestamp(time.RFC3339), "pid", os.Getpid()))
-
-	// init prometheus
-	prometheus.Unregister(collectors.NewGoCollector())
-	prometheus.Unregister(collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}))
-
-	registerer := prometheus.WrapRegistererWithPrefix("tr_tavern_", prometheus.DefaultRegisterer)
-	registerer.MustRegister(collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}))
-	registerer.MustRegister(collectors.NewGoCollector())
 }
 
 func main() {
@@ -241,7 +231,7 @@ func newLogger(cl *conf.Logger) log.Logger {
 		opts = append(opts, "caller", log.Caller(5))
 	}
 	if cl.TraceID {
-		opts = append(opts, "request.id", metrics.RequestID())
+		opts = append(opts, "request.id", traces.RequestID())
 	}
 
 	logger := log.NewFilter(

@@ -6,16 +6,26 @@ import (
 )
 
 // ProxyCallback defines a function type that returns an HTTP response and an error when called.
+// It is used by [AsyncReadCloser] to perform the upstream fetch in a background goroutine.
 type ProxyCallback func() (*http.Response, error)
 
-// asyncReader is a struct that wraps an io.ReadCloser for reading data asynchronously.
-// It captures any errors encountered during reading for later retrieval.
+// asyncReader wraps an io.PipeReader and captures write-side errors from the background
+// goroutine so they can be surfaced on the next Read call.
 type asyncReader struct {
 	R   io.ReadCloser
 	err error
 }
 
-// AsyncReadCloser creates an asynchronous io.ReadCloser that invokes a ProxyCallback to process data in the background.
+// AsyncReadCloser returns an io.ReadCloser that invokes proxy in a background goroutine
+// and pipes the response body back to the caller through an io.Pipe.
+//
+// The proxy callback is expected to fetch an upstream HTTP response. On success the
+// response body is copied to the pipe writer; on failure the pipe is closed with the
+// error so the caller's next Read returns it.
+//
+// This is used in the caching middleware to issue a sub-request to origin without
+// blocking the caller's goroutine — the HTTP round-trip happens asynchronously while
+// the caller can start reading the body as soon as bytes arrive.
 func AsyncReadCloser(proxy ProxyCallback) io.ReadCloser {
 	pr, pw := io.Pipe()
 
@@ -51,7 +61,9 @@ func AsyncReadCloser(proxy ProxyCallback) io.ReadCloser {
 	return ar
 }
 
-// Read reads data into the provided byte slice and returns the number of bytes read and an error, if any occurred.
+// Read reads from the underlying pipe. If the pipe Writer was closed with an error
+// (e.g. proxy callback failed), the stored error is surfaced here even when the
+// underlying Read returns (0, nil) — a known quirk of io.Pipe when the write side fails.
 func (r *asyncReader) Read(p []byte) (n int, err error) {
 	n, err = r.R.Read(p)
 	if err == io.EOF {
@@ -66,7 +78,8 @@ func (r *asyncReader) Read(p []byte) (n int, err error) {
 	return n, nil
 }
 
-// Close releases the underlying resource if it is non-nil and returns any error encountered during the operation.
+// Close closes the pipe reader. The pipe writer side (and the upstream response body)
+// are already closed by the background goroutine's defer.
 func (r *asyncReader) Close() error {
 	if r.R != nil {
 		return r.R.Close()

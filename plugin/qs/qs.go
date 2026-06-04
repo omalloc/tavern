@@ -17,11 +17,11 @@ import (
 	storagev1 "github.com/omalloc/tavern/api/defined/v1/storage"
 	"github.com/omalloc/tavern/api/defined/v1/storage/object"
 	"github.com/omalloc/tavern/contrib/log"
-	"github.com/omalloc/tavern/metrics"
 	"github.com/omalloc/tavern/pkg/x/runtime"
 	"github.com/omalloc/tavern/plugin"
+	pkgmetrics "github.com/omalloc/tavern/pkg/metrics"
+	"github.com/omalloc/tavern/server"
 	"github.com/omalloc/tavern/storage"
-	"github.com/prometheus/client_golang/prometheus"
 	"github.com/shirou/gopsutil/v4/cpu"
 	"github.com/shirou/gopsutil/v4/disk"
 	"github.com/shirou/gopsutil/v4/mem"
@@ -320,21 +320,20 @@ func (qs *QsPlugin) tickMonitor(ctx context.Context) {
 
 // tickRequestsPerSecond periodically collects and smooths the requests per second metrics.
 func (qs *QsPlugin) tickRequestsPerSecond(ctx context.Context) {
-	metricsMap := map[string]*metrics.CounterSmoother{
-		"200": {Alpha: 0.3},
-		"206": {Alpha: 0.3},
-		"400": {Alpha: 0.3},
-		"401": {Alpha: 0.3},
-		"403": {Alpha: 0.3},
-		"404": {Alpha: 0.3},
-		"499": {Alpha: 0.3},
-		"500": {Alpha: 0.3},
-		"502": {Alpha: 0.3},
-		"503": {Alpha: 0.3},
-		"504": {Alpha: 0.3},
+	metricsMap := map[string]*pkgmetrics.CounterSmoother{
+		"200": pkgmetrics.NewCounterSmoother(0.3),
+		"206": pkgmetrics.NewCounterSmoother(0.3),
+		"400": pkgmetrics.NewCounterSmoother(0.3),
+		"401": pkgmetrics.NewCounterSmoother(0.3),
+		"403": pkgmetrics.NewCounterSmoother(0.3),
+		"404": pkgmetrics.NewCounterSmoother(0.3),
+		"499": pkgmetrics.NewCounterSmoother(0.3),
+		"500": pkgmetrics.NewCounterSmoother(0.3),
+		"502": pkgmetrics.NewCounterSmoother(0.3),
+		"503": pkgmetrics.NewCounterSmoother(0.3),
+		"504": pkgmetrics.NewCounterSmoother(0.3),
 	}
-	totalSmoother := &metrics.CounterSmoother{Alpha: 0.3}
-	lastTotal := float64(0)
+	totalSmoother := pkgmetrics.NewCounterSmoother(0.3)
 
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
@@ -347,37 +346,19 @@ func (qs *QsPlugin) tickRequestsPerSecond(ctx context.Context) {
 			return
 		case <-ticker.C:
 
-			familys, err := prometheus.DefaultGatherer.Gather()
-			if err != nil {
-				continue
-			}
+			snapshot := server.RequestsCounter().Snapshot()
 
 			// 临时存储本次收集的平滑值
 			tempData := make(map[string]float64)
 			totalCounter := float64(0)
-			for _, mf := range familys {
-				if mf.GetName() == "tr_tavern_requests_code_total" {
-					for _, metric := range mf.GetMetric() {
-						for _, label := range metric.Label {
-							if label.GetName() == "code" {
-								code := label.GetValue()
-								val := metric.GetCounter().GetValue()
-								totalCounter += val
-								if smoother, ok := metricsMap[code]; ok {
-									smoothedValue := smoother.Update(val)
-									tempData[code] = smoothedValue
-								}
-							}
-						}
-					}
+			for code, val := range snapshot {
+				totalCounter += val
+				if smoother, ok := metricsMap[code]; ok {
+					smoothedValue := smoother.Update(val)
+					tempData[code] = smoothedValue
 				}
 			}
 			rps := totalSmoother.Update(totalCounter)
-			if totalCounter <= lastTotal {
-				_ = totalSmoother.Update(0)
-				rps = 0
-			}
-			lastTotal = totalCounter
 
 			// 使用写锁更新共享数据
 			qs.mu.Lock()

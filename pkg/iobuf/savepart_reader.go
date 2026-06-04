@@ -149,14 +149,19 @@ func (s *savepartReader) writeBlock(eof bool) error {
 	return nil
 }
 
-// SavepartReader wraps an io.ReadCloser and allows controlled, buffered reading with custom event handling for specific cases.
-// Parameters:
-// - r: Source io.ReadCloser to read data from.
-// - blockSize: Size of each data block to buffer before triggering an event.
-// - startAt: Initial offset in bytes to start reading from.
-// - flushBuffer: Callback triggered when a block is successfully written.
-// - flushFailed: Callback triggered if an error occurs during block processing.
-// - cleanup: Callback executed when the reader is closed.
+// SavepartReader wraps an io.ReadCloser and splits the incoming byte stream into
+// fixed-size blocks (blockSize). Each time a full block is accumulated the onSuccess
+// callback is invoked synchronously — the caller typically writes the block to a
+// cache file on disk.
+//
+// startAt is an initial byte offset; when > 0 the reader enters skip mode, discarding
+// data until it aligns to a block boundary, then begins buffering.
+//
+// onError is called on read or write errors. onClose is called once when Close is
+// invoked, receiving the eof flag.
+//
+// This is the synchronous version; see [SavepartAsyncReader] for the async variant
+// used in the production caching path.
 func SavepartReader(r io.ReadCloser, blockSize uint64, startAt uint,
 	flushBuffer EventSuccess, flushFailed EventError, cleanup EventClose) io.ReadCloser {
 	skip := false

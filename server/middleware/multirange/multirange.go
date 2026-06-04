@@ -10,7 +10,7 @@ import (
 
 	configv1 "github.com/omalloc/tavern/api/defined/v1/middleware"
 	"github.com/omalloc/tavern/contrib/log"
-	"github.com/omalloc/tavern/metrics"
+	"github.com/omalloc/tavern/pkg/traces"
 	xhttp "github.com/omalloc/tavern/pkg/x/http"
 	"github.com/omalloc/tavern/pkg/x/http/rangecontrol"
 	"github.com/omalloc/tavern/server/middleware"
@@ -90,10 +90,10 @@ func Middleware(c *configv1.Middleware) (middleware.Middleware, func(), error) {
 					}
 
 					// copy request-id
-					newMetric := metrics.FromContext(req.Context()).Clone()
-					newMetric.RequestID = fmt.Sprintf("%s@%d-%d", newMetric.RequestID, ra.Start, ra.End)
+					newTr := traces.FromContext(req.Context()).Clone()
+					newTr.RequestID = fmt.Sprintf("%s@%d-%d", newTr.RequestID, ra.Start, ra.End)
 					workerRequest := req.Clone(req.Context())
-					workerRequest = workerRequest.WithContext(metrics.NewContext(workerRequest.Context(), newMetric))
+					workerRequest = workerRequest.WithContext(traces.NewContext(workerRequest.Context(), newTr))
 
 					workerRequest.Header.Set("Range", ra.String())
 					raResp, err3 := origin.RoundTrip(workerRequest)

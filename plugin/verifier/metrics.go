@@ -1,6 +1,9 @@
 package verifier
 
-import "github.com/prometheus/client_golang/prometheus"
+import (
+	"github.com/prometheus/client_golang/prometheus"
+	_ "github.com/omalloc/tavern/pkg/metrics" // ensures DefaultRegisterer is replaced before our init
+)
 
 var (
 	// Labels http.StatusCode  if code is 0 means network problem.

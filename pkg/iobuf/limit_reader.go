@@ -2,7 +2,10 @@ package iobuf
 
 import "io"
 
-// limitedReadCloser is a structure that wraps an io.ReadCloser, imposing a maximum read limit and tracking read bytes.
+// limitedReadCloser wraps an io.ReadCloser and imposes a maximum byte limit via
+// io.LimitReader. It tracks the total bytes read in the n field for diagnostics.
+// It also exposes a WriteTo method that uses io.Copy for zero-copy forwarding
+// (useful when the reader serves an HTTP response body).
 type limitedReadCloser struct {
 	R       io.ReadCloser
 	limited io.Reader
@@ -10,7 +13,10 @@ type limitedReadCloser struct {
 	n       int
 }
 
-// LimitReadCloser wraps an io.ReadCloser, limiting the number of bytes that can be read from it up to a specified maximum.
+// LimitReadCloser returns an io.ReadCloser that reads at most max bytes from the
+// underlying reader before returning io.EOF. It is used in the caching middleware
+// to cap the response body to the advertised Content-Length (or a range length),
+// preventing over-read.
 func LimitReadCloser(readCloser io.ReadCloser, max int64) io.ReadCloser {
 	return &limitedReadCloser{
 		max:     max,

@@ -3,7 +3,7 @@ package mod
 import (
 	"net/http"
 
-	"github.com/omalloc/tavern/metrics"
+	"github.com/omalloc/tavern/pkg/traces"
 	xhttp "github.com/omalloc/tavern/pkg/x/http"
 )
 
@@ -24,11 +24,11 @@ func wrap(next http.HandlerFunc) http.HandlerFunc {
 
 		fillRequest(req)
 
-		req, metric := metrics.WithRequestMetric(req)
+		req, tr := traces.WithTrace(req)
 
 		rw := xhttp.NewResponseRecorder(w)
 		defer func() {
-			metric.SentResp = rw.SentBytes()
+			tr.SentResp = rw.SentBytes()
 		}()
 
 		next(rw, req)
