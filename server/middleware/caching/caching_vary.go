@@ -339,7 +339,6 @@ func (v *VaryProcessor) evictLRUSubCache(caching *Caching) (string, error) {
 	var (
 		lruVaryData string
 		lruLastRef  = int64(math.MaxInt64)
-		found       bool
 	)
 
 	for _, varyData := range caching.md.VirtualKey {
@@ -350,21 +349,19 @@ func (v *VaryProcessor) evictLRUSubCache(caching *Caching) (string, error) {
 		subMD, err := caching.bucket.Lookup(caching.req.Context(), subID)
 		if err != nil || subMD == nil {
 			// Treat unresolvable entries as the oldest candidates.
-			if !found || lruLastRef > 0 {
+			if lruLastRef > 0 {
 				lruLastRef = 0
 				lruVaryData = varyData
-				found = true
 			}
 			continue
 		}
-		if !found || subMD.LastRefUnix < lruLastRef {
+		if subMD.LastRefUnix < lruLastRef {
 			lruLastRef = subMD.LastRefUnix
 			lruVaryData = varyData
-			found = true
 		}
 	}
 
-	if !found {
+	if lruLastRef == int64(math.MaxInt64) {
 		// Fallback: evict the first entry when no ID could be resolved.
 		lruVaryData = caching.md.VirtualKey[0]
 	}
@@ -374,14 +371,14 @@ func (v *VaryProcessor) evictLRUSubCache(caching *Caching) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("failed to build object id for lru sub-cache %q: %w", lruVaryData, err)
 	}
-	if discardErr := caching.bucket.Discard(context.Background(), lruID); discardErr != nil && !os.IsNotExist(discardErr) {
+	if discardErr := caching.bucket.Discard(caching.req.Context(), lruID); discardErr != nil && !os.IsNotExist(discardErr) {
 		caching.log.Warnf("evictLRUSubCache: discard lru sub-cache %s failed: %v", lruID, discardErr)
 	}
 
 	return lruVaryData, nil
 }
 
-// removeVaryKey removes the first occurrence of key from keys and returns the resulting slice.
+// removeVaryKey removes all occurrences of key from keys and returns the resulting slice.
 func removeVaryKey(keys []string, key string) []string {
 	result := make([]string, 0, len(keys))
 	for _, k := range keys {
