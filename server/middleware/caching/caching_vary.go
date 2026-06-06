@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"net/http"
 	"os"
 	"slices"
@@ -180,10 +181,15 @@ func (v *VaryProcessor) handleNoResponseVary(caching *Caching, resp *http.Respon
 		return nil, ErrHeaderNoMatchVaryData
 	}
 
-	// Check Vary version limit.
+	// Check Vary version limit; if reached, evict the least-recently-used sub-cache.
 	if len(caching.md.VirtualKey) >= v.maxLimit {
-		caching.log.Errorf("vary version exceed limit: %d", len(caching.md.VirtualKey))
-		return nil, ErrVarySizeLimited
+		evicted, err := v.evictLRUSubCache(caching)
+		if err != nil {
+			caching.log.Errorf("vary version exceed limit %d, eviction failed: %v", v.maxLimit, err)
+			return nil, ErrVarySizeLimited
+		}
+		caching.log.Infof("vary version exceed limit %d, evicted lru sub-cache: %s", v.maxLimit, evicted)
+		caching.md.VirtualKey = removeVaryKey(caching.md.VirtualKey, evicted)
 	}
 
 	// Append new Vary data if not already exists.
@@ -274,8 +280,14 @@ func (v *VaryProcessor) upgrade(c *Caching, resp *http.Response, id *object.ID, 
 	virtualKey := varycontrol.Clean(append(c.md.VirtualKey, varyData)...)
 
 	if len(virtualKey) > v.maxLimit {
-		c.log.Errorf("Vary version limit exceeded: %d", len(c.md.VirtualKey))
-		return nil, ErrVarySizeLimited
+		evicted, err := v.evictLRUSubCache(c)
+		if err != nil {
+			c.log.Errorf("Vary version limit exceeded: %d, eviction failed: %v", len(c.md.VirtualKey), err)
+			return nil, ErrVarySizeLimited
+		}
+		c.log.Infof("vary version exceed limit %d, evicted lru sub-cache: %s", v.maxLimit, evicted)
+		c.md.VirtualKey = removeVaryKey(c.md.VirtualKey, evicted)
+		virtualKey = varycontrol.Clean(append(c.md.VirtualKey, varyData)...)
 	}
 
 	c.md.VirtualKey = virtualKey
@@ -313,6 +325,71 @@ func (v *VaryProcessor) upgrade(c *Caching, resp *http.Response, id *object.ID, 
 		ExpiresAt:   c.md.ExpiresAt,
 		Flags:       object.FlagVaryCache,
 	}, nil
+}
+
+// evictLRUSubCache finds and discards the least-recently-used vary sub-cache entry.
+// It iterates over all entries in VirtualKey, looks up each sub-cache's LastRefUnix,
+// discards the one with the oldest access time, and returns its vary data string.
+// If metadata lookup fails for an entry it is treated as the oldest (LastRefUnix = 0).
+func (v *VaryProcessor) evictLRUSubCache(caching *Caching) (string, error) {
+	if len(caching.md.VirtualKey) == 0 {
+		return "", errors.New("no sub-caches available to evict")
+	}
+
+	var (
+		lruVaryData string
+		lruLastRef  = int64(math.MaxInt64)
+		found       bool
+	)
+
+	for _, varyData := range caching.md.VirtualKey {
+		subID, err := newObjectIDFromRequest(caching.req, varyData, caching.opt.IncludeQueryInCacheKey)
+		if err != nil {
+			continue
+		}
+		subMD, err := caching.bucket.Lookup(caching.req.Context(), subID)
+		if err != nil || subMD == nil {
+			// Treat unresolvable entries as the oldest candidates.
+			if !found || lruLastRef > 0 {
+				lruLastRef = 0
+				lruVaryData = varyData
+				found = true
+			}
+			continue
+		}
+		if !found || subMD.LastRefUnix < lruLastRef {
+			lruLastRef = subMD.LastRefUnix
+			lruVaryData = varyData
+			found = true
+		}
+	}
+
+	if !found {
+		// Fallback: evict the first entry when no ID could be resolved.
+		lruVaryData = caching.md.VirtualKey[0]
+	}
+
+	// Discard the chosen sub-cache from the bucket.
+	lruID, err := newObjectIDFromRequest(caching.req, lruVaryData, caching.opt.IncludeQueryInCacheKey)
+	if err != nil {
+		return "", fmt.Errorf("failed to build object id for lru sub-cache %q: %w", lruVaryData, err)
+	}
+	if discardErr := caching.bucket.Discard(context.Background(), lruID); discardErr != nil && !os.IsNotExist(discardErr) {
+		caching.log.Warnf("evictLRUSubCache: discard lru sub-cache %s failed: %v", lruID, discardErr)
+	}
+
+	return lruVaryData, nil
+}
+
+// removeVaryKey removes the first occurrence of key from keys and returns the resulting slice.
+func removeVaryKey(keys []string, key string) []string {
+	result := make([]string, 0, len(keys))
+	for _, k := range keys {
+		if k != key {
+			result = append(result, k)
+		}
+	}
+	return result
 }
 
 // NewVaryProcessor creates a new VaryProcessor with the given options.
