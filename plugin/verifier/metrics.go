@@ -2,6 +2,8 @@ package verifier
 
 import (
 	"github.com/prometheus/client_golang/prometheus"
+
+	pkgmetrics "github.com/omalloc/tavern/pkg/metrics"
 	_ "github.com/omalloc/tavern/pkg/metrics" // ensures DefaultRegisterer is replaced before our init
 )
 
@@ -9,8 +11,7 @@ var (
 	// Labels http.StatusCode  if code is 0 means network problem.
 	//	e.g. 200, 400, 500 ...
 	_metricVerifierRequestsTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
-		Namespace: "tr",
-		Subsystem: "tavern",
+		Namespace: pkgmetrics.Namespace,
 		Name:      "verifier_requests_total",
 		Help:      "Total number of verifier reports",
 	}, []string{"code"})

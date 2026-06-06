@@ -2,13 +2,14 @@ package purge
 
 import (
 	"github.com/prometheus/client_golang/prometheus"
+
+	pkgmetrics "github.com/omalloc/tavern/pkg/metrics"
 	_ "github.com/omalloc/tavern/pkg/metrics" // ensures DefaultRegisterer is replaced before our init
 )
 
 var (
 	_metricPurgeRequestsTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
-		Namespace: "tr",
-		Subsystem: "tavern",
+		Namespace: pkgmetrics.Namespace,
 		Name:      "purge_requests_total",
 		Help:      "Total number of purge requests",
 	}, []string{"code"})
