@@ -16,14 +16,14 @@ import (
 	"sync"
 	"time"
 
-	"github.com/omalloc/tavern/pkg/iobuf"
 	"github.com/paulbellamy/ratecounter"
 
 	"github.com/omalloc/tavern/api/defined/v1/storage"
 	"github.com/omalloc/tavern/api/defined/v1/storage/object"
 	"github.com/omalloc/tavern/contrib/log"
 	"github.com/omalloc/tavern/pkg/algorithm/heavykeeper"
-	"github.com/omalloc/tavern/pkg/algorithm/lru"
+	"github.com/omalloc/tavern/pkg/iobuf"
+	"github.com/omalloc/tavern/storage/eviction"
 	"github.com/omalloc/tavern/storage/indexdb"
 )
 
@@ -44,7 +44,7 @@ type diskBucket struct {
 	hkPromote        *heavykeeper.HeavyKeeper
 	lastPromoteReset time.Time
 	promMu           sync.Mutex
-	cache            *lru.Cache[object.IDHash, storage.Mark]
+	cachePolicy      storage.CacheReplacementPolicy[object.IDHash, storage.Mark]
 	fileFlag         int
 	fileMode         fs.FileMode
 	stop             chan struct{}
@@ -61,11 +61,13 @@ func New(opt *storage.BucketConfig, sharedkv storage.SharedKV) (storage.Bucket, 
 		hasMigration: opt.Migration != nil && opt.Migration.Enabled,
 		weight:       100, // default weight
 		sharedkv:     sharedkv,
-		cache:        lru.New[object.IDHash, storage.Mark](opt.MaxObjectLimit),
 		fileFlag:     os.O_RDONLY,
 		fileMode:     fs.FileMode(0o755),
 		stop:         make(chan struct{}, 1),
 	}
+
+	// 根据配置初始化淘汰策略
+	bucket.cachePolicy = eviction.NewEvictionPolicy(opt.EvictionPolicy, opt.MaxObjectLimit)
 
 	if opt.Migration != nil && opt.Migration.Enabled {
 		// Default width 4096 if not set or small
@@ -97,7 +99,7 @@ func New(opt *storage.BucketConfig, sharedkv storage.SharedKV) (storage.Bucket, 
 	bucket.indexdb = db
 
 	// evict
-	go bucket.evict()
+	bucket.evict()
 
 	// load lru
 	bucket.loadLRU()
@@ -108,12 +110,12 @@ func New(opt *storage.BucketConfig, sharedkv storage.SharedKV) (storage.Bucket, 
 func (d *diskBucket) evict() {
 	clog := log.Context(context.Background())
 
-	ch := make(chan lru.Eviction[object.IDHash, storage.Mark], 100)
-	d.cache.EvictionChannel = ch
+	ch := make(chan storage.Eviction[object.IDHash, storage.Mark], 100)
+	d.cachePolicy.SetEvictionCh(ch)
 
 	clog.Debugf("start evict goroutine for %s", d.ID())
 
-	demote := func(evicted lru.Eviction[object.IDHash, storage.Mark]) error {
+	demote := func(evicted storage.Eviction[object.IDHash, storage.Mark]) error {
 		if d.migration != nil {
 			md, err := d.indexdb.Get(context.Background(), evicted.Key[:])
 			if err != nil {
@@ -128,7 +130,7 @@ func (d *diskBucket) evict() {
 		return nil
 	}
 
-	discard := func(evicted lru.Eviction[object.IDHash, storage.Mark]) {
+	discard := func(evicted storage.Eviction[object.IDHash, storage.Mark]) {
 		fd := evicted.Key.WPath(d.path)
 		clog.Debugf("evict file %s, last-access %d", fd, evicted.Value.LastAccess())
 		_ = d.DiscardWithHash(context.Background(), evicted.Key)
@@ -144,7 +146,7 @@ func (d *diskBucket) evict() {
 				if d.migration != nil {
 
 					if err := demote(evicted); err != nil {
-						log.Warnf("demote failed: %v", err)
+						clog.Warnf("demote failed: %v", err)
 						// fallback to discard
 						discard(evicted)
 						continue
@@ -187,9 +189,12 @@ func (d *diskBucket) loadLRU() {
 			if meta != nil {
 				mdCount++
 				chunkCount += meta.Chunks.Count()
-				d.cache.Set(meta.ID.Hash(), storage.NewMark(meta.LastRefUnix, meta.Refs))
+				d.cachePolicy.Set(meta.ID.Hash(), storage.NewMark(meta.LastRefUnix, meta.Refs))
+					if ss, ok := d.cachePolicy.(interface{ SetSize(object.IDHash, int64) }); ok {
+						ss.SetSize(meta.ID.Hash(), int64(meta.Size))
+					}
 
-				// store service domains
+					// store service domains
 				// TODO: add Debounce incr
 				if u, err1 := url.Parse(meta.ID.Path()); err1 == nil {
 					_, _ = d.sharedkv.Incr(context.Background(), []byte(fmt.Sprintf("if/domain/%s", u.Host)), 1)
@@ -350,8 +355,11 @@ func (d *diskBucket) Store(ctx context.Context, meta *object.Metadata) error {
 	meta.Headers.Del("X-Protocol-Cache")
 	meta.Headers.Del("X-Protocol-Request-Id")
 
-	if !d.cache.Has(meta.ID.Hash()) {
-		d.cache.Set(meta.ID.Hash(), storage.NewMark(meta.LastRefUnix, meta.Refs))
+	if !d.cachePolicy.Has(meta.ID.Hash()) {
+		d.cachePolicy.Set(meta.ID.Hash(), storage.NewMark(meta.LastRefUnix, meta.Refs))
+		if ss, ok := d.cachePolicy.(interface{ SetSize(object.IDHash, int64) }); ok {
+			ss.SetSize(meta.ID.Hash(), int64(meta.Size))
+		}
 	}
 
 	if err := d.indexdb.Set(ctx, meta.ID.Bytes(), meta); err != nil {
@@ -373,7 +381,7 @@ func (d *diskBucket) Store(ctx context.Context, meta *object.Metadata) error {
 }
 
 func (d *diskBucket) touch(_ context.Context, id *object.ID) {
-	mark := d.cache.Get(id.Hash())
+	mark := d.cachePolicy.Get(id.Hash())
 	if mark == nil {
 		return
 	}
@@ -384,7 +392,7 @@ func (d *diskBucket) touch(_ context.Context, id *object.ID) {
 	mark.SetLastAccess(time.Now().Unix())
 	mark.SetRefs(mark.Refs() + 1)
 
-	d.cache.Set(id.Hash(), *mark)
+	d.cachePolicy.Set(id.Hash(), *mark)
 
 	// 如果迁移开启的，则进行计算窗口期是否满足迁移配置
 	if d.hasMigration {
@@ -449,7 +457,7 @@ func (d *diskBucket) Allow() int {
 
 // Objects implements storage.Bucket.
 func (d *diskBucket) Objects() uint64 {
-	return uint64(d.cache.Len())
+	return uint64(d.cachePolicy.Len())
 }
 
 func (d *diskBucket) Path() string {
@@ -457,10 +465,10 @@ func (d *diskBucket) Path() string {
 }
 
 func (d *diskBucket) TopK(k int) []string {
-	arr := d.cache.TopK(k)
+	arr := d.cachePolicy.TopK(k)
 	ret := make([]string, 0, len(arr))
 	for i := range arr {
-		mark := d.cache.Peek(arr[i])
+		mark := d.cachePolicy.Peek(arr[i])
 		md, _ := d.indexdb.Get(context.Background(), arr[i][:])
 		if md != nil {
 			ret = append(ret, fmt.Sprintf("%s@@%s@@%d", md.ID.Path(), time.Unix(int64(mark.LastAccess()), 0).Format(time.DateTime), mark.Refs()))

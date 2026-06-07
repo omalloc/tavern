@@ -47,6 +47,7 @@ func mergeConfig(global *globalBucketOption, bucket *conf.Bucket) *storage.Bucke
 		DBType:         bucket.DBType,
 		DBPath:         bucket.DBPath,
 		MaxObjectLimit: bucket.MaxObjectLimit,
+		EvictionPolicy: global.EvictionPolicy,
 		Migration:      global.Migration, // migration config
 		DBConfig:       bucket.DBConfig,  // custom db config
 	}

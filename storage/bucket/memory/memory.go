@@ -17,12 +17,14 @@ import (
 	"github.com/omalloc/tavern/api/defined/v1/storage"
 	"github.com/omalloc/tavern/api/defined/v1/storage/object"
 	"github.com/omalloc/tavern/contrib/log"
-	"github.com/omalloc/tavern/pkg/algorithm/lru"
 	"github.com/omalloc/tavern/pkg/iobuf"
+	"github.com/omalloc/tavern/storage/eviction"
 	"github.com/omalloc/tavern/storage/indexdb"
 )
 
 var _ storage.Bucket = (*memoryBucket)(nil)
+
+
 
 type memoryBucket struct {
 	fs        vfs.FS
@@ -34,7 +36,7 @@ type memoryBucket struct {
 	sharedkv  storage.SharedKV
 	indexdb   storage.IndexDB
 	migration storage.Migration
-	cache     *lru.Cache[object.IDHash, storage.Mark]
+	cachePolicy     storage.CacheReplacementPolicy[object.IDHash, storage.Mark]
 	fileFlag  int
 	fileMode  fs.FileMode
 	maxSize   uint64
@@ -51,12 +53,14 @@ func New(opt *storage.BucketConfig, sharedkv storage.SharedKV) (storage.Bucket, 
 		storeType: opt.Type,
 		weight:    100, // default weight
 		sharedkv:  sharedkv,
-		cache:     lru.New[object.IDHash, storage.Mark](opt.MaxObjectLimit), // in-memory object size
 		fileFlag:  os.O_RDONLY,
 		fileMode:  fs.FileMode(0o755),
 		maxSize:   1024 * 1024 * 100, // e.g. 100 MB
 		stop:      make(chan struct{}, 1),
 	}
+
+	// 根据配置初始化淘汰策略
+	mb.cachePolicy = eviction.NewEvictionPolicy(opt.EvictionPolicy, opt.MaxObjectLimit)
 
 	// create indexdb only in-memory
 	db, err := indexdb.Create("pebble", indexdb.NewOption(mb.dbPath, indexdb.WithType("pebble")))
@@ -167,11 +171,11 @@ func (m *memoryBucket) DiscardWithMetadata(ctx context.Context, meta *object.Met
 
 // Exist implements [storage.Bucket].
 func (m *memoryBucket) Exist(ctx context.Context, id []byte) bool {
-	return m.cache.Has(object.IDHash(id))
+	return m.cachePolicy.Has(object.IDHash(id))
 }
 
 func (m *memoryBucket) Objects() uint64 {
-	return uint64(m.cache.Len())
+	return uint64(m.cachePolicy.Len())
 }
 
 // Expired implements [storage.Bucket].
@@ -204,7 +208,7 @@ func (m *memoryBucket) Lookup(ctx context.Context, id *object.ID) (*object.Metad
 
 // Touch implements [storage.Bucket].
 func (m *memoryBucket) Touch(ctx context.Context, id *object.ID) {
-	mark := m.cache.Get(id.Hash())
+	mark := m.cachePolicy.Get(id.Hash())
 	if mark == nil {
 		return
 	}
@@ -215,7 +219,7 @@ func (m *memoryBucket) Touch(ctx context.Context, id *object.ID) {
 	mark.SetLastAccess(time.Now().Unix())
 	mark.SetRefs(mark.Refs() + 1)
 
-	m.cache.Set(id.Hash(), *mark)
+	m.cachePolicy.Set(id.Hash(), *mark)
 }
 
 // Path implements [storage.Bucket].
@@ -225,10 +229,10 @@ func (m *memoryBucket) Path() string {
 
 // TopK implements [storage.Bucket].
 func (m *memoryBucket) TopK(k int) []string {
-	arr := m.cache.TopK(k)
+	arr := m.cachePolicy.TopK(k)
 	ret := make([]string, 0, len(arr))
 	for i := range arr {
-		mark := m.cache.Peek(arr[i])
+		mark := m.cachePolicy.Peek(arr[i])
 		md, _ := m.indexdb.Get(context.Background(), arr[i][:])
 		if md != nil {
 			ret = append(ret, fmt.Sprintf("%s@@%s@@%d", md.ID.Path(), time.Unix(int64(mark.LastAccess()), 0).Format(time.DateTime), mark.Refs()))
@@ -261,7 +265,10 @@ func (m *memoryBucket) Store(ctx context.Context, meta *object.Metadata) error {
 	}
 
 	// update lru
-	m.cache.Set(meta.ID.Hash(), storage.NewMark(meta.LastRefUnix, meta.Refs))
+	m.cachePolicy.Set(meta.ID.Hash(), storage.NewMark(meta.LastRefUnix, meta.Refs))
+	if ss, ok := m.cachePolicy.(interface{ SetSize(object.IDHash, int64) }); ok {
+		ss.SetSize(meta.ID.Hash(), int64(meta.Size))
+	}
 
 	// save domains counter
 	if u, err1 := url.Parse(meta.ID.Path()); err1 == nil {

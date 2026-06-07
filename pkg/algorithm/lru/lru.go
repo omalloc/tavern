@@ -3,13 +3,9 @@ package lru
 import (
 	"sync"
 
+	"github.com/omalloc/tavern/api/defined/v1/storage"
 	"github.com/omalloc/tavern/contrib/container/list"
 )
-
-type Eviction[K comparable, V any] struct {
-	Key   K
-	Value V
-}
 
 type Cache[K comparable, V any] struct {
 	// If len > UpperBound, cache will automatically evict
@@ -21,7 +17,7 @@ type Cache[K comparable, V any] struct {
 	freqs           *list.List[*listEntry[K, V]]
 	len             int
 	mu              sync.RWMutex
-	EvictionChannel chan<- Eviction[K, V]
+	EvictionChannel chan<- storage.Eviction[K, V]
 }
 
 type cacheEntry[K comparable, V any] struct {
@@ -45,6 +41,10 @@ func New[K comparable, V any](cap int) *Cache[K, V] {
 		c.LowerBound = cap
 	}
 	return c
+}
+
+func (c *Cache[K, V]) SetEvictionCh(ch chan<- storage.Eviction[K, V]) {
+	c.EvictionChannel = ch
 }
 
 // Has checks if the cache contains the given key, without incrementing the frequency.
@@ -199,7 +199,7 @@ func (c *Cache[K, V]) evict(count int) int {
 			entry := entryNode.Value.(*cacheEntry[K, V])
 			if c.EvictionChannel != nil {
 				select {
-				case c.EvictionChannel <- Eviction[K, V]{
+				case c.EvictionChannel <- storage.Eviction[K, V]{
 					Key:   entry.key,
 					Value: entry.value,
 				}:

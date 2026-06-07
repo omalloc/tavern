@@ -27,6 +27,7 @@ type (
 		AsyncLoad      bool             `json:"async_load" yaml:"async_load"`             // load metadata async
 		SliceSize      uint64           `json:"slice_size" yaml:"slice_size"`             // slice size for each part
 		MaxObjectLimit int              `json:"max_object_limit" yaml:"max_object_limit"` // max object limit, upper Bound discard
+		EvictionPolicy string           `json:"eviction_policy" yaml:"eviction_policy"`   // eviction policy: lru (default), gdsf
 		Migration      *MigrationConfig `json:"migration" yaml:"migration"`               // migration config
 		DBConfig       map[string]any   `json:"db_config" yaml:"db_config"`               // custom db config
 	}
