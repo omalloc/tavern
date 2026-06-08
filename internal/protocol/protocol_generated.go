@@ -3,15 +3,16 @@ package protocol
 
 // 与网关交互的常量定义表
 const (
-	ProtocolRequestIDKey     = "X-Request-ID"
-	ProtocolCacheStatusKey   = "X-Cache"
+	ProtocolRequestIDKey = "X-Request-ID"
+	ProtocolCacheStatusKey = "X-Cache"
 	ProtocolForceStoreMemory = "X-FS-Mem"
 	ProtocolPrefetchCacheKey = "X-Prefetch"
-	ProtocolCacheTime        = "X-CacheTime"
-	InternalTraceKey         = "i-xtrace"
-	InternalStoreUrl         = "i-x-store-url"
-	InternalSwapfile         = "i-x-swapfile"
-	InternalFillRangePercent = "i-x-fp"
-	InternalCacheErrCode     = "i-x-ct-code"
-	InternalUpstreamAddr     = "i-x-ups-addr"
+	ProtocolCacheTime = "X-CacheTime"
+	InternalLayerKey = "TR-LAYER"
+	InternalTraceKey = "TR-TRACE"
+	InternalStoreUrl = "TR-STOREURL"
+	InternalSwapfile = "TR-SWAPFILE"
+	InternalFillRangePercent = "TR-FP"
+	InternalCacheErrCode = "TR-ERRCODE"
+	InternalUpstreamAddr = "TR-UPS-ADDR"
 )

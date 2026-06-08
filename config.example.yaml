@@ -122,6 +122,8 @@ storage:
 upstream:
   balancing: wrr
   address:
+    # Point to Layer 3 (upstream gateway). In a three-layer deployment this
+    # is the L3 OpenResty, NOT the origin server directly.
     - http://127.0.0.1:8000
     # - unix:///tmp/gw.sock
   max_idle_conns: 1000

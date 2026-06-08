@@ -8,6 +8,15 @@
 $ go generate ./...
 ```
 
+This generates both:
+- `protocol_generated.go` — Go constants for Tavern (L2)
+- `protocol.lua` — Lua module for the OpenResty gateways (L1 & L3)
+
+To vendor the Lua module into the gateway project:
+```shell
+$ cd gateway && make vendor-protocol
+```
+
 
 ### ProtocolRequestIDKey
 

@@ -308,6 +308,10 @@ func (c *Caching) doProxy(req *http.Request, subRequest bool) (*http.Response, e
 
 	c.log.Debugf("doProxy begin with %s", proxyReq.URL.String())
 
+	// Inject TR-LAYER: 2 so the upstream gateway (L3) identifies this as
+	// a back-to-origin request from the cache layer (L2).
+	proxyReq.Header.Set(protocol.InternalLayerKey, "2")
+
 	resp, err := c.proxyClient.Do(proxyReq, c.opt.CollapsedRequest, c.opt.CollapsedRequestWaitTimeout.AsDuration())
 	if err != nil {
 		return resp, err
