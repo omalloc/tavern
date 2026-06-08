@@ -203,6 +203,7 @@ func getContents(c *Caching, reqChunks []uint32, from uint32) (io.ReadCloser, in
 			toByte := min(c.md.Size-1, uint64(availableChunks[index]*uint32(partSize))-1)
 
 			// Request is automatically cloned by getUpstreamReader
+			cacheFillrangeTotal.WithLabelValues(c.bucket.StoreType()).Inc()
 			reader, err := c.getUpstreamReader(fromByte, toByte, true)
 			if err != nil {
 				_ = chunkFile.Close()
@@ -223,6 +224,7 @@ func getContents(c *Caching, reqChunks []uint32, from uint32) (io.ReadCloser, in
 	toByte := min(c.md.Size-1, tailChunkSize)
 
 	// Request is automatically cloned by getUpstreamReader
+	cacheFillrangeTotal.WithLabelValues(c.bucket.StoreType()).Inc()
 	reader, err := c.getUpstreamReader(fromByte, toByte, true)
 	if err != nil {
 		return nil, 0, err

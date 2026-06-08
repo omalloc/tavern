@@ -19,6 +19,8 @@ import (
 	"github.com/omalloc/tavern/pkg/iobuf"
 	"github.com/paulbellamy/ratecounter"
 
+	"github.com/prometheus/client_golang/prometheus"
+
 	"github.com/omalloc/tavern/api/defined/v1/storage"
 	"github.com/omalloc/tavern/api/defined/v1/storage/object"
 	"github.com/omalloc/tavern/contrib/log"
@@ -131,6 +133,7 @@ func (d *diskBucket) evict() {
 	discard := func(evicted lru.Eviction[object.IDHash, storage.Mark]) {
 		fd := evicted.Key.WPath(d.path)
 		clog.Debugf("evict file %s, last-access %d", fd, evicted.Value.LastAccess())
+		cacheEvictionsTotal.WithLabelValues(d.ID(), "lru").Inc()
 		_ = d.DiscardWithHash(context.Background(), evicted.Key)
 	}
 
@@ -149,6 +152,7 @@ func (d *diskBucket) evict() {
 						discard(evicted)
 						continue
 					}
+					cacheEvictionsTotal.WithLabelValues(d.ID(), "demote").Inc()
 					continue
 				}
 
@@ -261,9 +265,12 @@ func (d *diskBucket) discard(ctx context.Context, md *object.Metadata) error {
 	clog := log.Context(ctx)
 
 	// 先删除 db 中的数据, 避免被其他协程 HIT
+	start := time.Now()
 	if err := d.indexdb.Delete(ctx, md.ID.Bytes()); err != nil {
+		indexdbOperationDuration.With(prometheus.Labels{"op": "delete", "bucket": d.ID()}).Observe(time.Since(start).Seconds())
 		clog.Warnf("failed to delete metadata %s: %v", md.ID.WPath(d.path), err)
 	}
+	indexdbOperationDuration.With(prometheus.Labels{"op": "delete", "bucket": d.ID()}).Observe(time.Since(start).Seconds())
 
 	// 如果缓存为1级，则清除全部子缓存(vary)
 	if md.IsVary() && len(md.VirtualKey) > 0 {
@@ -316,7 +323,9 @@ func (d *diskBucket) Iterate(ctx context.Context, fn func(*object.Metadata) erro
 
 // Lookup implements storage.Bucket.
 func (d *diskBucket) Lookup(ctx context.Context, id *object.ID) (*object.Metadata, error) {
+	start := time.Now()
 	md, err := d.indexdb.Get(ctx, id.Bytes())
+	indexdbOperationDuration.With(prometheus.Labels{"op": "get", "bucket": d.ID()}).Observe(time.Since(start).Seconds())
 	if err == nil && md != nil {
 		d.touch(ctx, id)
 	}
@@ -354,9 +363,14 @@ func (d *diskBucket) Store(ctx context.Context, meta *object.Metadata) error {
 		d.cache.Set(meta.ID.Hash(), storage.NewMark(meta.LastRefUnix, meta.Refs))
 	}
 
+	start := time.Now()
 	if err := d.indexdb.Set(ctx, meta.ID.Bytes(), meta); err != nil {
+		indexdbOperationDuration.With(prometheus.Labels{"op": "set", "bucket": d.ID()}).Observe(time.Since(start).Seconds())
 		return err
 	}
+	indexdbOperationDuration.With(prometheus.Labels{"op": "set", "bucket": d.ID()}).Observe(time.Since(start).Seconds())
+
+	cacheObjectsGauge.WithLabelValues(d.ID()).Set(float64(d.cache.Len()))
 
 	// 写入域名 counter
 	if u, err1 := url.Parse(meta.ID.Path()); err1 == nil {
@@ -404,6 +418,8 @@ func (d *diskBucket) touch(_ context.Context, id *object.ID) {
 				if d.migration != nil {
 					if err := d.migration.Promote(context.Background(), id, d); err != nil {
 						log.Warnf("promote %s failed: %v", id.Key(), err)
+					} else {
+						cacheMigrationTotal.WithLabelValues(d.ID(), "promote").Inc()
 					}
 				}
 			}()
@@ -540,6 +556,7 @@ func (d *diskBucket) Migrate(ctx context.Context, id *object.ID, dest storage.Bu
 		return err
 	}
 
+	cacheMigrationTotal.WithLabelValues(d.ID(), "demote").Inc()
 	return nil
 }
 

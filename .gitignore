@@ -37,3 +37,5 @@ config*.yaml
 # Editor/IDE
 .idea/
 .vscode/
+.codegraph/
+reasonix.toml

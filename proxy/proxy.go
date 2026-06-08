@@ -16,6 +16,8 @@ import (
 	"github.com/omalloc/proxy/selector/random"
 
 	"github.com/omalloc/tavern/proxy/singleflight"
+
+	"github.com/prometheus/client_golang/prometheus"
 )
 
 type Tuple struct {
@@ -70,21 +72,32 @@ func (r *ReverseProxy) Do(req *http.Request, collapsed bool, waitTimeout time.Du
 		return nil, selector.ErrNoAvailable
 	}
 
+	upAddr := current.Address()
+
 	defer done(req.Context(), selector.DoneInfo{
 		Err:           err,
 		BytesSent:     true,
 		BytesReceived: true,
 	})
 
-	client := r.find(current.Address())
+	client := r.find(upAddr)
+
+	trackedDo := func() (*http.Response, error) {
+		start := time.Now()
+		resp, doErr := client.Do(req)
+		upstreamRequestDuration.With(prometheus.Labels{"addr": upAddr}).Observe(time.Since(start).Seconds())
+		if doErr != nil {
+			upstreamErrorsTotal.With(prometheus.Labels{"addr": upAddr, "error_type": classifyError(doErr)}).Inc()
+		}
+		return resp, doErr
+	}
+
 	if !collapsed {
-		return client.Do(req)
-		//return r.uncompress(client.Do(req))
+		return trackedDo()
 	}
 
 	ret := <-r.flight.DoChan(onceKey(req), waitTimeout, func() (*http.Response, error) {
-		//return r.uncompress(client.Do(req))
-		return client.Do(req)
+		return trackedDo()
 	})
 
 	if ret.Err != nil {
@@ -92,10 +105,10 @@ func (r *ReverseProxy) Do(req *http.Request, collapsed bool, waitTimeout time.Du
 	}
 
 	if ret.Shared {
-		// if shared, process the response copied.
+		collapseRequestsTotal.WithLabelValues("shared").Inc()
 		return ret.Val, ret.Err
 	}
-	// return directly
+	collapseRequestsTotal.WithLabelValues("primary").Inc()
 	return ret.Val, ret.Err
 }
 
@@ -216,4 +229,19 @@ func WithActivateMock(fn func(client *http.Client)) Option {
 	return func(r *ReverseProxy) {
 		r.activateMock = fn
 	}
+}
+
+// classifyError maps an upstream request error to a metric label value.
+func classifyError(err error) string {
+	if err == nil {
+		return "none"
+	}
+	if oe, ok := err.(interface{ Timeout() bool }); ok && oe.Timeout() {
+		return "timeout"
+	}
+	// net.Error covers both temporary and permanent network errors.
+	if _, ok := err.(net.Error); ok {
+		return "network"
+	}
+	return "unknown"
 }
