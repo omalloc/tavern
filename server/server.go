@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"dario.cat/mergo"
 	"github.com/cloudflare/tableflip"
@@ -68,6 +69,14 @@ func NewServer(flip *tableflip.Upgrader, config *conf.Bootstrap, plugins []plugi
 			IdleTimeout:       servConfig.IdleTimeout,
 			ReadHeaderTimeout: servConfig.ReadHeaderTimeout,
 			MaxHeaderBytes:    servConfig.MaxHeaderBytes,
+			ConnState: func(_ net.Conn, state http.ConnState) {
+				switch state {
+				case http.StateNew:
+					connectionsActive.Inc()
+				case http.StateClosed, http.StateHijacked:
+					connectionsActive.Dec()
+				}
+			},
 		},
 		plugins:      plugins,
 		flip:         flip,
@@ -212,6 +221,11 @@ func (s *HTTPServer) newServeMux() *http.ServeMux {
 // buildHandler ... Cache 主流程入口
 func (s *HTTPServer) buildHandler(tripper http.RoundTripper) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
+		start := time.Now()
+		defer func() {
+			requestDuration.WithLabelValues(req.Method).Observe(time.Since(start).Seconds())
+		}()
+
 		var clog = log.Context(req.Context())
 		var resp *http.Response
 		var err error

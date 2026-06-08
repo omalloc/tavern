@@ -25,6 +25,8 @@ import (
 	"github.com/omalloc/tavern/proxy"
 	"github.com/omalloc/tavern/server/middleware"
 	storagev1 "github.com/omalloc/tavern/storage"
+
+	"github.com/prometheus/client_golang/prometheus"
 )
 
 const BYPASS = "BYPASS"
@@ -142,6 +144,7 @@ func Middleware(c *configv1.Middleware) (middleware.Middleware, func(), error) {
 					// set cache-staus header BYPASS
 					resp.Header.Set(protocol.ProtocolCacheStatusKey, BYPASS)
 				}
+				cacheRequestTotal.WithLabelValues(storage.BYPASS.String(), caching.bucket.StoreType()).Inc()
 				return
 			}
 
@@ -155,6 +158,7 @@ func Middleware(c *configv1.Middleware) (middleware.Middleware, func(), error) {
 					headers := make(http.Header)
 					xhttp.CopyHeader(caching.md.Headers, headers)
 					headers.Set("Content-Range", fmt.Sprintf("bytes */%d", caching.md.Size))
+					cacheRequestTotal.WithLabelValues(caching.cacheStatus.String(), caching.bucket.StoreType()).Inc()
 					return nil, xhttp.NewBizError(http.StatusRequestedRangeNotSatisfiable, headers)
 				}
 
@@ -166,21 +170,25 @@ func Middleware(c *configv1.Middleware) (middleware.Middleware, func(), error) {
 				if err != nil {
 					// fd leak
 					closeBody(resp)
+					cacheRequestTotal.WithLabelValues(caching.cacheStatus.String(), caching.bucket.StoreType()).Inc()
 					return nil, err
 				}
 
 				// response now
 				resp, err = caching.processor.postCacheProcessor(caching, req, resp)
+				cacheRequestTotal.WithLabelValues(caching.cacheStatus.String(), caching.bucket.StoreType()).Inc()
 				return
 			}
 
 			// full MISS
 			resp, err = caching.doProxy(req, false)
 			if err != nil {
+				cacheRequestTotal.WithLabelValues(caching.cacheStatus.String(), caching.bucket.StoreType()).Inc()
 				return nil, err
 			}
 
 			resp, err = processor.postCacheProcessor(caching, req, resp)
+			cacheRequestTotal.WithLabelValues(caching.cacheStatus.String(), caching.bucket.StoreType()).Inc()
 			return
 		})
 
@@ -456,6 +464,7 @@ func (c *Caching) flushbufferSlice(respRange xhttp.ContentRange) (iobuf.EventSuc
 	writerBuffer := func(buf []byte, index uint32, current uint64, eof bool) error {
 		f, wpath, err := c.bucket.WriteChunkFile(c.req.Context(), c.id, index)
 		if err != nil {
+			cacheChunkWriteTotal.With(prometheus.Labels{"result": "failed", "store_type": c.bucket.StoreType()}).Inc()
 			return err
 		}
 		defer func() {
@@ -497,6 +506,7 @@ func (c *Caching) flushbufferSlice(respRange xhttp.ContentRange) (iobuf.EventSuc
 		c.log.Debugf("flushBuffer wpath=%s isChunked=%t fileChunk=%d/%d", wpath, chunked, index+1, endPart)
 
 		if nn, err1 := f.Write(buf); err1 != nil || nn != len(buf) {
+			cacheChunkWriteTotal.With(prometheus.Labels{"result": "failed", "store_type": c.bucket.StoreType()}).Inc()
 			return fmt.Errorf("writeBuffer wpath[%s] chunk[%d] failed nn[%d] want[%d] err %v", wpath, index+1, nn, len(buf), err1)
 		}
 
@@ -508,6 +518,7 @@ func (c *Caching) flushbufferSlice(respRange xhttp.ContentRange) (iobuf.EventSuc
 			_ = c.bucket.Store(c.req.Context(), c.md)
 		}
 
+		cacheChunkWriteTotal.With(prometheus.Labels{"result": "success", "store_type": c.bucket.StoreType()}).Inc()
 		return nil
 	}
 
@@ -530,5 +541,6 @@ func (c *Caching) flushbufferSlice(respRange xhttp.ContentRange) (iobuf.EventSuc
 // flushFailed flush cache file to bucket failed callback
 func (c *Caching) flushFailed(err error) {
 	c.log.Errorf("flush body to disk failed: %v", err)
+	cacheFlushFailedTotal.WithLabelValues(c.bucket.StoreType()).Inc()
 	_ = c.bucket.DiscardWithMetadata(c.req.Context(), c.md)
 }

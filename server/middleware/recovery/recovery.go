@@ -51,6 +51,7 @@ func Middleware(c *configv1.Middleware) (middleware.Middleware, func(), error) {
 					// Here you can log the panic or handle it as needed
 					log.Context(req.Context()).Errorf("middleware recovery: %s \n%s", r, runtime.PrintStackTrace(4))
 
+					panicTotal.Inc()
 					failCount.Add(1)
 					if failCount.Load() >= int32(opts.FailCountThreshold) {
 						log.Context(req.Context()).Errorf("middleware recovery: reached fail count threshold (%d), healthy now fail.", opts.FailCountThreshold)
