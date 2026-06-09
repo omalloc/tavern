@@ -1,123 +1,272 @@
 <h1 align="center">Tavern</h1>
 
-<p align="center"><a href="https://tavern.omalloc.com/" target="_blank"><img src="https://www.omalloc.com/app_banner.webp?raw=true"></a></p>
 <p align="center">
-<a href="https://github.com/omalloc/tavern/actions"><img src="https://github.com/omalloc/tavern/actions/workflows/go.yml/badge.svg?branch=main" alt="Build Status"></a>
-<a href="https://pkg.go.dev/github.com/omalloc/tavern"><img src="https://pkg.go.dev/badge/github.com/omalloc/tavern" alt="GoDoc"></a>
-<a href="https://codecov.io/gh/omalloc/tavern"><img src="https://codecov.io/gh/omalloc/tavern/master/graph/badge.svg" alt="codeCov"></a>
-<a href="https://goreportcard.com/report/github.com/omalloc/tavern"><img src="https://goreportcard.com/badge/github.com/omalloc/tavern" alt="Report Card"></a>
-<a href="https://github.com/omalloc/tavern/blob/main/LICENSE"><img src="https://img.shields.io/github/license/omalloc/tavern" alt="License"></a>
+  <a href="https://tavern.omalloc.com/" target="_blank">
+    <img src="https://www.omalloc.com/app_banner.webp?raw=true" alt="Tavern Banner">
+  </a>
 </p>
 
-<p align="center" x-desc="Sponsor">
+<p align="center">
+  <a href="https://github.com/omalloc/tavern/actions"><img src="https://github.com/omalloc/tavern/actions/workflows/go.yml/badge.svg?branch=main" alt="Build Status"></a>
+  <a href="https://pkg.go.dev/github.com/omalloc/tavern"><img src="https://pkg.go.dev/badge/github.com/omalloc/tavern" alt="Go Reference"></a>
+  <a href="https://goreportcard.com/report/github.com/omalloc/tavern"><img src="https://goreportcard.com/badge/github.com/omalloc/tavern" alt="Go Report Card"></a>
+  <a href="https://github.com/omalloc/tavern/blob/main/LICENSE"><img src="https://img.shields.io/github/license/omalloc/tavern" alt="License"></a>
+  <a href="https://codecov.io/gh/omalloc/tavern"><img src="https://codecov.io/gh/omalloc/tavern/master/graph/badge.svg" alt="Code Coverage"></a>
 </p>
 
-<p align="center" x-desc="desc">
-Tavern is a high-performance HTTP caching proxy server implemented in Go. It leverages a modern service framework to deliver a flexible architecture, strong extensibility, and excellent performance.
+<p align="center">
+  <strong>High-performance HTTP caching proxy for the modern edge</strong><br>
+  Built in Go with an LSM-tree-backed object index, multi-tier storage, and zero-downtime upgrades.
 </p>
 
 Other languages: [简体中文](README.zh-CN.md)
 
-## ✨ Features
+---
 
-- **Core Caching Capabilities**:
-  - [x] Prefetch
-  - [x] Cache Push (URL/DIR Push)
-    - [x] URL mark expired
-    - [x] URL cache file delete
-    - [x] DIR mark expired
-    - [x] DIR cache file delete
-  - [x] Fuzzy refresh (Fuzzing fetch)
-  - [x] Auto refresh
-  - [x] Cache validation
-  - [x] Hot migration
-  - [x] Warm/cold split
-  - [x] Upstream collapse request (request coalescing)
-  - [ ] ~~Image compression adaptation (WebP support)~~
-  - [x] Vary-based versioned cache (Vary cache)
-  - [x] Headers rewrite
-  - [x] Multiple Range requests support
-  - [x] CacheFile verification (CRC checksum / EdgeMode)
-- **Modern Architecture**:
-  - Built on the **Kratos** framework for high extensibility and module reuse
-  - **Plugin System**: Extend core business logic via plugins
-  - **Storage Layer**: Decoupled storage backend with memory, disk, and custom implementations
-- **Reliability & Operations**:
-  - **Graceful Upgrade**: Zero-downtime config reload and binary upgrade
-  - **Failure Recovery**: Built-in panic recovery and error handling
-  - **Observability**: Native Prometheus metrics and PProf profiling
-- **Traffic Control**:
-  - Header rewrite (Rewrite)
-  - Upstream load balancing (via custom Selector)
+## What is Tavern?
 
-## Ecosystem
+Tavern is an HTTP caching proxy server designed for CDN edge nodes. It sits between clients and upstream origin servers, caching responses on disk with an LSM-tree-backed object index — supporting massive numbers of small files without memory pressure.
 
-- Cache CRC verification service: [CRC-Center](https://github.com/omalloc/trust-receive)
+Unlike traditional caches that hold all metadata in RAM, Tavern uses embedded databases to index cached objects, enabling efficient operation with limited memory while serving millions of cache entries.
 
-## 🚀 Quick Start
+## Features
 
-### Requirements
+### Caching
 
-- Go 1.24+
-- Linux/macOS (Graceful restart may be limited on Windows)
+- **Request coalescing** — Collapses concurrent requests for the same resource into a single upstream fetch, preventing thundering herd
+- **Fuzzy refresh** — Asynchronously revalidates objects nearing expiry with a configurable jitter rate, smoothing origin traffic
+- **Range request caching** — Full support for single and multi-range requests, with configurable fill percentage
+- **Vary-based versioning** — Respects HTTP `Vary` headers for multi-variant caching, with configurable ignore keys to maximize hit ratio
+- **Conditional caching** — `ETag` / `If-None-Match` / `If-Modified-Since` validation and revalidation
+- **Cache prefetch** — Proactively warm cache entries based on configurable rules
+- **Header rewriting** — Modify request and response headers through declarative YAML rules
 
-### 1. Fetch & Configure
+### Storage
 
-Clone the repository and prepare the configuration file:
+- **LSM-tree indexing** — Object metadata stored in PebbleDB or NutsDB, decoupling cache capacity from RAM size
+- **Multi-tier buckets** — Hot / warm / cold storage tiers with automatic promotion and demotion based on access patterns
+- **Bucket selection** — Hash-ring or round-robin distribution of cache objects across storage buckets
+- **Slice-based disk storage** — Objects divided into configurable-sized chunks (default 1 MB) for efficient I/O
+- **Directory-aware routing** — Per-directory cache key indexing for efficient directory-level purge operations
+- **Eviction policies** — FIFO, LRU, and LFU with per-bucket object limits
+
+### Cache Invalidation (PURGE)
+
+- **URL purge** — Invalidate individual cached objects, either soft (mark expired) or hard (delete)
+- **Directory purge** — Bulk invalidate all cached objects under a URL path prefix
+- **IP allowlisting** — Restrict purge access to trusted control-plane hosts
+- **Inverted indexing** — SharedKV-backed index for fast directory purge without full scans
+
+### Operations & Observability
+
+- **Zero-downtime upgrades** — Binary hot-upgrade via `SIGUSR2` using Cloudflare's `tableflip`; no dropped connections
+- **Graceful restart** — `SIGHUP` triggers a clean stop and restart
+- **Prometheus metrics** — Built-in `/metrics` endpoint with counters, histograms, and gauges across cache, proxy, server, and storage layers
+- **PProf profiling** — Go runtime profiling at `/debug/pprof/` with optional basic auth
+- **Access logging** — Structured access logs with optional AES encryption to file
+- **Health check** — `/healthz` endpoint for load balancer integration
+
+### Extensibility
+
+- **Plugin system** — Extend functionality through Go plugins registered at startup. Built-in plugins include:
+  - `purge` — Cache invalidation (see above)
+  - `qs` — Real-time query stats with SSE streaming and TopK hot-URL tracking
+  - `verifier` — Asynchronous CRC integrity verification against an external service
+- **Middleware pipeline** — Onion-model middleware chain (Recovery → Rewrite → MultiRange → Caching). Register custom middleware via `init()`.
+- **Storage backends** — Pluggable bucket implementations (disk, memory, raw disk, custom) and index DB engines
+
+### Toolchain
+
+| Tool | Description |
+|:---|:---|
+| `tavern` | Main caching proxy server |
+| `tq` | Access log query tool — parse and filter encrypted access logs |
+| `ttop` | Real-time TUI dashboard — live cache metrics, hot URLs, CPU/memory via SSE |
+
+## Quick Start
+
+### Prerequisites
+
+- Go 1.25+
+- Linux or macOS (graceful upgrade uses Unix signals)
+
+### Install & Run
 
 ```bash
 git clone https://github.com/omalloc/tavern.git
 cd tavern
 
-# Initialize with example configuration
+# Create your config from the example
 cp config.example.yaml config.yaml
-```
 
-### 2. Run the Service
-
-**Development mode:**
-
-```bash
-# Loads config.yaml from the current directory by default
-go run main.go
-```
-
-**Build and run:**
-
-```bash
+# Build and run
 make build
 ./bin/tavern -c config.yaml
 ```
 
-### 3. Debugging & Monitoring
+### Docker
 
-Once started, you can monitor and debug using the following (ports depend on `config.yaml`):
+```bash
+docker build -t tavern .
+docker run -p 8080:8080 -v ./config.yaml:/usr/local/tavern/config.yaml tavern
+```
 
-- **Metrics**: Access `/metrics` for Prometheus metrics (default prefix `tr_tavern_`)
-- **PProf**: When debug mode is enabled, visit `/debug/pprof/` for profiling
+### Systemd
 
-## 🧩 Project Structure
+A systemd unit file is provided at `.build/systemd/system/tavern.service`. Install it with:
 
-- `api/`: Protocol and interface definitions
-- `conf/`: Configuration definitions and parsing
-- `plugin/`: Plugin interfaces and implementations
-- `proxy/`: Core proxy and forwarding logic
-- `server/`: HTTP server implementation and middleware
-- `storage/`: Storage engine abstractions and implementations
+```bash
+cp .build/systemd/system/tavern.service /etc/systemd/system/
+systemctl enable --now tavern
+```
 
-## 📚 Documentation
+Reload the configuration without downtime:
 
-- PURGE design and operations: [docs/purge.md](docs/purge.md)
+```bash
+systemctl kill -s SIGUSR2 tavern
+```
 
-## 📝 License
+### Verify
 
-[MIT License](LICENSE)
+```bash
+# Health check
+curl http://localhost:8080/healthz
 
-## 🙏 Acknowledgments
+# Version info
+curl http://localhost:8080/version
 
-This project integrates and is inspired by the following excellent open-source projects. Many thanks:
+# Prometheus metrics
+curl http://localhost:8080/metrics
+```
 
-- **[Kratos](https://github.com/go-kratos/kratos)**: A powerful microservice framework that inspired Tavern's modern architecture.
-- **[Pebble](https://github.com/cockroachdb/pebble)**: A high-performance key-value store by CockroachDB, powering efficient persistent caching.
-- **[tableflip](https://github.com/cloudflare/tableflip)**: Cloudflare's graceful upgrade solution enabling zero-downtime restarts.
-- **[Prometheus Go Client](https://github.com/prometheus/client_golang)**: Strong observability support for metrics.
+## Configuration
+
+Tavern uses a single YAML configuration file. Key sections:
+
+```yaml
+server:
+  addr: ":8080"
+  middleware:          # Middleware chain: recovery, rewrite, multirange, caching
+    - name: caching
+      options:
+        fuzzy_refresh: true
+        collapsed_request: true
+        vary_ignore_key: ["Cookie"]
+
+upstream:
+  balancing: wrr       # Weighted round-robin
+  address:
+    - http://10.0.0.1:8000
+    - http://10.0.0.2:8000
+
+storage:
+  db_type: pebble      # pebble | nutsdb
+  eviction_policy: lru # fifo | lru | lfu
+  selection_policy: hashring
+  slice_size: 1048576  # 1 MB chunks
+  migration:           # Hot/cold tiering
+    enabled: true
+    promote:
+      min_hits: 10
+      window: 1m
+    demote:
+      min_hits: 2
+      window: 5m
+  buckets:
+    - path: /cache/hot
+      type: hot
+      max_object_limit: 10000000
+    - path: /cache/warm
+      type: warm
+```
+
+> [!TIP]
+> See [`config.example.yaml`](config.example.yaml) for a complete annotated configuration with all options.
+
+## Architecture
+
+```
+Client Request
+  └── server (HTTPServer)
+        ├── Internal routes: /metrics, /healthz, /debug/pprof/, /version
+        └── Cache pipeline:
+              ├── Recovery      — panic recovery, failure threshold
+              ├── Rewrite       — request/response header transformation
+              ├── MultiRange    — multi-range request handling
+              └── Caching       — cache key computation, object lookup,
+              │                   chunked reads, fuzzy refresh, request
+              │                   collapsing, Vary handling, async revalidation
+              └── Upstream Proxy — connection pooling, node selection,
+                  (innermost)      singleflight coalescing
+```
+
+### Storage Layer
+
+```
+Caching Middleware
+  └── Storage.Selector (hashring / roundrobin)
+        └── Bucket (disk / memory / rawdisk)
+              ├── Object files (chunked, 1 MB slices)
+              └── IndexDB (PebbleDB / NutsDB) — object metadata
+        └── SharedKV — cross-bucket counters, inverted indexes
+        └── DirAware — directory-level cache key routing
+        └── Migrator (optional) — hot/warm/cold tier promotion & demotion
+```
+
+## Project Structure
+
+```
+tavern/
+├── api/defined/v1/     Interface contracts (storage, plugin, middleware)
+├── cmd/
+│   ├── tq/             Access log query CLI
+│   └── top/            Real-time TUI monitoring (ttop)
+├── conf/               Configuration struct definitions
+├── contrib/            Internal framework (app lifecycle, logging, config)
+├── docs/               Documentation (architecture, features, ecosystem)
+├── internal/protocol/  Generated protocol constants (headers)
+├── pkg/                Utility packages (metrics, traces, encoding, iobuf)
+├── plugin/
+│   ├── purge/          Cache invalidation (URL + directory)
+│   ├── qs/             Query stats, SSE, TopK tracking
+│   └── verifier/       CRC integrity verification
+├── proxy/              Upstream reverse proxy with connection pooling
+├── server/
+│   ├── middleware/     Middleware chain (recovery, rewrite, multirange, caching)
+│   └── mod/            Request wrapping, trace injection
+├── storage/
+│   ├── bucket/         Bucket implementations (disk, memory, empty)
+│   ├── indexdb/        Index DB implementations (pebble, nutsdb)
+│   ├── selector/       Bucket selection (hashring, roundrobin)
+│   ├── sharedkv/       Cross-bucket key-value store
+│   └── diraware/       Directory-aware cache routing
+└── tests/              Integration tests (require running tavern)
+```
+
+## Documentation
+
+| Document | Description |
+|:---|:---|
+| [Ecosystem Overview](docs/ecosystem/overview.md) | Three-tier CDN architecture and full request lifecycle |
+| [Protocol Specification](docs/ecosystem/protocol.md) | Internal TR-*/X-* header definitions |
+| [Tavern Project](docs/tavern/01-project.md) | Project overview, tech stack, quick start |
+| [Tavern Features](docs/tavern/02-features.md) | Complete feature reference |
+| [Tavern Architecture](docs/tavern/03-architecture.md) | Deep dive: middleware, storage, proxy, plugin systems |
+| [PURGE Design](docs/purge.md) | Cache invalidation design, API, and internals |
+| [CDN Cache Analysis](docs/cdn-cache-analysis.md) | Tavern vs Squid vs ATS comparison |
+| [Grafana Dashboard](docs/Grafana-Prometheus-Dashboard.json) | Pre-built Grafana dashboard template |
+
+## Ecosystem
+
+- **Tavern Gateway** — OpenResty-based L1/L3 gateway complementing Tavern's L2 cache
+- **[CRC-Center](https://github.com/omalloc/trust-receive)** — Cache file integrity verification service (used by the `verifier` plugin)
+
+## Acknowledgments
+
+Tavern builds on excellent open-source work:
+
+- **[Kratos](https://github.com/go-kratos/kratos)** — Microservice framework inspiring the modular architecture
+- **[Pebble](https://github.com/cockroachdb/pebble)** — CockroachDB's LSM-tree K/V store, powering the object index
+- **[tableflip](https://github.com/cloudflare/tableflip)** — Cloudflare's zero-downtime process upgrade
+- **[NutsDB](https://github.com/nutsdb/nutsdb)** — Pure Go embeddable K/V store (alternative index backend)
+- **[Prometheus Go Client](https://github.com/prometheus/client_golang)** — Metrics instrumentation
