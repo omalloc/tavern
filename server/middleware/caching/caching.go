@@ -299,6 +299,8 @@ func (c *Caching) getUpstreamReader(fromByte, toByte uint64, async bool) (io.Rea
 			closeBody(resp)
 			return nil, err
 		}
+		// 206 Partial Content is expected for range requests.
+		// If we get a different status code, it may indicate an issue with the upstream response.
 		if resp.StatusCode != http.StatusPartialContent {
 			c.log.Warnf("getUpstreamReader doProxy[chunk]: status code: %d, bod size: %d", resp.StatusCode, resp.ContentLength)
 			return resp, xhttp.NewBizError(resp.StatusCode, resp.Header)

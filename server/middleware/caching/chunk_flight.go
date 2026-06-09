@@ -1,6 +1,7 @@
 package caching
 
 import (
+	"fmt"
 	"io"
 	"net/http"
 	"sync"
@@ -63,7 +64,15 @@ func (g *ChunkFlightGroup) Do(key string, waiter time.Duration, fn func() (*http
 			time.Sleep(waiter)
 		}
 
-		resp, err := fn()
+		// check for panic to avoid leaving waiters hanging indefinitely
+		resp, err := func() (r *http.Response, e error) {
+			defer func() {
+				if rec := recover(); rec != nil {
+					e = fmt.Errorf("chunk flight panic: %v", rec)
+				}
+			}()
+			return fn()
+		}()
 
 		g.mu.Lock()
 		// Snapshot pipes and remove the key so no further callers

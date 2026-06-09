@@ -1,6 +1,7 @@
 package caching
 
 import (
+	"fmt"
 	"io"
 	"net/http"
 	"sync"
@@ -17,7 +18,7 @@ import (
 type objectFlightCall struct {
 	resp  *http.Response
 	pipes []*io.PipeWriter
-	mu    sync.Mutex    // protects pipes during registration and snapshot
+	mu    sync.Mutex     // protects pipes during registration and snapshot
 	wg    sync.WaitGroup // signals that resp headers / err are ready
 	err   error
 }
@@ -82,7 +83,15 @@ func (g *ObjectFlightGroup) Do(key string, waiter time.Duration, fn func() (*htt
 		time.Sleep(waiter)
 	}
 
-	resp, err := fn()
+	// check for panic to avoid leaving waiters hanging indefinitely
+	resp, err := func() (r *http.Response, e error) {
+		defer func() {
+			if rec := recover(); rec != nil {
+				e = fmt.Errorf("object flight panic: %v", rec)
+			}
+		}()
+		return fn()
+	}()
 
 	g.mu.Lock()
 	delete(g.m, key)
