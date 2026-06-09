@@ -214,6 +214,26 @@ func TestChunkFlight_ConcurrentSameKey(t *testing.T) {
 	}
 }
 
+func TestChunkFlight_PanicRecovery(t *testing.T) {
+	g := &ChunkFlightGroup{}
+
+	pr, shared, err := g.Do("panic-key", 0, func() (*http.Response, error) {
+		panic("boom")
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if shared {
+		t.Fatal("expected leader, not shared")
+	}
+
+	_, readErr := io.ReadAll(pr)
+	_ = pr.Close()
+	if readErr == nil || !strings.Contains(readErr.Error(), "panic") {
+		t.Fatalf("expected panic error from pipe, got %v", readErr)
+	}
+}
+
 // ---------------------------------------------------------------------------
 // ObjectFlightGroup tests
 // ---------------------------------------------------------------------------
