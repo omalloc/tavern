@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/kelindar/bitmap"
+	"github.com/prometheus/client_golang/prometheus"
 
 	"github.com/omalloc/tavern/api/defined/v1/event"
 	configv1 "github.com/omalloc/tavern/api/defined/v1/middleware"
@@ -138,6 +139,13 @@ func Middleware(c *configv1.Middleware) (middleware.Middleware, func(), error) {
 
 			// Wire up chunk-level collapsed forwarding.
 			caching.chunkFlight = chunkFlight
+
+			// Increment cacheRequestTotal on every response path (BYPASS,
+			// HIT, MISS-collapsed, MISS-direct).  Placed as a defer so it
+			// fires after cacheStatus is finalized.
+			defer func() {
+				cacheRequestTotal.WithLabelValues(caching.cacheStatus.String(), caching.bucket.StoreType()).Inc()
+			}()
 
 			// err to BYPASS caching
 			if err != nil {
@@ -313,13 +321,23 @@ func (c *Caching) getUpstreamReader(fromByte, toByte uint64, async bool) (io.Rea
 	// trimming). This mirrors Squid's collapsed_forwarding at the chunk
 	// level, with automatic range union.
 	if c.chunkFlight != nil && c.opt.CollapsedRequest && c.id != nil {
-		reader, shared, err := c.chunkFlight.Do(c.id.HashStr(), fromByte, toByte,
+		reader, _, err := c.chunkFlight.Do(c.id.HashStr(), fromByte, toByte,
 			c.opt.CollapsedRequestWaitTimeout.AsDuration(), doSubRequest)
-		if shared {
-			c.cacheStatus = storage.CachePartHit
-		}
+		// Both leader and shared callers are partial hits: at least one
+		// chunk was missing and is being fetched from origin.
+
+		// c.cacheStatus = storage.CachePartMiss
+		// if shared {
+		// 	c.cacheStatus = storage.CachePartHit
+		// }
 		return reader, err
 	}
+
+	// Any path that reaches getUpstreamReader is a partial hit: at least
+	// one chunk was missing from cache and is now being fetched from
+	// origin.  Set the status here for the async and sync paths (the
+	// chunk-flight path above already sets it before returning).
+	// c.cacheStatus = storage.CachePartMiss
 
 	if async {
 		return iobuf.AsyncReadCloser(func() (*http.Response, error) {
@@ -498,6 +516,7 @@ func (c *Caching) flushbufferSlice(respRange xhttp.ContentRange) (iobuf.EventSuc
 	writerBuffer := func(buf []byte, index uint32, current uint64, eof bool) error {
 		f, wpath, err := c.bucket.WriteChunkFile(c.req.Context(), c.id, index)
 		if err != nil {
+			cacheChunkWriteTotal.With(prometheus.Labels{"result": "failed", "store_type": c.bucket.StoreType()}).Inc()
 			return err
 		}
 		defer func() {
@@ -539,6 +558,7 @@ func (c *Caching) flushbufferSlice(respRange xhttp.ContentRange) (iobuf.EventSuc
 		c.log.Debugf("flushBuffer wpath=%s isChunked=%t fileChunk=%d/%d", wpath, chunked, index+1, endPart)
 
 		if nn, err1 := f.Write(buf); err1 != nil || nn != len(buf) {
+			cacheChunkWriteTotal.With(prometheus.Labels{"result": "failed", "store_type": c.bucket.StoreType()}).Inc()
 			return fmt.Errorf("writeBuffer wpath[%s] chunk[%d] failed nn[%d] want[%d] err %v", wpath, index+1, nn, len(buf), err1)
 		}
 
@@ -550,6 +570,7 @@ func (c *Caching) flushbufferSlice(respRange xhttp.ContentRange) (iobuf.EventSuc
 			_ = c.bucket.Store(c.req.Context(), c.md)
 		}
 
+		cacheChunkWriteTotal.With(prometheus.Labels{"result": "success", "store_type": c.bucket.StoreType()}).Inc()
 		return nil
 	}
 
@@ -572,5 +593,6 @@ func (c *Caching) flushbufferSlice(respRange xhttp.ContentRange) (iobuf.EventSuc
 // flushFailed flush cache file to bucket failed callback
 func (c *Caching) flushFailed(err error) {
 	c.log.Errorf("flush body to disk failed: %v", err)
+	cacheFlushFailedTotal.WithLabelValues(c.bucket.StoreType()).Inc()
 	_ = c.bucket.DiscardWithMetadata(c.req.Context(), c.md)
 }

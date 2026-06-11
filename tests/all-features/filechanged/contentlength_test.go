@@ -109,7 +109,7 @@ func TestContengLenChanged(t *testing.T) {
 }
 
 func TestContentLenShorter(t *testing.T) {
-	f := e2e.GenFile(t, 1<<20)
+	f := e2e.GenFile(t, 1048576)
 	f2 := e2e.GenFile(t, 1048570)
 
 	t.Run("test content-length shorter old file", func(t *testing.T) {
@@ -121,6 +121,7 @@ func TestContentLenShorter(t *testing.T) {
 		rr := xhttp.NewRequestRange(1, 400000)
 
 		resp, err := case1.Do(func(r *http.Request) {
+			r.Header.Set("X-Request-Id", t.Name())
 			r.Header.Set("Range", rr.String())
 		})
 
@@ -147,6 +148,7 @@ func TestContentLenShorter(t *testing.T) {
 		rr := xhttp.NewRequestRange(600000, 0) // bytes=600000-
 
 		resp, err := case1.Do(func(r *http.Request) {
+			r.Header.Set("X-Request-Id", t.Name())
 			r.Header.Set("Range", rr.String())
 		})
 
@@ -172,6 +174,7 @@ func TestContentLenShorter(t *testing.T) {
 		rr := xhttp.NewRequestRange(0, 0)
 
 		resp, err := case1.Do(func(r *http.Request) {
+			r.Header.Set("X-Request-Id", t.Name())
 			r.Header.Set("Range", rr.String())
 		})
 
