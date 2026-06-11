@@ -10,16 +10,19 @@ import (
 	"testing"
 	"time"
 
-	"github.com/omalloc/tavern/pkg/e2e"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/omalloc/tavern/pkg/e2e"
 )
 
 func TestCollapsedForwardingObjectFlight(t *testing.T) {
 	f := e2e.GenFile(t, 2<<20)
-	var originCallCount atomic.Int32
 
 	t.Run("test Collapsed Forwarding ObjectFlight Collapse", func(t *testing.T) {
+
+		var originCallCount atomic.Int32
+
 		case1 := e2e.New("http://objflight.example.com/cf/object/collapse.bin", e2e.RespCallbackFile(f, func(w http.ResponseWriter, r *http.Request) {
 			originCallCount.Add(1)
 			time.Sleep(80 * time.Millisecond) // window for concurrent registrations
@@ -33,7 +36,7 @@ func TestCollapsedForwardingObjectFlight(t *testing.T) {
 
 		const N = 5
 		var wg sync.WaitGroup
-		start := make(chan struct{})
+		start := make(chan struct{}, N)
 		bodies := make([]string, N)
 		codes := make([]int, N)
 		xCaches := make([]string, N)
@@ -43,6 +46,8 @@ func TestCollapsedForwardingObjectFlight(t *testing.T) {
 			go func(idx int) {
 				defer wg.Done()
 				<-start
+
+				t.Logf("started for caller %d", idx)
 
 				resp, err := case1.Do(func(r *http.Request) {
 					r.Header.Set("X-Request-Idx", strconv.Itoa(idx))
@@ -84,11 +89,18 @@ func TestCollapsedForwardingObjectFlight(t *testing.T) {
 		assert.True(t, hasMiss, "at least one response should report MISS")
 	})
 
+	t.Run("PURGE", func(t *testing.T) {
+		e2e.Purge(t, "http://objflight.example.com/cf/object/collapse.bin")
+	})
+
 	t.Run("test Collapsed Forwarding ObjectFlight Sequential", func(t *testing.T) {
+		var originCallCount atomic.Int32
+
 		originCallCount.Store(0)
 
 		case1 := e2e.New("http://objflight.example.com/cf/object/sequential.bin", e2e.RespCallbackFile(f, func(w http.ResponseWriter, r *http.Request) {
 			originCallCount.Add(1)
+
 			w.Header().Set("Cache-Control", "max-age=10")
 			w.Header().Set("ETag", "obj-flight-etag")
 		}))
@@ -100,13 +112,16 @@ func TestCollapsedForwardingObjectFlight(t *testing.T) {
 
 		// Sequential requests should not be collapsed.
 		for i := 0; i < N; i++ {
+			t.Logf("starting request %d", i)
+
 			resp, err := case1.Do(func(r *http.Request) {
 				r.Header.Set("X-Request-Idx", strconv.Itoa(i))
 			})
 
 			require.NoError(t, err, "request %d should not error", i)
-
 			bodies[i] = e2e.HashBody(resp)
+
+			resp.Body.Close()
 		}
 
 		assert.Equal(t, int32(1), originCallCount.Load(),
@@ -118,21 +133,30 @@ func TestCollapsedForwardingObjectFlight(t *testing.T) {
 
 	})
 
+	t.Run("PURGE", func(t *testing.T) {
+		e2e.Purge(t, "http://objflight.example.com/cf/object/sequential.bin")
+	})
+
 	t.Run("test Collapsed Forwarding ObjectFlight KeyIsolation", func(t *testing.T) {
-		originCallCount.Store(0)
+		var originCallCount atomic.Int32
 
 		case1 := e2e.New("http://keys.example.com/cf/object/", func(w http.ResponseWriter, r *http.Request) {
 			originCallCount.Add(1)
 			time.Sleep(80 * time.Millisecond)
 
 			w.Header().Set("Cache-Control", "max-age=10")
+			w.WriteHeader(http.StatusOK)
+
+			_, _ = w.Write([]byte(r.URL.Path))
 		})
 		defer case1.Close()
 
-		var wg sync.WaitGroup
-		start := make(chan struct{})
+		keys := []string{"key-a", "key-b", "key-c"}
 
-		for _, key := range []string{"key-a", "key-b", "key-c"} {
+		var wg sync.WaitGroup
+		start := make(chan struct{}, len(keys))
+
+		for _, key := range keys {
 			wg.Add(1)
 			go func(k string) {
 				defer wg.Done()
@@ -144,8 +168,10 @@ func TestCollapsedForwardingObjectFlight(t *testing.T) {
 				})
 
 				require.NoError(t, err)
-				io.Copy(io.Discard, resp.Body)
+				buf, _ := io.ReadAll(resp.Body)
 				resp.Body.Close()
+
+				assert.Equal(t, "/cf/object/"+k, string(buf), "response body should match requested key")
 			}(key)
 		}
 
@@ -158,15 +184,22 @@ func TestCollapsedForwardingObjectFlight(t *testing.T) {
 			"different URLs should have independent object flights")
 
 	})
+
+	t.Run("PURGE", func(t *testing.T) {
+		e2e.PurgeMethod(t, "http://keys.example.com/cf/object/", true)
+	})
+
 }
 
 func TestCollapsedForwardingChunkFlight(t *testing.T) {
 	file := e2e.GenFile(t, 3<<20) // 3MB → 6 chunks at 512KB
-	var originCallCount atomic.Int32
 
 	t.Run("test Collapsed Forwarding ChunkFlight", func(t *testing.T) {
+		var originCallCount atomic.Int32
+
 		case1 := e2e.New("http://chunkflight.example.com/cf/chunk/collapse.bin", e2e.RespCallbackFile(file, func(w http.ResponseWriter, r *http.Request) {
 			originCallCount.Add(1)
+
 			w.Header().Set("Cache-Control", "max-age=30")
 			w.Header().Set("ETag", file.MD5)
 		}))
@@ -189,15 +222,20 @@ func TestCollapsedForwardingChunkFlight(t *testing.T) {
 
 		const N = 3
 		var wg sync.WaitGroup
-		start := make(chan struct{})
+		start := make(chan struct{}, N)
 		bodies := make([]string, N)
 		codes := make([]int, N)
+		xCaches := make([]string, N)
+		ranges := make([]string, N)
+		cls := make([]string, N)
 
 		for i := 0; i < N; i++ {
 			wg.Add(1)
 			go func(idx int) {
 				defer wg.Done()
 				<-start
+
+				t.Logf("started for caller %d", idx)
 
 				resp1, err1 := case1.Do(func(r *http.Request) {
 					r.Header.Set("Range", "bytes=524288-2097151")
@@ -206,9 +244,13 @@ func TestCollapsedForwardingChunkFlight(t *testing.T) {
 				require.NoError(t, err1, "caller %d: request should not error", idx)
 				defer resp1.Body.Close()
 
-				body, _ := io.ReadAll(resp1.Body)
-				bodies[idx] = string(body)
+				hashStr := e2e.HashBody(resp1)
+
+				bodies[idx] = string(hashStr)
 				codes[idx] = resp1.StatusCode
+				xCaches[idx] = resp1.Header.Get("X-Cache")
+				ranges[idx] = resp1.Header.Get("Content-Range")
+				cls[idx] = strconv.Itoa(int(resp1.ContentLength))
 			}(i)
 		}
 
@@ -222,12 +264,14 @@ func TestCollapsedForwardingChunkFlight(t *testing.T) {
 		for i := 0; i < N; i++ {
 			assert.Equal(t, http.StatusPartialContent, codes[i], "caller %d: status mismatch", i)
 			assert.NotEmpty(t, bodies[i], "caller %d: body should not be empty", i)
+
+			t.Logf("caller %d: hash: %s range: %s X-Cache: %s Content-Length: %s", i, bodies[i], ranges[i], xCaches[i], cls[i])
 		}
 
 		// Verify body correctness: compare against the source file.
 		expected := e2e.HashFile(file.Path, 524288, 2097151-524288+1)
 		for i := 0; i < N; i++ {
-			actual := e2e.SumMD5([]byte(bodies[i]))
+			actual := bodies[i]
 			assert.Equal(t, expected, actual, "caller %d: body hash mismatch", i)
 		}
 
@@ -237,9 +281,11 @@ func TestCollapsedForwardingChunkFlight(t *testing.T) {
 	})
 
 	t.Run("test Collapsed Forwarding ChunkFlight KeyIsolation", func(t *testing.T) {
-		originCallCount.Store(0)
+		var originCallCount atomic.Int32
+
 		case1 := e2e.New("http://chunkflight.example.com/cf/chunk/keys.bin", e2e.RespCallbackFile(file, func(w http.ResponseWriter, r *http.Request) {
 			originCallCount.Add(1)
+
 			w.Header().Set("Cache-Control", "max-age=30")
 			w.Header().Set("ETag", file.MD5)
 		}))
@@ -257,15 +303,14 @@ func TestCollapsedForwardingChunkFlight(t *testing.T) {
 
 		time.Sleep(300 * time.Millisecond)
 
-		originCallCount.Store(0)
-
 		// Phase 2 — request two different missing ranges concurrently.
 		// Range A: bytes=0-524287 (needs chunk 0, not cached)
 		// Range B: bytes=1048576-2097151 (needs chunk 2+, not cached)
 		// Different chunk flight keys → independent origin calls.
 		var wg sync.WaitGroup
-		start := make(chan struct{})
+
 		ranges := []string{"bytes=0-524287", "bytes=1048576-2097151"}
+		start := make(chan struct{}, len(ranges))
 		errs := make([]error, len(ranges))
 
 		for i, rng := range ranges {
@@ -275,12 +320,15 @@ func TestCollapsedForwardingChunkFlight(t *testing.T) {
 				<-start
 
 				resp2, e := case1.Do(func(r *http.Request) {
+					t.Logf("started for caller %d with range %s", idx, rng)
+
 					r.Header.Set("Range", rng)
 				})
 				if e != nil {
 					errs[idx] = e
 					return
 				}
+
 				io.Copy(io.Discard, resp2.Body)
 				resp2.Body.Close()
 			}(i, rng)
@@ -298,5 +346,10 @@ func TestCollapsedForwardingChunkFlight(t *testing.T) {
 		assert.Equal(t, int32(2), originCallCount.Load(),
 			"different byte ranges should use independent chunk flights")
 
+	})
+
+	t.Run("PURGE", func(t *testing.T) {
+		e2e.Purge(t, "http://chunkflight.example.com/cf/chunk/collapse.bin")
+		e2e.Purge(t, "http://chunkflight.example.com/cf/chunk/keys.bin")
 	})
 }

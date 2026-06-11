@@ -74,10 +74,6 @@ plugin:
         - "localhost"
         - "@"
       log_path: ./logs/purge.log
-  - name: watchdog
-    options:
-      check_interval: 1s
-      timeout_threshold: 3
   - name: verifier
     options:
       endpoint: https://crc-svc.omalloc.com/receive
