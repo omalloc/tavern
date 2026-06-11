@@ -174,11 +174,14 @@ func DumpResp(resp *http.Response) {
 	fmt.Println(string(buf))
 }
 
-func Purge(t *testing.T, url string) {
+func PurgeMethod(t *testing.T, url string, dir bool) {
 	resp, err := New(url, func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusBadGateway)
 	}).Do(func(r *http.Request) {
 		r.Method = "PURGE"
+		if dir {
+			r.Header.Set("Purge-Type", "dir,hard")
+		}
 	})
 
 	assert.NoError(t, err, "purge should not error")
@@ -188,4 +191,8 @@ func Purge(t *testing.T, url string) {
 	if dump.Load() {
 		t.Logf("Purge %s success", url)
 	}
+}
+
+func Purge(t *testing.T, url string) {
+	PurgeMethod(t, url, false)
 }
