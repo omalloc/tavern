@@ -281,19 +281,18 @@ func (c *Caching) lazilyRespond(req *http.Request, start, end int64) (*http.Resp
 func (c *Caching) getUpstreamReader(fromByte, toByte uint64, async bool) (io.ReadCloser, error) {
 	// get from origin request header
 	rawRange := c.req.Header.Get("Range")
-	newRange := fmt.Sprintf("bytes=%d-%d", fromByte, toByte)
-	req := c.req.Clone(context.Background())
-	req.Header.Set("Range", newRange)
-	// add request-id [range]
-	// req.Header.Set("X-Request-ID", fmt.Sprintf("%s-%d", req.Header.Get(appctx.ProtocolRequestIDKey), fromByte)) // 附加 Request-ID suffix
 
-	// remove all internal header
-	req.Header.Del(protocol.ProtocolCacheStatusKey)
+	// doSubRequest is parameterized by the union range so the flight group
+	// can expand the range to cover multiple concurrent callers.
+	doSubRequest := func(unionFrom, unionTo uint64) (*http.Response, error) {
+		newRange := fmt.Sprintf("bytes=%d-%d", unionFrom, unionTo)
+		subReq := c.req.Clone(context.Background())
+		subReq.Header.Set("Range", newRange)
+		subReq.Header.Del(protocol.ProtocolCacheStatusKey)
 
-	doSubRequest := func() (*http.Response, error) {
 		now := time.Now()
 		c.log.Debugf("getUpstreamReader doProxy[chunk]: begin: %s, rawRange: %s, newRange: %s", now, rawRange, newRange)
-		resp, err := c.doProxy(req, true)
+		resp, err := c.doProxy(subReq, true)
 		c.log.Infof("getUpstreamReader doProxy[chunk]: timeCost: %s, rawRange: %s, newRange: %s", time.Since(now), rawRange, newRange)
 		if err != nil {
 			closeBody(resp)
@@ -309,12 +308,13 @@ func (c *Caching) getUpstreamReader(fromByte, toByte uint64, async bool) (io.Rea
 	}
 
 	// Chunk-level collapsed forwarding: if another goroutine is already
-	// fetching the same byte range for this object, wait and share the
-	// response body (io.MultiWriter fan-out). This mirrors Squid's
-	// collapsed_forwarding at the chunk/segment level.
+	// fetching (possibly a different) byte range for this object, wait
+	// and share the union response body (io.MultiWriter fan-out + RangeReader
+	// trimming). This mirrors Squid's collapsed_forwarding at the chunk
+	// level, with automatic range union.
 	if c.chunkFlight != nil && c.opt.CollapsedRequest && c.id != nil {
-		key := fmt.Sprintf("%s:%d-%d", c.id.HashStr(), fromByte, toByte)
-		reader, shared, err := c.chunkFlight.Do(key, c.opt.CollapsedRequestWaitTimeout.AsDuration(), doSubRequest)
+		reader, shared, err := c.chunkFlight.Do(c.id.HashStr(), fromByte, toByte,
+			c.opt.CollapsedRequestWaitTimeout.AsDuration(), doSubRequest)
 		if shared {
 			c.cacheStatus = storage.CachePartHit
 		}
@@ -322,10 +322,12 @@ func (c *Caching) getUpstreamReader(fromByte, toByte uint64, async bool) (io.Rea
 	}
 
 	if async {
-		return iobuf.AsyncReadCloser(doSubRequest), nil
+		return iobuf.AsyncReadCloser(func() (*http.Response, error) {
+			return doSubRequest(fromByte, toByte)
+		}), nil
 	}
 
-	resp, err := doSubRequest()
+	resp, err := doSubRequest(fromByte, toByte)
 	if resp != nil {
 		return resp.Body, err
 	}

@@ -20,16 +20,19 @@ func TestChunkFlight_BasicCollapse(t *testing.T) {
 	g := &ChunkFlightGroup{}
 	var callCount atomic.Int32
 
-	fn := func() (*http.Response, error) {
+	// fn returns a body equal in length to the requested range so callers
+	// can verify their sub-range trimming works.
+	fn := func(unionFrom, unionTo uint64) (*http.Response, error) {
 		callCount.Add(1)
+		size := int(unionTo - unionFrom + 1)
 		return &http.Response{
 			StatusCode: http.StatusPartialContent,
-			Body:       io.NopCloser(strings.NewReader("chunk-data")),
+			Body:       io.NopCloser(bytes.NewReader(makebuf(size))),
 		}, nil
 	}
 
 	type result struct {
-		data   string
+		length int
 		shared bool
 	}
 
@@ -37,12 +40,13 @@ func TestChunkFlight_BasicCollapse(t *testing.T) {
 	var wg sync.WaitGroup
 	start := make(chan struct{})
 
+	// All three callers request the same range — classic collapse.
 	for i := 0; i < 3; i++ {
 		wg.Add(1)
 		go func(idx int) {
 			defer wg.Done()
 			<-start
-			r, shared, err := g.Do("obj1:0-1048575", 50*time.Millisecond, fn)
+			r, shared, err := g.Do("obj1", 0, 1023, 50*time.Millisecond, fn)
 			if err != nil {
 				t.Errorf("caller %d: unexpected error: %v", idx, err)
 				return
@@ -53,7 +57,7 @@ func TestChunkFlight_BasicCollapse(t *testing.T) {
 				t.Errorf("caller %d: read error: %v", idx, readErr)
 				return
 			}
-			results[idx] = result{string(data), shared}
+			results[idx] = result{len(data), shared}
 		}(i)
 	}
 
@@ -71,8 +75,8 @@ func TestChunkFlight_BasicCollapse(t *testing.T) {
 		if r.shared {
 			sharedCount++
 		}
-		if r.data != "chunk-data" {
-			t.Errorf("got %q, want %q", r.data, "chunk-data")
+		if r.length != 1024 {
+			t.Errorf("got %d bytes, want 1024", r.length)
 		}
 	}
 	if sharedCount != 2 {
@@ -80,10 +84,89 @@ func TestChunkFlight_BasicCollapse(t *testing.T) {
 	}
 }
 
+func TestChunkFlight_RangeUnion(t *testing.T) {
+	g := &ChunkFlightGroup{}
+	var callCount atomic.Int32
+
+	fn := func(unionFrom, unionTo uint64) (*http.Response, error) {
+		callCount.Add(1)
+		size := int(unionTo - unionFrom + 1)
+		return &http.Response{
+			StatusCode: http.StatusPartialContent,
+			Body:       io.NopCloser(bytes.NewReader(makebuf(size))),
+		}, nil
+	}
+
+	type result struct {
+		length int
+		shared bool
+	}
+
+	type caller struct {
+		from, to uint64
+		wantLen  int
+	}
+
+	callers := []caller{
+		{0, 999, 1000},     // bytes 0-999
+		{500, 1999, 1500},  // bytes 500-1999, overlaps first
+		{1500, 2999, 1500}, // bytes 1500-2999, overlaps second
+	}
+	results := make([]result, len(callers))
+	var wg sync.WaitGroup
+	start := make(chan struct{})
+
+	for i, c := range callers {
+		wg.Add(1)
+		go func(idx int, from, to uint64) {
+			defer wg.Done()
+			<-start
+			r, shared, err := g.Do("union-obj", from, to, 50*time.Millisecond, fn)
+			if err != nil {
+				t.Errorf("caller %d: unexpected error: %v", idx, err)
+				return
+			}
+			data, readErr := io.ReadAll(r)
+			_ = r.Close()
+			if readErr != nil {
+				t.Errorf("caller %d: read error: %v", idx, readErr)
+				return
+			}
+			results[idx] = result{len(data), shared}
+		}(i, c.from, c.to)
+	}
+
+	time.Sleep(10 * time.Millisecond)
+	close(start)
+	wg.Wait()
+
+	// With range union, all three callers share one origin fetch covering
+	// the union range 0-2999.
+	if callCount.Load() != 1 {
+		t.Fatalf("expected 1 call (union), got %d", callCount.Load())
+	}
+
+	for i, r := range results {
+		if r.length != callers[i].wantLen {
+			t.Errorf("caller %d: got %d bytes, want %d", i, r.length, callers[i].wantLen)
+		}
+	}
+
+	sharedCount := 0
+	for _, r := range results {
+		if r.shared {
+			sharedCount++
+		}
+	}
+	if sharedCount != len(callers)-1 {
+		t.Errorf("expected %d shared callers, got %d", len(callers)-1, sharedCount)
+	}
+}
+
 func TestChunkFlight_ErrorPropagation(t *testing.T) {
 	g := &ChunkFlightGroup{}
 
-	fn := func() (*http.Response, error) {
+	fn := func(_, _ uint64) (*http.Response, error) {
 		return nil, errors.New("upstream timeout")
 	}
 
@@ -96,7 +179,7 @@ func TestChunkFlight_ErrorPropagation(t *testing.T) {
 		go func(idx int) {
 			defer wg.Done()
 			<-start
-			r, _, err := g.Do("obj1:0-1048575", 50*time.Millisecond, fn)
+			r, _, err := g.Do("obj1", 0, 1023, 50*time.Millisecond, fn)
 			if err != nil {
 				errs[idx] = err
 				return
@@ -124,26 +207,40 @@ func TestChunkFlight_KeyIsolation(t *testing.T) {
 	g := &ChunkFlightGroup{}
 	var callCount atomic.Int32
 
-	makeFn := func(data string) func() (*http.Response, error) {
-		return func() (*http.Response, error) {
+	makeFn := func(data string) func(uint64, uint64) (*http.Response, error) {
+		return func(unionFrom, unionTo uint64) (*http.Response, error) {
 			callCount.Add(1)
+			size := int(unionTo - unionFrom + 1)
 			return &http.Response{
 				StatusCode: http.StatusPartialContent,
-				Body:       io.NopCloser(strings.NewReader(data)),
+				Body:       io.NopCloser(bytes.NewReader(makebuf(size))),
 			}, nil
 		}
 	}
 
 	var wg sync.WaitGroup
-	results := make(map[string]string, 4)
+	results := make(map[string]int, 4)
 	var mu sync.Mutex
 
-	keys := []string{"obj1:0-1048575", "obj1:1048576-2097151", "obj2:0-1048575", "obj2:1048576-2097151"}
-	for _, key := range keys {
+	// Two objects (obj1, obj2), each with two concurrent callers requesting
+	// different ranges.  Within each object the ranges are unioned, but
+	// different objects are isolated.
+	type job struct {
+		key          string
+		from, to     uint64
+		wantLen      int
+	}
+	jobs := []job{
+		{"obj1", 0, 1048575, 1048576},
+		{"obj1", 1048576, 2097151, 1048576},
+		{"obj2", 0, 1048575, 1048576},
+		{"obj2", 1048576, 2097151, 1048576},
+	}
+	for _, j := range jobs {
 		wg.Add(1)
-		go func(k string) {
+		go func(k string, from, to uint64) {
 			defer wg.Done()
-			r, _, err := g.Do(k, 10*time.Millisecond, makeFn(k))
+			r, _, err := g.Do(k, from, to, 50*time.Millisecond, makeFn(k))
 			if err != nil {
 				t.Errorf("key %s: unexpected error: %v", k, err)
 				return
@@ -151,18 +248,22 @@ func TestChunkFlight_KeyIsolation(t *testing.T) {
 			data, _ := io.ReadAll(r)
 			_ = r.Close()
 			mu.Lock()
-			results[k] = string(data)
+			results[k] = len(data)
 			mu.Unlock()
-		}(key)
+		}(j.key, j.from, j.to)
 	}
 	wg.Wait()
 
-	if callCount.Load() != 4 {
-		t.Fatalf("expected 4 distinct calls, got %d", callCount.Load())
+	// With object-level keys, obj1's two callers collapse into one
+	// (union: 0-2097151), obj2's two callers collapse into another.
+	if callCount.Load() != 2 {
+		t.Fatalf("expected 2 calls (one per object), got %d", callCount.Load())
 	}
-	for _, key := range keys {
-		if results[key] != key {
-			t.Errorf("key %s: got %q, want %q", key, results[key], key)
+
+	// Each caller must receive exactly their requested byte count.
+	for _, j := range jobs {
+		if results[j.key] != j.wantLen {
+			t.Errorf("key %s: got %d bytes, want %d", j.key, results[j.key], j.wantLen)
 		}
 	}
 }
@@ -171,7 +272,7 @@ func TestChunkFlight_ConcurrentSameKey(t *testing.T) {
 	g := &ChunkFlightGroup{}
 	var callCount atomic.Int32
 
-	fn := func() (*http.Response, error) {
+	fn := func(_, _ uint64) (*http.Response, error) {
 		callCount.Add(1)
 		return &http.Response{
 			StatusCode: http.StatusPartialContent,
@@ -189,7 +290,8 @@ func TestChunkFlight_ConcurrentSameKey(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			<-start
-			r, shared, err := g.Do("same-key", 100*time.Millisecond, fn)
+			// All callers request the same range 0-262143.
+			r, shared, err := g.Do("same-key", 0, 262143, 100*time.Millisecond, fn)
 			if err != nil {
 				t.Errorf("unexpected error: %v", err)
 				return
@@ -217,14 +319,17 @@ func TestChunkFlight_ConcurrentSameKey(t *testing.T) {
 func TestChunkFlight_PanicRecovery(t *testing.T) {
 	g := &ChunkFlightGroup{}
 
-	pr, shared, err := g.Do("panic-key", 0, func() (*http.Response, error) {
+	pr, shared, err := g.Do("panic-key", 0, 1023, 0, func(_, _ uint64) (*http.Response, error) {
 		panic("boom")
 	})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
 	if shared {
 		t.Fatal("expected leader, not shared")
+	}
+
+	// fn is now called asynchronously — the leader gets the error through
+	// the pipe, not from the Do return value.
+	if err != nil {
+		t.Fatalf("unexpected error from Do: %v", err)
 	}
 
 	_, readErr := io.ReadAll(pr)

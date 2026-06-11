@@ -23,7 +23,7 @@ func TestCollapsedForwardingObjectFlight(t *testing.T) {
 
 		var originCallCount atomic.Int32
 
-		case1 := e2e.New("http://objflight.example.com/cf/object/collapse.bin", e2e.RespCallbackFile(f, func(w http.ResponseWriter, r *http.Request) {
+		case1 := e2e.New("http://objflight.example.com/of/object/collapse.bin", e2e.RespCallbackFile(f, func(w http.ResponseWriter, r *http.Request) {
 			originCallCount.Add(1)
 			time.Sleep(80 * time.Millisecond) // window for concurrent registrations
 
@@ -90,7 +90,7 @@ func TestCollapsedForwardingObjectFlight(t *testing.T) {
 	})
 
 	t.Run("PURGE", func(t *testing.T) {
-		e2e.Purge(t, "http://objflight.example.com/cf/object/collapse.bin")
+		e2e.Purge(t, "http://objflight.example.com/of/object/collapse.bin")
 	})
 
 	t.Run("test Collapsed Forwarding ObjectFlight Sequential", func(t *testing.T) {
@@ -98,7 +98,7 @@ func TestCollapsedForwardingObjectFlight(t *testing.T) {
 
 		originCallCount.Store(0)
 
-		case1 := e2e.New("http://objflight.example.com/cf/object/sequential.bin", e2e.RespCallbackFile(f, func(w http.ResponseWriter, r *http.Request) {
+		case1 := e2e.New("http://objflight.example.com/of/object/sequential.bin", e2e.RespCallbackFile(f, func(w http.ResponseWriter, r *http.Request) {
 			originCallCount.Add(1)
 
 			w.Header().Set("Cache-Control", "max-age=10")
@@ -134,13 +134,13 @@ func TestCollapsedForwardingObjectFlight(t *testing.T) {
 	})
 
 	t.Run("PURGE", func(t *testing.T) {
-		e2e.Purge(t, "http://objflight.example.com/cf/object/sequential.bin")
+		e2e.Purge(t, "http://objflight.example.com/of/object/sequential.bin")
 	})
 
 	t.Run("test Collapsed Forwarding ObjectFlight KeyIsolation", func(t *testing.T) {
 		var originCallCount atomic.Int32
 
-		case1 := e2e.New("http://keys.example.com/cf/object/", func(w http.ResponseWriter, r *http.Request) {
+		case1 := e2e.New("http://keys.example.com/of/object/", func(w http.ResponseWriter, r *http.Request) {
 			originCallCount.Add(1)
 			time.Sleep(80 * time.Millisecond)
 
@@ -171,7 +171,7 @@ func TestCollapsedForwardingObjectFlight(t *testing.T) {
 				buf, _ := io.ReadAll(resp.Body)
 				resp.Body.Close()
 
-				assert.Equal(t, "/cf/object/"+k, string(buf), "response body should match requested key")
+				assert.Equal(t, "/of/object/"+k, string(buf), "response body should match requested key")
 			}(key)
 		}
 
@@ -186,7 +186,7 @@ func TestCollapsedForwardingObjectFlight(t *testing.T) {
 	})
 
 	t.Run("PURGE", func(t *testing.T) {
-		e2e.PurgeMethod(t, "http://keys.example.com/cf/object/", true)
+		e2e.PurgeMethod(t, "http://keys.example.com/of/object/", true)
 	})
 
 }
@@ -284,6 +284,7 @@ func TestCollapsedForwardingChunkFlight(t *testing.T) {
 		var originCallCount atomic.Int32
 
 		case1 := e2e.New("http://chunkflight.example.com/cf/chunk/keys.bin", e2e.RespCallbackFile(file, func(w http.ResponseWriter, r *http.Request) {
+			t.Logf("process req %s, range %s", r.Header.Get("X-Request-Id"), r.Header.Get("Range"))
 			originCallCount.Add(1)
 
 			w.Header().Set("Cache-Control", "max-age=30")
@@ -293,6 +294,7 @@ func TestCollapsedForwardingChunkFlight(t *testing.T) {
 
 		// Phase 1 — cache only the middle chunk (chunk 1, bytes 524288-1048575).
 		resp, err := case1.Do(func(r *http.Request) {
+			r.Header.Set("X-Request-Id", "0")
 			r.Header.Set("Range", "bytes=524288-1048575")
 		})
 
@@ -301,17 +303,21 @@ func TestCollapsedForwardingChunkFlight(t *testing.T) {
 		resp.Body.Close()
 		require.Equal(t, http.StatusPartialContent, resp.StatusCode)
 
+		originCallCount.Store(0)
+
 		time.Sleep(300 * time.Millisecond)
 
 		// Phase 2 — request two different missing ranges concurrently.
 		// Range A: bytes=0-524287 (needs chunk 0, not cached)
 		// Range B: bytes=1048576-2097151 (needs chunk 2+, not cached)
-		// Different chunk flight keys → independent origin calls.
+		// With range union, these two ranges collapse into one origin
+		// fetch for the union range bytes=0-2097151.
 		var wg sync.WaitGroup
 
 		ranges := []string{"bytes=0-524287", "bytes=1048576-2097151"}
 		start := make(chan struct{}, len(ranges))
 		errs := make([]error, len(ranges))
+		xCaches := make([]string, len(ranges))
 
 		for i, rng := range ranges {
 			wg.Add(1)
@@ -320,17 +326,21 @@ func TestCollapsedForwardingChunkFlight(t *testing.T) {
 				<-start
 
 				resp2, e := case1.Do(func(r *http.Request) {
-					t.Logf("started for caller %d with range %s", idx, rng)
+					t.Logf("started for caller %d with range %s", idx+1, rng)
 
+					r.Header.Set("X-Request-Id", strconv.Itoa(idx+1))
 					r.Header.Set("Range", rng)
 				})
 				if e != nil {
+					t.Logf("caller %d: request error: %v", idx+1, e)
 					errs[idx] = e
 					return
 				}
 
 				io.Copy(io.Discard, resp2.Body)
 				resp2.Body.Close()
+
+				xCaches[idx] = resp2.Header.Get("X-Cache")
 			}(i, rng)
 		}
 
@@ -340,16 +350,113 @@ func TestCollapsedForwardingChunkFlight(t *testing.T) {
 
 		for i, e := range errs {
 			assert.NoError(t, e, "request %d should not error", i)
+			t.Logf("caller %d X-Cache: %s", i+1, xCaches[i])
 		}
 
-		// Different chunk ranges → different flight keys → 2 origin calls.
-		assert.Equal(t, int32(2), originCallCount.Load(),
-			"different byte ranges should use independent chunk flights")
+		// With range union, the two different ranges are collapsed into
+		// one origin fetch covering the union bytes=0-2097151.
+		assert.Equal(t, int32(1), originCallCount.Load(),
+			"different byte ranges should be collapsed via range union")
 
 	})
 
+	t.Run("test Collapsed Forwarding ChunkFlight RangeUnion", func(t *testing.T) {
+		var originCallCount atomic.Int32
+
+		case1 := e2e.New("http://chunkflight.example.com/cf/chunk/union.bin", e2e.RespCallbackFile(file, func(w http.ResponseWriter, r *http.Request) {
+			t.Logf("process req %s, range %s", r.Header.Get("X-Request-Id"), r.Header.Get("Range"))
+			originCallCount.Add(1)
+
+			w.Header().Set("Cache-Control", "max-age=30")
+			w.Header().Set("ETag", file.MD5)
+		}))
+		defer case1.Close()
+
+		// Phase 1 — cache only the middle chunk (chunk 1, bytes 524288-1048575).
+		resp, err := case1.Do(func(r *http.Request) {
+			r.Header.Set("X-Request-Id", "0")
+			r.Header.Set("Range", "bytes=524288-1048575")
+		})
+
+		require.NoError(t, err)
+		io.Copy(io.Discard, resp.Body)
+		resp.Body.Close()
+		require.Equal(t, http.StatusPartialContent, resp.StatusCode)
+
+		originCallCount.Store(0)
+
+		time.Sleep(300 * time.Millisecond)
+
+		// Phase 2 — three concurrent requests for different ranges that
+		// need missing chunks.  With range union, all three share a single
+		// origin fetch whose range covers the union of all requested ranges.
+		type reqSpec struct {
+			id     string
+			rng    string
+			from   int
+			length int
+		}
+		specs := []reqSpec{
+			{"1", "bytes=0-524287", 0, 524288},
+			{"2", "bytes=0-1048575", 0, 1048576},
+			{"3", "bytes=1048576-2097151", 1048576, 2097151 - 1048576 + 1},
+		}
+
+		var wg sync.WaitGroup
+		start := make(chan struct{})
+		errs := make([]error, len(specs))
+		hashes := make([]string, len(specs))
+		xCaches := make([]string, len(specs))
+
+		for i, spec := range specs {
+			wg.Add(1)
+			go func(idx int, s reqSpec) {
+				defer wg.Done()
+				<-start
+
+				resp2, e := case1.Do(func(r *http.Request) {
+					r.Header.Set("X-Request-Id", s.id)
+					r.Header.Set("Range", s.rng)
+				})
+				if e != nil {
+					t.Logf("caller %s: request error: %v", s.id, e)
+					errs[idx] = e
+					return
+				}
+
+				hashes[idx] = e2e.HashBody(resp2)
+				resp2.Body.Close()
+
+				xCaches[idx] = resp2.Header.Get("X-Cache")
+			}(i, spec)
+		}
+
+		time.Sleep(10 * time.Millisecond)
+		close(start)
+		wg.Wait()
+
+		for i, e := range errs {
+			assert.NoError(t, e, "request %d should not error", i)
+			t.Logf("caller %s X-Cache: %s hash: %s", specs[i].id, xCaches[i], hashes[i])
+		}
+
+		// All three different ranges should collapse into one origin call via
+		// automatic range union.
+		assert.Equal(t, int32(1), originCallCount.Load(),
+			"range union should collapse different ranges into 1 origin call")
+
+		// Each caller must receive the correct bytes for its range.
+		for i, spec := range specs {
+			expected := e2e.HashFile(file.Path, spec.from, spec.length)
+			assert.Equal(t, expected, hashes[i],
+				"caller %s (range %s): body hash mismatch", spec.id, spec.rng)
+		}
+	})
+
 	t.Run("PURGE", func(t *testing.T) {
+		e2e.SetDump(true)
 		e2e.Purge(t, "http://chunkflight.example.com/cf/chunk/collapse.bin")
 		e2e.Purge(t, "http://chunkflight.example.com/cf/chunk/keys.bin")
+		e2e.Purge(t, "http://chunkflight.example.com/cf/chunk/union.bin")
 	})
 }
