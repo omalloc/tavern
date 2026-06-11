@@ -75,9 +75,12 @@ func (g *ChunkFlightGroup) Do(objectKey string, fromByte, toByte uint64, waiter 
 		g.mu.Unlock()
 
 		c.wg.Wait()
-		if c.err != nil {
-			_ = pw.CloseWithError(c.err)
-			return nil, true, c.err
+		c.mu.Lock()
+		flightErr := c.err
+		c.mu.Unlock()
+		if flightErr != nil {
+			_ = pw.CloseWithError(flightErr)
+			return nil, true, flightErr
 		}
 		// Return immediately — fn is executed asynchronously by the
 		// leader goroutine, so the caller can build response headers
@@ -124,6 +127,14 @@ func (g *ChunkFlightGroup) Do(objectKey string, fromByte, toByte uint64, waiter 
 	// the upstream fetch mutates them.
 	c.wg.Done()
 
+	// Remove the key from the map immediately after releasing waiters
+	// so that no late-arriving callers can join this flight with a
+	// stale union range.  New callers for the same key will start a
+	// fresh flight.
+	g.mu.Lock()
+	delete(g.m, objectKey)
+	g.mu.Unlock()
+
 	// The leader returns immediately with a pipe reader.  The upstream
 	// fetch (fn) and body fan-out run in a background goroutine so that
 	// response headers are built before c.md is touched.
@@ -138,18 +149,19 @@ func (g *ChunkFlightGroup) Do(objectKey string, fromByte, toByte uint64, waiter 
 			return fn(unionFrom, unionTo)
 		}()
 
-		g.mu.Lock()
-		// Snapshot pipes and remove the key so no further callers
-		// register against this flight.
+		// Snapshot pipes under c.mu.  The map entry is already deleted
+		// (above), so no further callers can register against this
+		// flight — c.mu only protects against the window where waiters
+		// that registered before the deletion are still being appended.
 		c.mu.Lock()
 		pipes := make([]*io.PipeWriter, len(c.pipes))
 		copy(pipes, c.pipes)
-		c.mu.Unlock()
-		delete(g.m, objectKey)
-
 		if err != nil {
 			c.err = err
-			g.mu.Unlock()
+		}
+		c.mu.Unlock()
+
+		if err != nil {
 			for _, p := range pipes {
 				_ = p.CloseWithError(err)
 			}
@@ -164,7 +176,6 @@ func (g *ChunkFlightGroup) Do(objectKey string, fromByte, toByte uint64, waiter 
 			writers[i] = p
 		}
 		mw := io.MultiWriter(writers...)
-		g.mu.Unlock()
 
 		_, copyErr := io.Copy(mw, resp.Body)
 		_ = resp.Body.Close()

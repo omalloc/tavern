@@ -179,6 +179,7 @@ func PurgeMethod(t *testing.T, url string, dir bool) {
 		w.WriteHeader(http.StatusBadGateway)
 	}).Do(func(r *http.Request) {
 		r.Method = "PURGE"
+		r.Header.Set("Purge-Type", "file,hard")
 		if dir {
 			r.Header.Set("Purge-Type", "dir,hard")
 		}

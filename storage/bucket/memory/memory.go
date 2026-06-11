@@ -283,7 +283,9 @@ func (m *memoryBucket) WriteChunkFile(ctx context.Context, id *object.ID, index 
 	_ = m.fs.MkdirAll(filepath.Dir(wpath), m.fileMode)
 
 	if log.Enabled(log.LevelDebug) {
-		log.Context(ctx).Infof("write inmemory chunk file %s", wpath)
+		defer func() {
+			log.Context(ctx).Infof("write inmemory chunk file %s", wpath)
+		}()
 	}
 
 	f, err := m.fs.OpenReadWrite(wpath, vfs.WriteCategoryUnspecified)
