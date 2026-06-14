@@ -127,10 +127,11 @@ func (g *ChunkFlightGroup) Do(objectKey string, fromByte, toByte uint64, waiter 
 	// the upstream fetch mutates them.
 	c.wg.Done()
 
-	// Remove the key from the map immediately after releasing waiters
-	// so that no late-arriving callers can join this flight with a
-	// stale union range.  New callers for the same key will start a
-	// fresh flight.
+	// Remove the key from the map so that no late-arriving callers can
+	// join this flight with a stale union range.  The waiter window
+	// (time.Sleep above) is the intentional batching period — callers
+	// arriving after it will start a fresh flight.  This trades a
+	// possible duplicate origin request for guaranteed range correctness.
 	g.mu.Lock()
 	delete(g.m, objectKey)
 	g.mu.Unlock()
@@ -139,6 +140,7 @@ func (g *ChunkFlightGroup) Do(objectKey string, fromByte, toByte uint64, waiter 
 	// fetch (fn) and body fan-out run in a background goroutine so that
 	// response headers are built before c.md is touched.
 	go func() {
+
 		// check for panic to avoid leaving waiters hanging indefinitely
 		resp, err := func() (r *http.Response, e error) {
 			defer func() {

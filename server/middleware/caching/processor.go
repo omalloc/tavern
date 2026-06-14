@@ -102,6 +102,7 @@ func (pc *ProcessorChain) preCacheProcessor(proxyClient proxy.Proxy, store stora
 	// hashring or diskhash
 	bucket := store.Select(req.Context(), objectID)
 	if bucket == nil {
+		// fallback EMPTY storage
 		return caching, fmt.Errorf("failed select bucket for objectID: %s", objectID)
 	}
 	caching.bucket = bucket
