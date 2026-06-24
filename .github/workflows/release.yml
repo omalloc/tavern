@@ -1,0 +1,96 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v[0-9]*"
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: "Version bump type"
+        required: true
+        default: "patch"
+        type: choice
+        options:
+          - patch
+          - minor
+          - major
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: "1.25"
+
+      - name: Install git-cliff
+        run: |
+          curl -sL https://github.com/orhun/git-cliff/releases/download/v2.10.0/git-cliff-2.10.0-x86_64-unknown-linux-musl.tar.gz | tar xz -C /tmp
+          sudo cp /tmp/git-cliff-2.10.0/git-cliff /usr/local/bin/git-cliff
+
+      - name: Build binaries
+        run: |
+          make build
+          make toolchain
+          tar czf tavern-linux-amd64.tar.gz -C bin tavern tq ttop
+
+      - name: Generate release notes
+        run: |
+          git cliff --current -o RELEASE_NOTES.md
+          echo "--- Generated release notes ---"
+          cat RELEASE_NOTES.md
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v1
+        with:
+          body_path: RELEASE_NOTES.md
+          files: tavern-linux-amd64.tar.gz
+          generate_release_notes: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # Manual release: bump version, update changelog, and push tag
+  manual-release:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: "1.25"
+
+      - name: Install git-cliff
+        run: |
+          curl -sL https://github.com/orhun/git-cliff/releases/download/v2.10.0/git-cliff-2.10.0-x86_64-unknown-linux-musl.tar.gz | tar xz -C /tmp
+          sudo cp /tmp/git-cliff-2.10.0/git-cliff /usr/local/bin/git-cliff
+
+      - name: Configure Git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Update changelog and tag
+        run: |
+          git cliff -o CHANGELOG.md
+          git add CHANGELOG.md
+          git commit -m "chore(release): update changelog" || echo "No changelog changes"
+
+          NEXT=$(git cliff --bumped-version)
+          echo "Next version: $NEXT"
+          git tag "$NEXT"
+          git push --follow-tags origin main
