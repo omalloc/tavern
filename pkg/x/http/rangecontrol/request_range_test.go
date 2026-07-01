@@ -18,16 +18,18 @@ func TestParse(t *testing.T) {
 		{"open-ended", "bytes=100-", []ByteRange{{Start: 100, End: -1}}, false},
 		{"spaces and multiple", "bytes=0-10,20-30", []ByteRange{{Start: 0, End: 10}, {Start: 20, End: 30}}, false},
 		{"invalid prefix", "byt=0-1", nil, true},
-		{"suffix-range not supported", "bytes=-500", nil, true},
+		// {"suffix-range not supported", "bytes=-500", nil, true},
 		{"no dash", "bytes=500", nil, true},
 		{"non-numeric start", "bytes=a-5", nil, true},
 		{"end less than start", "bytes=10-5", nil, true},
+		{"suffix-range and closed range", "bytes=0-499,-500", []ByteRange{{Start: 0, End: 499}, {Start: 1048076, End: 1048575}}, false},
 	}
+	totalSize := uint64(1048576)
 
 	for _, tc := range tests {
 		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
-			got, err := Parse(tc.header)
+			got, err := Parse(tc.header, totalSize)
 			if tc.wantErr {
 				if err == nil {
 					t.Fatalf("expected error but got nil")

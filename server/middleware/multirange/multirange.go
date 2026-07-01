@@ -7,6 +7,7 @@ import (
 	"mime/multipart"
 	"net/http"
 	"strconv"
+	"strings"
 
 	configv1 "github.com/omalloc/tavern/api/defined/v1/middleware"
 	"github.com/omalloc/tavern/contrib/log"
@@ -38,26 +39,12 @@ func Middleware(c *configv1.Middleware) (middleware.Middleware, func(), error) {
 				return origin.RoundTrip(req)
 			}
 
-			// unsafeRanges, err := xhttp.UnsatisfiableMultiRange(rawRange)
-			// if err != nil || len(unsafeRanges) <= 1 {
-			// 	return origin.RoundTrip(req)
-			// }
-
-			byteRanges, err := rangecontrol.Parse(rawRange)
-			if err != nil {
-				// Range 解析失败，返回 416
-				headers := make(http.Header)
-				headers.Set("X-Error", err.Error())
-				return nil, xhttp.NewBizError(http.StatusRequestedRangeNotSatisfiable, headers)
-			}
-
-			mergedByteRanges := rangecontrol.MergeRanges(byteRanges)
-			if len(mergedByteRanges) <= 1 {
+			rangeCount, _ := hasSuffixRange(rawRange)
+			if rangeCount <= 1 {
 				return origin.RoundTrip(req)
 			}
 
 			header := make(http.Header)
-
 			head, err1 := prefetchResource(req, origin)
 			if err1 != nil {
 				return nil, err1
@@ -71,6 +58,19 @@ func Middleware(c *configv1.Middleware) (middleware.Middleware, func(), error) {
 			if err == nil {
 				// 如果源站支持 Range 头响应，则使用其总大小
 				objSize = uint64(cr.Size)
+			}
+
+			byteRanges, err := rangecontrol.Parse(rawRange, objSize)
+			if err != nil {
+				// Range 解析失败，返回 416
+				headers := make(http.Header)
+				headers.Set("X-Error", err.Error())
+				return nil, xhttp.NewBizError(http.StatusRequestedRangeNotSatisfiable, headers)
+			}
+
+			mergedByteRanges := rangecontrol.MergeRanges(byteRanges)
+			if len(mergedByteRanges) <= 1 {
+				return origin.RoundTrip(req)
 			}
 
 			ctype := head.Header.Get("Content-Type")
@@ -123,6 +123,24 @@ func Middleware(c *configv1.Middleware) (middleware.Middleware, func(), error) {
 			}, nil
 		})
 	}, cleanup, nil
+}
+
+func hasSuffixRange(rawRange string) (int, bool) {
+	const prefix = "bytes="
+	if !strings.HasPrefix(rawRange, prefix) {
+		return 0, false
+	}
+
+	parts := strings.Split(strings.TrimPrefix(rawRange, prefix), ",")
+
+	partCount := len(parts)
+
+	for _, part := range parts {
+		if strings.HasPrefix(strings.TrimSpace(part), "-") {
+			return partCount, true
+		}
+	}
+	return partCount, false
 }
 
 // 发起 HEAD 请求获取资源信息; content-type, content-length

@@ -22,8 +22,8 @@ import (
 	"github.com/omalloc/tavern/api/defined/v1/storage/object"
 	"github.com/omalloc/tavern/contrib/log"
 	"github.com/omalloc/tavern/internal/protocol"
-	"github.com/omalloc/tavern/pkg/traces"
 	"github.com/omalloc/tavern/pkg/iobuf"
+	"github.com/omalloc/tavern/pkg/traces"
 	xhttp "github.com/omalloc/tavern/pkg/x/http"
 	"github.com/omalloc/tavern/proxy"
 )
@@ -100,7 +100,7 @@ func (c *Caching) setXCache(resp *http.Response) {
 
 	// debug header
 	if trace := c.req.Header.Get(protocol.InternalTraceKey); trace != "" {
-		resp.Header.Set(protocol.InternalStoreUrl, strconv.FormatInt(int64(c.cacheStatus), 10))
+		resp.Header.Set(protocol.InternalStoreUrl, c.id.Key())
 		resp.Header.Set(protocol.InternalSwapfile, c.id.WPath(c.bucket.Path()))
 	}
 }
