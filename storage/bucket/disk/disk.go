@@ -16,9 +16,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/omalloc/tavern/pkg/iobuf"
 	"github.com/paulbellamy/ratecounter"
-
 	"github.com/prometheus/client_golang/prometheus"
 
 	"github.com/omalloc/tavern/api/defined/v1/storage"
@@ -26,6 +24,7 @@ import (
 	"github.com/omalloc/tavern/contrib/log"
 	"github.com/omalloc/tavern/pkg/algorithm/heavykeeper"
 	"github.com/omalloc/tavern/pkg/algorithm/lru"
+	"github.com/omalloc/tavern/pkg/iobuf"
 	"github.com/omalloc/tavern/storage/indexdb"
 )
 
@@ -364,6 +363,15 @@ func (d *diskBucket) Store(ctx context.Context, meta *object.Metadata) error {
 	}
 
 	start := time.Now()
+
+	// merge old chunks
+	oldmd, _ := d.indexdb.Get(ctx, meta.ID.Bytes())
+	if oldmd != nil {
+		oldmd.Chunks.Range(func(x uint32) {
+			meta.Chunks.Set(x)
+		})
+	}
+
 	if err := d.indexdb.Set(ctx, meta.ID.Bytes(), meta); err != nil {
 		indexdbOperationDuration.With(prometheus.Labels{"op": "set", "bucket": d.ID()}).Observe(time.Since(start).Seconds())
 		return err
