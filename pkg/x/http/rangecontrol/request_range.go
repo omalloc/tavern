@@ -50,7 +50,7 @@ func (r ByteRange) MimeHeader(contentType string, size uint64) textproto.MIMEHea
 }
 
 // Parse parses a Range header and returns.
-func Parse(rangeHeader string) ([]ByteRange, error) {
+func Parse(rangeHeader string, totalSize uint64) ([]ByteRange, error) {
 	if rangeHeader == "" {
 		return nil, nil
 	}
@@ -67,11 +67,6 @@ func Parse(rangeHeader string) ([]ByteRange, error) {
 	for _, part := range parts {
 		part = strings.TrimSpace(part)
 
-		// suffix-range: "-500" (not supported without total size)
-		if strings.HasPrefix(part, "-") {
-			return nil, ErrInvalidRange
-		}
-
 		dash := strings.IndexByte(part, '-')
 		if dash < 0 {
 			return nil, ErrInvalidRange
@@ -79,6 +74,20 @@ func Parse(rangeHeader string) ([]ByteRange, error) {
 
 		startStr := part[:dash]
 		endStr := part[dash+1:]
+
+		// suffix-range: "-500" (not supported without total size)
+		if strings.HasPrefix(part, "-") {
+			end, err := strconv.ParseInt(endStr, 10, 64)
+			if err != nil || end < 0 {
+				return nil, ErrInvalidRange
+			}
+
+			ranges = append(ranges, ByteRange{
+				Start: int64(totalSize) - end,
+				End:   int64(totalSize) - 1,
+			})
+			continue
+		}
 
 		start, err := strconv.ParseInt(startStr, 10, 64)
 		if err != nil || start < 0 {
@@ -88,7 +97,8 @@ func Parse(rangeHeader string) ([]ByteRange, error) {
 		var end int64
 		if endStr == "" {
 			// open-ended range: "100-"
-			end = -1
+			// end = -1
+			end = int64(totalSize) - 1
 		} else {
 			end, err = strconv.ParseInt(endStr, 10, 64)
 			if err != nil || end < start {
@@ -102,6 +112,92 @@ func Parse(rangeHeader string) ([]ByteRange, error) {
 		})
 	}
 
+	return ranges, nil
+}
+
+var (
+	// ErrNoOverlap is returned by ParseRange if first-byte-pos of
+	// all of the byte-range-spec values is greater than the content size.
+	ErrNoOverlap = errors.New("invalid range: failed to overlap")
+
+	// ErrInvalid is returned by ParseRange on invalid input.
+	ErrInvalid = errors.New("invalid range")
+)
+
+// ParseRange parses a Range header string as per RFC 7233.
+// ErrNoOverlap is returned if none of the ranges overlap.
+// ErrInvalid is returned if s is invalid range.
+func ParseRange(s string, size int64) ([]ByteRange, error) { // nolint:gocognit
+	if s == "" {
+		return nil, nil // header not present
+	}
+	const b = "bytes="
+	if !strings.HasPrefix(s, b) {
+		return nil, ErrInvalid
+	}
+	var ranges []ByteRange
+	noOverlap := false
+	for _, ra := range strings.Split(s[len(b):], ",") {
+		ra = textproto.TrimString(ra)
+		if ra == "" {
+			continue
+		}
+		i := strings.Index(ra, "-")
+		if i < 0 {
+			return nil, ErrInvalid
+		}
+		start, end := textproto.TrimString(ra[:i]), textproto.TrimString(ra[i+1:])
+		var r ByteRange
+		if start == "" {
+			// If no start is specified, end specifies the
+			// range start relative to the end of the file,
+			// and we are dealing with <suffix-length>
+			// which has to be a non-negative integer as per
+			// RFC 7233 Section 2.1 "Byte-Ranges".
+			if end == "" || end[0] == '-' {
+				return nil, ErrInvalid
+			}
+			i, err := strconv.ParseInt(end, 10, 64)
+			if i < 0 || err != nil {
+				return nil, ErrInvalid
+			}
+			if i > size {
+				i = size
+			}
+			r.Start = size - i
+			r.End = size - r.Start
+		} else {
+			i, err := strconv.ParseInt(start, 10, 64)
+			if err != nil || i < 0 {
+				return nil, ErrInvalid
+			}
+			if i >= size {
+				// If the range begins after the size of the content,
+				// then it does not overlap.
+				noOverlap = true
+				continue
+			}
+			r.Start = i
+			if end == "" {
+				// If no end is specified, range extends to end of the file.
+				r.End = size - r.Start
+			} else {
+				i, err := strconv.ParseInt(end, 10, 64)
+				if err != nil || r.Start > i {
+					return nil, ErrInvalid
+				}
+				if i >= size {
+					i = size - 1
+				}
+				r.End = i - r.Start + 1
+			}
+		}
+		ranges = append(ranges, r)
+	}
+	if noOverlap && len(ranges) == 0 {
+		// The specified ranges did not overlap with the content.
+		return nil, ErrNoOverlap
+	}
 	return ranges, nil
 }
 
@@ -126,6 +222,8 @@ func MergeRanges(ranges []ByteRange) []ByteRange {
 	if len(ranges) == 0 {
 		return ranges
 	}
+
+	SortRanges(ranges)
 
 	merged := make([]ByteRange, 0, len(ranges))
 	cur := ranges[0]

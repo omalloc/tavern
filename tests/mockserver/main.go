@@ -91,7 +91,7 @@ func main() {
 
 		rawRange := r.Header.Get("Range")
 
-		byteRange, err := rangecontrol.Parse(rawRange)
+		byteRange, err := rangecontrol.Parse(rawRange, 0)
 		if err != nil {
 			_, _ = io.Copy(w, reader)
 			return

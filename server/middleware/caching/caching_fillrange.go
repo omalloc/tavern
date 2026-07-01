@@ -6,6 +6,7 @@ import (
 	"math"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/omalloc/tavern/internal/protocol"
 	"github.com/omalloc/tavern/pkg/iobuf"
@@ -117,6 +118,9 @@ func (f *fillRange) fill(c *Caching, req *http.Request, rawRange string) *http.R
 	if c.md != nil {
 		objSize = c.md.Size
 	}
+	if objSize == uint64(math.MaxInt64) && hasSuffixRange(rawRange) {
+		return req
+	}
 
 	rng, err := xhttp.SingleRange(rawRange, objSize)
 	if err != nil {
@@ -186,6 +190,20 @@ func (f *fillRange) fill(c *Caching, req *http.Request, rawRange string) *http.R
 	c.log.Debugf("fill-mode objSize=%d, rawRange=%v, fillRange=%s", objSize, rng, newRange)
 
 	return req.WithContext(context.WithValue(req.Context(), fillRangeKey{}, fill))
+}
+
+func hasSuffixRange(rawRange string) bool {
+	const prefix = "bytes="
+	if !strings.HasPrefix(rawRange, prefix) {
+		return false
+	}
+
+	for _, part := range strings.Split(strings.TrimPrefix(rawRange, prefix), ",") {
+		if strings.HasPrefix(strings.TrimSpace(part), "-") {
+			return true
+		}
+	}
+	return false
 }
 
 func parseFillPercent(h http.Header, def uint64) uint64 {
