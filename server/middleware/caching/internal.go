@@ -219,7 +219,7 @@ func getContents(c *Caching, reqChunks []uint32, from uint32) (io.ReadCloser, in
 	rawRange := c.req.Header.Get("Range")
 	rng, _ := xhttp.SingleRange(rawRange, c.md.Size)
 	tailChunkSize := uint64(reqChunks[len(reqChunks)-1]+1)*uint64(partSize) - 1
-	if tailChunkSize > uint64(rng.End) {
+	if rng != nil && tailChunkSize > uint64(rng.End) {
 		tailChunkSize = uint64(rng.End)
 	}
 	toByte := min(c.md.Size-1, tailChunkSize)

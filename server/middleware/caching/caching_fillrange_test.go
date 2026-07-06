@@ -34,12 +34,18 @@ func newFillRangeRequest(t *testing.T, rawRange string) *http.Request {
 	return req
 }
 
-func TestFillRangeUnknownSizeSuffixRangePassesThrough(t *testing.T) {
+func TestFillRangeUnknownSizeUnresolvableRangePassesThrough(t *testing.T) {
 	tests := []string{
+		// suffix ranges
 		"bytes=-512",
 		"bytes= -512",
 		"bytes=0-99,-512",
 		"bytes=0-99, -512",
+		// open-ended ranges
+		"bytes=100-",
+		"bytes=0-",
+		// mixed open-ended
+		"bytes=0-99,200-",
 	}
 
 	for _, rawRange := range tests {
@@ -49,7 +55,7 @@ func TestFillRangeUnknownSizeSuffixRangePassesThrough(t *testing.T) {
 
 			got := f.fill(newTestCaching(nil), req, rawRange)
 			if got != req {
-				t.Fatalf("fill() returned a different request for unknown-size suffix range")
+				t.Fatalf("fill() returned a different request for unknown-size unresolvable range")
 			}
 			if got.Header.Get("Range") != rawRange {
 				t.Fatalf("Range = %q, want %q", got.Header.Get("Range"), rawRange)

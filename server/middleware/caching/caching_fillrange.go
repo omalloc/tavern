@@ -118,7 +118,7 @@ func (f *fillRange) fill(c *Caching, req *http.Request, rawRange string) *http.R
 	if c.md != nil {
 		objSize = c.md.Size
 	}
-	if objSize == uint64(math.MaxInt64) && hasSuffixRange(rawRange) {
+	if objSize == uint64(math.MaxInt64) && hasUnresolvableRange(rawRange) {
 		return req
 	}
 
@@ -192,14 +192,29 @@ func (f *fillRange) fill(c *Caching, req *http.Request, rawRange string) *http.R
 	return req.WithContext(context.WithValue(req.Context(), fillRangeKey{}, fill))
 }
 
-func hasSuffixRange(rawRange string) bool {
+// hasUnresolvableRange returns true if the range header contains suffix ranges
+// or open-ended ranges that cannot be resolved without knowing the object size.
+func hasUnresolvableRange(rawRange string) bool {
 	const prefix = "bytes="
 	if !strings.HasPrefix(rawRange, prefix) {
 		return false
 	}
 
 	for _, part := range strings.Split(strings.TrimPrefix(rawRange, prefix), ",") {
-		if strings.HasPrefix(strings.TrimSpace(part), "-") {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		dash := strings.IndexByte(part, '-')
+		if dash < 0 {
+			continue
+		}
+		// Suffix range: starts with "-" (e.g., "-512")
+		if dash == 0 {
+			return true
+		}
+		// Open-ended range: ends with "-" (e.g., "100-")
+		if dash == len(part)-1 {
 			return true
 		}
 	}

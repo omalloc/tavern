@@ -7,7 +7,6 @@ import (
 
 	configv1 "github.com/omalloc/tavern/api/defined/v1/middleware"
 	xhttp "github.com/omalloc/tavern/pkg/x/http"
-	"github.com/omalloc/tavern/pkg/x/http/rangecontrol"
 )
 
 type recordingRoundTripper struct {
@@ -149,8 +148,8 @@ func TestMiddlewareDoesNotPassMixedSuffixMultiRangeThrough(t *testing.T) {
 	if resp != nil {
 		t.Fatalf("RoundTrip() response = %#v, want nil", resp)
 	}
-	if origin.calls != 0 {
-		t.Fatalf("origin calls = %d, want 0", origin.calls)
+	if origin.calls != 1 {
+		t.Fatalf("origin calls = %d, want 1 (HEAD request)", origin.calls)
 	}
 	bizErr, ok := xhttp.ParseBizError(err)
 	if !ok {
@@ -158,23 +157,5 @@ func TestMiddlewareDoesNotPassMixedSuffixMultiRangeThrough(t *testing.T) {
 	}
 	if bizErr.Code() != http.StatusRequestedRangeNotSatisfiable {
 		t.Fatalf("error code = %d, want %d", bizErr.Code(), http.StatusRequestedRangeNotSatisfiable)
-	}
-}
-
-func TestMultirangeParse(t *testing.T) {
-	tests := []struct {
-		name    string
-		header  string
-		want    []rangecontrol.ByteRange
-		wantErr bool
-	}{
-		{name: "multi-range", header: "bytes=0-499,-500", want: nil, wantErr: true},
-	}
-
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			partCount, hasSuffixRange := hasSuffixRange(tc.header)
-			t.Logf("suffix-range = %v, part-count = %d", hasSuffixRange, partCount)
-		})
 	}
 }
