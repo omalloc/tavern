@@ -15,7 +15,7 @@ func TestParse(t *testing.T) {
 		{"empty header", "", nil, false},
 		{"valid single closed", "bytes=0-499", []ByteRange{{Start: 0, End: 499}}, false},
 		{"valid multiple", "bytes=0-0, 1-1", []ByteRange{{Start: 0, End: 0}, {Start: 1, End: 1}}, false},
-		{"open-ended", "bytes=100-", []ByteRange{{Start: 100, End: -1}}, false},
+		{"open-ended with known size", "bytes=100-", []ByteRange{{Start: 100, End: 1048575}}, false},
 		{"spaces and multiple", "bytes=0-10,20-30", []ByteRange{{Start: 0, End: 10}, {Start: 20, End: 30}}, false},
 		{"invalid prefix", "byt=0-1", nil, true},
 		// {"suffix-range not supported", "bytes=-500", nil, true},

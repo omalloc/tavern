@@ -4,10 +4,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"mime/multipart"
 	"net/http"
 	"strconv"
-	"strings"
 
 	configv1 "github.com/omalloc/tavern/api/defined/v1/middleware"
 	"github.com/omalloc/tavern/contrib/log"
@@ -39,8 +39,16 @@ func Middleware(c *configv1.Middleware) (middleware.Middleware, func(), error) {
 				return origin.RoundTrip(req)
 			}
 
-			rangeCount, _ := hasSuffixRange(rawRange)
-			if rangeCount <= 1 {
+			// 检测是否有多个 Range，如果只有一个 Range，则直接传递给下游
+			rangeSet, err := rangecontrol.Parse(rawRange, math.MaxInt32)
+			if err != nil {
+				headers := make(http.Header)
+				headers.Set("X-Error", err.Error())
+				return nil, xhttp.NewBizError(http.StatusRequestedRangeNotSatisfiable, headers)
+			}
+
+			// Single suffix range: pass through to next layer (P0)
+			if len(rangeSet) <= 1 {
 				return origin.RoundTrip(req)
 			}
 
@@ -50,14 +58,22 @@ func Middleware(c *configv1.Middleware) (middleware.Middleware, func(), error) {
 				return nil, err1
 			}
 			if head.Body != nil {
+
 				_ = head.Body.Close()
 			}
 
 			objSize := uint64(head.ContentLength) // ContentLength 不一定存在
 			cr, err := rangecontrol.ParseContentRange(head.Header.Get("Content-Range"))
-			if err == nil {
+			if err == nil && cr.Size > 0 {
 				// 如果源站支持 Range 头响应，则使用其总大小
 				objSize = uint64(cr.Size)
+			}
+
+			// If ranges were silently dropped (objSize unknown), reject.
+			if objSize <= 0 {
+				headers := make(http.Header)
+				headers.Set("X-Error", "unable to resolve range without object size")
+				return nil, xhttp.NewBizError(http.StatusRequestedRangeNotSatisfiable, headers)
 			}
 
 			byteRanges, err := rangecontrol.Parse(rawRange, objSize)
@@ -123,24 +139,6 @@ func Middleware(c *configv1.Middleware) (middleware.Middleware, func(), error) {
 			}, nil
 		})
 	}, cleanup, nil
-}
-
-func hasSuffixRange(rawRange string) (int, bool) {
-	const prefix = "bytes="
-	if !strings.HasPrefix(rawRange, prefix) {
-		return 0, false
-	}
-
-	parts := strings.Split(strings.TrimPrefix(rawRange, prefix), ",")
-
-	partCount := len(parts)
-
-	for _, part := range parts {
-		if strings.HasPrefix(strings.TrimSpace(part), "-") {
-			return partCount, true
-		}
-	}
-	return partCount, false
 }
 
 // 发起 HEAD 请求获取资源信息; content-type, content-length

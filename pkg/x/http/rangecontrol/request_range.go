@@ -75,15 +75,21 @@ func Parse(rangeHeader string, totalSize uint64) ([]ByteRange, error) {
 		startStr := part[:dash]
 		endStr := part[dash+1:]
 
-		// suffix-range: "-500" (not supported without total size)
+		// suffix-range: "-500"
 		if strings.HasPrefix(part, "-") {
 			end, err := strconv.ParseInt(endStr, 10, 64)
 			if err != nil || end < 0 {
 				return nil, ErrInvalidRange
 			}
 
+			start := int64(totalSize) - end
+			// If totalSize is unknown (0) or suffix exceeds totalSize, skip
+			if start < 0 {
+				continue
+			}
+
 			ranges = append(ranges, ByteRange{
-				Start: int64(totalSize) - end,
+				Start: start,
 				End:   int64(totalSize) - 1,
 			})
 			continue
