@@ -1,271 +1,267 @@
 <h1 align="center">Tavern</h1>
 
 <p align="center">
-  <a href="https://tavern.omalloc.com/" target="_blank">
-    <img src="https://www.omalloc.com/app_banner.webp?raw=true" alt="Tavern Banner">
+  <strong>面向 CDN 边缘分发与源站保护的自托管 HTTP 缓存。</strong><br>
+  合并重复回源、高效分发部分内容，并用一个聚焦缓存的 Go 服务运维边缘节点。
+</p>
+
+<p align="center">
+  <a href="https://github.com/omalloc/tavern/actions/workflows/go.yml"><img src="https://github.com/omalloc/tavern/actions/workflows/go.yml/badge.svg?branch=main" alt="构建状态"></a>
+  <a href="https://pkg.go.dev/github.com/omalloc/tavern"><img src="https://pkg.go.dev/badge/github.com/omalloc/tavern" alt="Go 文档"></a>
+  <a href="https://goreportcard.com/report/github.com/omalloc/tavern"><img src="https://goreportcard.com/badge/github.com/omalloc/tavern" alt="Go Report Card"></a>
+  <a href="https://codecov.io/gh/omalloc/tavern"><img src="https://codecov.io/gh/omalloc/tavern/main/graph/badge.svg" alt="代码覆盖率"></a>
+  <a href="https://github.com/omalloc/tavern/blob/main/LICENSE"><img src="https://img.shields.io/github/license/omalloc/tavern" alt="许可证"></a>
+</p>
+
+<p align="center">
+  <a href="docs/README.md">项目文档</a> ·
+  <a href="config.example.yaml">配置示例</a> ·
+  <a href="CHANGELOG.md">变更记录</a> ·
+  <a href="README.md">English</a>
+</p>
+
+<p align="center">
+  <a href="https://tavern.omalloc.com/">
+    <img src="docs/dist/app_banner.png" alt="Tavern HTTP 缓存" width="100%">
   </a>
 </p>
 
-<p align="center">
-  <a href="https://github.com/omalloc/tavern/actions"><img src="https://github.com/omalloc/tavern/actions/workflows/go.yml/badge.svg?branch=main" alt="Build Status"></a>
-  <a href="https://pkg.go.dev/github.com/omalloc/tavern"><img src="https://pkg.go.dev/badge/github.com/omalloc/tavern" alt="Go Reference"></a>
-  <a href="https://goreportcard.com/report/github.com/omalloc/tavern"><img src="https://goreportcard.com/badge/github.com/omalloc/tavern" alt="Go Report Card"></a>
-  <a href="https://github.com/omalloc/tavern/blob/main/LICENSE"><img src="https://img.shields.io/github/license/omalloc/tavern" alt="License"></a>
-  <a href="https://codecov.io/gh/omalloc/tavern"><img src="https://codecov.io/gh/omalloc/tavern/master/graph/badge.svg" alt="Code Coverage"></a>
-</p>
+## 项目概览
 
-<p align="center">
-  <strong>面向现代边缘的高性能 HTTP 缓存代理</strong><br>
-  基于 Go 语言实现，采用 LSM-Tree 对象索引、多级存储和零停机热升级。
-</p>
+Tavern 是一个面向 CDN 边缘缓存和源站屏蔽层的反向缓存代理。将它部署在网关或负载均衡器之后，可就近返回已缓存的响应、吸收并发缓存 MISS，并避免对象集中到期转化为源站流量尖峰。
 
-其他语言: [English](README.md)
+> [!NOTE]
+> Tavern 负责边缘架构中的**对象分发与缓存生命周期**，不提供 DNS、全局流量调度、API 网关或 CDN 控制面。
 
----
+```text
+客户端
+   │
+   ▼
+网关 / 负载均衡
+   │
+   ▼
+Tavern ── 缓存命中 ───────────────► 返回响应
+   │
+   └──── 受控回源 / 重校验 ──────────► 源站
+```
 
-## Tavern 是什么？
+Tavern 以不依赖 CGO 的 Go 二进制交付，使用 YAML 配置。既可以运行单个缓存节点，也可以把同一服务横向部署到边缘节点集群。
 
-Tavern 是一个专为 CDN 边缘节点设计的 HTTP 缓存代理服务器。它位于客户端与上游源站之间，将响应缓存到磁盘上，并使用 LSM-Tree 支持的对象索引——在海量小文件场景下不会因内存不足而受限。
+## 为什么选择 Tavern？
 
-与传统缓存将所有元数据保存在 RAM 中不同，Tavern 使用嵌入式数据库来索引缓存对象，使其能够在有限内存下高效处理数百万缓存条目。
+| 关注点 | Tavern 的处理方式 | 运维效果 |
+|:---|:---|:---|
+| **源站保护** | 合并同一对象的并发全量 MISS；把并发 Range MISS 合并为一次联合区间回源；在硬过期前刷新对象 | 减少重复回源，并让重校验流量更平滑 |
+| **部分内容分发** | 缓存单区间、后缀区间、开放区间和多区间请求；复用已有切片并补齐缺失区间 | 减少安装包、软件包和媒体对象的重复传输 |
+| **显式缓存生命周期** | 支持 URL/目录 `PURGE`、软过期/硬删除、`Vary` 版本上限、淘汰与存储分层 | 缓存失效与存储行为更可控 |
+| **缓存节点运维** | 提供 Prometheus、健康检查、性能分析、结构化日志、终端实时视图和二进制平滑切换 | 减少运维缓存节点所需的外围组件 |
 
-## 功能特性
-
-### 缓存能力
-
-- **请求合并** — 相同资源的并发请求合并为一次回源，防止缓存击穿和惊群效应
-- **模糊刷新** — 对象即将过期时按可配置的比例异步回源更新，平滑回源流量
-- **Range 请求缓存** — 完整支持单区间和多区间 Range 请求，可配置填充百分比
-- **Vary 多版本缓存** — 遵守 HTTP `Vary` 头进行多版本缓存，支持配置忽略键以提高命中率
-- **条件缓存** — `ETag` / `If-None-Match` / `If-Modified-Since` 校验与重新验证
-- **缓存预热** — 基于可配置规则主动预热缓存条目
-- **头重写** — 通过声明式 YAML 规则修改请求和响应头
-
-### 存储引擎
-
-- **LSM-tree 索引** — 对象元数据存储在 PebbleDB 或 NutsDB 中，将缓存容量与 RAM 大小解耦
-- **多级存储桶** — 热/温/冷存储分层，根据访问模式自动升温和降温
-- **桶选择策略** — 一致性哈希或轮询方式将缓存对象分布到各存储桶
-- **切片磁盘存储** — 对象按可配置大小（默认 1 MB）分块存储，实现高效 I/O
-- **目录感知路由** — 基于目录的缓存键索引，支持高效的目录级批量清理
-- **淘汰策略** — FIFO、LRU、LFU，支持每桶对象数量上限
-
-### 缓存失效 (PURGE)
-
-- **URL 清理** — 单个缓存对象失效，支持软删除（标记过期）和硬删除（物理删除）
-- **目录清理** — 批量失效 URL 路径前缀下的所有缓存对象
-- **IP 白名单** — 限制清理操作的来源 IP
-- **倒排索引** — 基于 SharedKV 的倒排索引，无需全量扫描即可快速目录清理
-
-### 运维与可观测性
-
-- **零停机升级** — 通过 `SIGUSR2` 信号使用 Cloudflare `tableflip` 实现二进制热升级，无连接丢失
-- **优雅重启** — `SIGHUP` 信号触发平滑停止和重启
-- **Prometheus 指标** — 内置 `/metrics` 端点，覆盖缓存、代理、服务器、存储层的计数器和直方图
-- **PProf 性能分析** — `/debug/pprof/` 端点提供 Go 运行时分析，支持可选 Basic Auth
-- **访问日志** — 结构化访问日志，支持可选的 AES 加密写入文件
-- **健康检查** — `/healthz` 端点用于负载均衡探测
-
-### 可扩展性
-
-- **插件系统** — 通过启动时注册的 Go 插件扩展功能。内置插件包括：
-  - `purge` — 缓存失效（见上文）
-  - `qs` — 通过 SSE 流式推送的实时查询统计和 TopK 热点 URL 追踪
-  - `verifier` — 对外部服务的异步 CRC 完整性校验
-- **中间件管道** — 洋葱模型中间件链（Recovery → Rewrite → MultiRange → Caching）。通过 `init()` 注册自定义中间件。
-- **存储后端** — 可插拔的存储桶实现（磁盘、内存、裸盘、自定义）和索引数据库引擎
-
-### 工具链
-
-| 工具 | 说明 |
-|:---|:---|
-| `tavern` | 主缓存代理服务器 |
-| `tq` | 访问日志查询工具 — 解析和过滤加密访问日志 |
-| `ttop` | 实时 TUI 仪表板 — 通过 SSE 获取实时缓存指标、热点 URL、CPU/内存 |
+NGINX、Varnish、Squid 和 Apache Traffic Server 也以不同形式提供其中部分能力。Tavern 的定位是把这些能力整合成一个紧凑、Go 原生的边缘缓存，而不是宣称每项功能都为 Tavern 独有。
 
 ## 快速开始
 
 ### 环境要求
 
-- Go 1.25+
-- Linux 或 macOS（优雅升级依赖 Unix 信号）
+- Go 1.26+
+- Linux 或 macOS
+- 一个用于提供可缓存内容的 HTTP 源站
 
-### 安装与运行
+### 编译并运行
 
 ```bash
 git clone https://github.com/omalloc/tavern.git
 cd tavern
 
-# 从示例配置创建你的配置
 cp config.example.yaml config.yaml
+# 根据当前主机设置 upstream.address、存储路径和日志路径。
 
-# 编译并运行
 make build
 ./bin/tavern -c config.yaml
 ```
 
-### Docker
+在另一个终端验证本地管理端点：
 
 ```bash
-docker build -t tavern .
-docker run -p 8080:8080 -v ./config.yaml:/usr/local/tavern/config.yaml tavern
-```
-
-### Systemd
-
-systemd unit 文件位于 `.build/systemd/system/tavern.service`。安装方式：
-
-```bash
-cp .build/systemd/system/tavern.service /etc/systemd/system/
-systemctl enable --now tavern
-```
-
-无需停机重载配置：
-
-```bash
-systemctl kill -s SIGUSR2 tavern
-```
-
-### 验证
-
-```bash
-# 健康检查
 curl http://localhost:8080/healthz
-
-# 版本信息
 curl http://localhost:8080/version
-
-# Prometheus 指标
 curl http://localhost:8080/metrics
 ```
 
+将 `upstream.address` 指向可用源站后，连续请求同一个可缓存 URL，并检查 `X-Cache`：
+
+```bash
+curl -sS -D - -o /dev/null http://localhost:8080/path/to/object
+curl -sS -D - -o /dev/null http://localhost:8080/path/to/object
+# 正常情况下，第一次请求为 MISS，后续请求转为 HIT。
+```
+
+示例配置仅允许本机访问管理路由和执行 `PURGE`。节点对外提供服务前，请检查 `local_api_allow_hosts`、PURGE 的 `allow_hosts`、PProf 凭据和文件系统路径。
+
+## 适用边界
+
+| 适合 Tavern 的场景 | 应由其他层或产品承担 |
+|:---|:---|
+| 部署在现有网关后的源站屏蔽层或 L2 缓存 | DNS、全局流量调度或托管式 CDN 控制面 |
+| Range 请求密集的软件包、安装包、图片和媒体分发 | 身份认证、复杂路由等通用 API 网关策略 |
+| 需要主动失效和本地存储控制的私有边缘网络 | 广泛的协议支持或大型运行时插件生态 |
+| 需要定制中间件、存储或控制面接入的 Go 基础设施团队 | 必须直接复用 NGINX、Varnish、Squid 或 ATS 配置的替换方案 |
+
+## 功能能力
+
+### 缓存与回源控制
+
+- 对全量 MISS 和并发缺失区间执行合并回源
+- 在硬过期前按概率异步刷新
+- 基于 `ETag` / `If-None-Match` 和 `Last-Modified` / `If-Modified-Since` 的条件重校验
+- 通过请求头触发缓存预取
+- 为源站维护独立连接池，支持 TCP 与 Unix Socket
+
+### HTTP 内容分发
+
+- 单区间、后缀区间、开放区间和多区间响应
+- 部分命中与可配置的缺失区间填充
+- 支持 `Vary` 多版本，可限制版本数量并忽略指定键
+- 可选择是否把查询参数纳入缓存键
+- 通过声明式规则重写请求头和响应头
+- 对象切片存储，支持渐进式读写
+
+### 失效与存储
+
+- 按 URL 或目录前缀执行 `PURGE`
+- 软失效后重校验，或硬删除立即移除
+- 缓存失效请求来源白名单
+- 磁盘与内存 Bucket，一致性哈希或轮询分配
+- FIFO、LRU 和 LFU 淘汰策略
+- 可选的热、温、冷自动升降级
+- 通过 PebbleDB 或 NutsDB 持久化对象元数据
+
+### 扩展点
+
+- 可组合的 `http.RoundTripper` 中间件
+- 内置缓存失效、查询统计和完整性校验插件
+- 可替换的存储 Bucket、选择器和索引后端
+- 通过 Go 接口和 `init()` 在编译期注册；扩展会链接到二进制中，而不是作为运行时插件加载
+
 ## 配置
 
-Tavern 使用单一 YAML 配置文件。关键配置段：
+Tavern 使用一个 YAML 配置文件。下面展示主要请求与存储链路；全部配置项请参见 [`config.example.yaml`](config.example.yaml)。
 
 ```yaml
 server:
   addr: ":8080"
-  middleware:          # 中间件链：recovery, rewrite, multirange, caching
+  middleware:
+    - name: recovery
+    - name: multirange
     - name: caching
       options:
-        fuzzy_refresh: true
         collapsed_request: true
-        vary_ignore_key: ["Cookie"]
+        collapsed_request_wait_timeout: 100ms
+        fuzzy_refresh: true
+        fuzzy_refresh_rate: 0.1
+        fill_range_percent: 100
+        vary_limit: 100
 
 upstream:
-  balancing: wrr       # 加权轮询
   address:
-    - http://10.0.0.1:8000
-    - http://10.0.0.2:8000
+    - http://127.0.0.1:8000
 
 storage:
-  db_type: pebble      # pebble | nutsdb
-  eviction_policy: lru # fifo | lru | lfu
+  driver: native
+  db_type: pebble
+  eviction_policy: lru
   selection_policy: hashring
-  slice_size: 1048576  # 1 MB 分块
-  migration:           # 冷热分层
-    enabled: true
-    promote:
-      min_hits: 10
-      window: 1m
-    demote:
-      min_hits: 2
-      window: 5m
+  slice_size: 1048576
   buckets:
-    - path: /cache/hot
-      type: hot
+    - path: /var/lib/tavern/cache
+      type: normal
       max_object_limit: 10000000
-    - path: /cache/warm
-      type: warm
 ```
 
-> [!TIP]
-> 完整带注释的配置请参见 [`config.example.yaml`](config.example.yaml)。
+### 失效缓存对象
+
+```bash
+# 标记单个对象过期，下次请求时进行重校验。
+curl -X PURGE http://localhost:8080/assets/app.js
+
+# 立即删除单个对象。
+curl -X PURGE -H 'Purge-Type: file,hard' \
+  http://localhost:8080/assets/app.js
+
+# 标记路径下的所有对象过期。
+curl -X PURGE -H 'Purge-Type: dir' \
+  http://localhost:8080/assets/
+```
+
+`PURGE` 请求必须来自插件 `allow_hosts` 中配置的地址。
+
+## 运维接口
+
+| 接口 | 用途 |
+|:---|:---|
+| `/metrics` | Prometheus 缓存、代理、服务端和存储指标 |
+| `/healthz` / `/version` | 负载均衡健康检查与构建信息 |
+| `/debug/pprof/` | Go 运行时性能分析，支持可选 Basic Auth |
+| `ttop` | 通过 SSE 实时查看流量、状态码、资源用量与热点 URL |
+| `tq` | 查询访问日志，包括加密访问日志 |
+| `SIGUSR2` | 通过 `tableflip` 执行二进制平滑升级与监听器切换 |
+
+访问日志采用结构化格式，并可选择加密落盘。管理 HTTP 端点由 `local_api_allow_hosts` 控制访问。
 
 ## 架构
 
-```
-客户端请求
-  └── server (HTTPServer)
-        ├── 内部路由: /metrics, /healthz, /debug/pprof/, /version
-        └── 缓存管道:
-              ├── Recovery      — panic 恢复、故障阈值
-              ├── Rewrite       — 请求/响应头变换
-              ├── MultiRange    — 多区间 Range 请求处理
-              └── Caching       — 缓存键计算、对象查找、分块读取、
-              │                   模糊刷新、请求合并、Vary 处理、异步重新验证
-              └── Upstream Proxy — 连接池、节点选择、单飞合并
-                  (最内层)
+Tavern 使用 `http.RoundTripper` 中间件组合请求链路。上游代理是最内层 Transport，缓存与分发行为可以独立替换。
+
+```text
+HTTP Server
+├── 本地端点: metrics, health, version, PProf
+├── 插件: purge, query stats, integrity verifier
+└── 请求管道
+    ├── Recovery
+    ├── Rewrite
+    ├── MultiRange
+    ├── Caching
+    └── Upstream proxy
+        ├── 连接池
+        ├── TCP / Unix Socket 传输
+        └── 请求合并
+
+Caching
+└── Storage selector
+    ├── 磁盘 / 内存 Bucket
+    ├── 可选的热 / 温 / 冷迁移
+    ├── PURGE 与计数器共享状态
+    └── 持久化对象元数据
 ```
 
-### 存储层
+## 开发
 
-```
-Caching 中间件
-  └── Storage.Selector (hashring / roundrobin)
-        └── Bucket (disk / memory / rawdisk)
-              ├── 对象文件 (分块，1 MB 切片)
-              └── IndexDB (PebbleDB / NutsDB) — 对象元数据
-        └── SharedKV — 跨桶计数器、倒排索引
-        └── DirAware — 目录级缓存键路由
-        └── Migrator (可选) — 热/温/冷分层升降级
-```
+| 命令 | 用途 |
+|:---|:---|
+| `make build` | 编译静态的 `bin/tavern` 服务端二进制 |
+| `make toolchain` | 编译 `bin/tq` 和 `bin/ttop` |
+| `make check` | 运行 `go vet` 与 `staticcheck` |
+| `make generate` | 重新生成协议常量 |
+| `go test -count=1 -v ./storage/...` | 运行可独立执行的包测试 |
+| `go test -count=1 -v ./...` | 运行全部测试；集成测试需要先启动 Tavern |
 
-## 项目结构
-
-```
-tavern/
-├── api/defined/v1/     接口契约 (storage, plugin, middleware)
-├── cmd/
-│   ├── tq/             访问日志查询 CLI
-│   └── top/            实时 TUI 监控 (ttop)
-├── conf/               配置结构定义
-├── contrib/            内部框架 (应用生命周期、日志、配置)
-├── docs/               文档 (架构、功能、生态)
-├── internal/protocol/  生成的协议常量 (headers)
-├── pkg/                工具包 (metrics, traces, encoding, iobuf)
-├── plugin/
-│   ├── purge/          缓存失效 (URL + 目录)
-│   ├── qs/             查询统计、SSE、TopK 追踪
-│   └── verifier/       CRC 完整性校验
-├── proxy/              上游反向代理与连接池
-├── server/
-│   ├── middleware/     中间件链 (recovery, rewrite, multirange, caching)
-│   └── mod/            请求包装、trace 注入
-├── storage/
-│   ├── bucket/         存储桶实现 (disk, memory, empty)
-│   ├── indexdb/        索引数据库实现 (pebble, nutsdb)
-│   ├── selector/       桶选择策略 (hashring, roundrobin)
-│   ├── sharedkv/       跨桶键值存储
-│   └── diraware/       目录感知缓存路由
-└── tests/              集成测试 (需要运行 tavern)
-```
+欢迎提交 Issue 和 Pull Request。请保持改动聚焦，在受影响的包中补充测试，并在提交 PR 前运行相关包测试。
 
 ## 文档
 
 | 文档 | 说明 |
 |:---|:---|
-| [生态概览](docs/ecosystem/overview.md) | 三层 CDN 架构和全链路请求流程 |
-| [协议规范](docs/ecosystem/protocol.md) | 内部 TR-*/X-* 头定义 |
-| [Tavern 项目文档](docs/tavern/01-project.md) | 项目概述、技术栈、快速开始 |
-| [Tavern 功能文档](docs/tavern/02-features.md) | 完整功能参考 |
-| [Tavern 架构文档](docs/tavern/03-architecture.md) | 深入：中间件、存储、代理、插件系统 |
-| [PURGE 设计](docs/purge.md) | 缓存失效设计、API 与内部实现 |
-| [CDN 缓存分析](docs/cdn-cache-analysis.md) | Tavern vs Squid vs ATS 对比 |
-| [Grafana 仪表板](docs/Grafana-Prometheus-Dashboard.json) | 预构建的 Grafana 仪表板模板 |
+| [文档索引](docs/README.md) | 项目与生态文档入口 |
+| [生态概览](docs/ecosystem/overview.md) | 多层 CDN 拓扑与完整请求生命周期 |
+| [功能参考](docs/tavern/02-features.md) | 缓存、存储、PURGE 与运维行为 |
+| [架构设计](docs/tavern/03-architecture.md) | 中间件、代理、存储与插件内部实现 |
+| [PURGE 设计](docs/purge.md) | 缓存失效协议与实现 |
+| [Grafana 仪表板](docs/Grafana-Prometheus-Dashboard.json) | Prometheus 仪表板模板 |
 
-## 生态系统
+## 生态
 
-- **Tavern Gateway** — 基于 OpenResty 的 L1/L3 网关，配合 Tavern 的 L2 缓存层
-- **[CRC-Center](https://github.com/omalloc/trust-receive)** — 缓存文件完整性校验服务（由 `verifier` 插件使用）
+- **Tavern Gateway** — 基于 OpenResty 的 L1/L3 网关，与作为 L2 缓存的 Tavern 配合使用
+- **[CRC-Center](https://github.com/omalloc/trust-receive)** — `verifier` 插件使用的外部缓存文件完整性校验服务
 
-## 致谢
+## 许可证
 
-Tavern 建立在以下优秀的开源工作之上：
-
-- **[Kratos](https://github.com/go-kratos/kratos)** — 微服务框架，启发了模块化架构设计
-- **[Pebble](https://github.com/cockroachdb/pebble)** — CockroachDB 的 LSM-tree K/V 存储引擎，驱动对象索引
-- **[tableflip](https://github.com/cloudflare/tableflip)** — Cloudflare 的零停机进程升级方案
-- **[NutsDB](https://github.com/nutsdb/nutsdb)** — 纯 Go 嵌入式 K/V 存储（备选索引后端）
-- **[Prometheus Go Client](https://github.com/prometheus/client_golang)** — 指标采集
+Tavern 按照 [MIT License](LICENSE) 的条款开源。
