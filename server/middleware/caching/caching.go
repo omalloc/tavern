@@ -172,8 +172,12 @@ func Middleware(c *configv1.Middleware) (middleware.Middleware, func(), error) {
 			// concurrent requests for the same cache object share one
 			// origin fetch (Squid-style collapsed_forwarding).
 			if opts.CollapsedRequest {
-				flightKey := caching.id.HashStr() + ":" + xhttp.HeaderFingerprint(req.Header)
-				flightResp, _, flightErr := objectFlight.Do(flightKey, opts.CollapsedRequestWaitTimeout.AsDuration(), func() (*http.Response, error) {
+				// VaryProcessor selects a representation-specific ID before a
+				// known-variant miss reaches this point. For a cold miss,
+				// ObjectFlightGroup checks the origin's Vary fields before sharing
+				// the response with requests carrying different headers.
+				flightKey := objectFlightRequestKey(caching.id.HashStr(), req)
+				flightResp, _, flightErr := objectFlight.DoRequest(flightKey, req.Header, opts.CollapsedRequestWaitTimeout.AsDuration(), func() (*http.Response, error) {
 					r, e := caching.doProxy(req, false)
 					if e != nil {
 						return nil, e

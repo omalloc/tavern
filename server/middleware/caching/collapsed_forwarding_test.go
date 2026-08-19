@@ -411,6 +411,144 @@ func TestObjectFlight_BasicCollapse(t *testing.T) {
 	}
 }
 
+func TestObjectFlight_RequestMetadataDoesNotSplitFlight(t *testing.T) {
+	g := &ObjectFlightGroup{}
+	var callCount atomic.Int32
+
+	const callers = 5
+	var wg sync.WaitGroup
+	start := make(chan struct{})
+	bodies := make([]string, callers)
+
+	for i := 0; i < callers; i++ {
+		wg.Add(1)
+		go func(idx int) {
+			defer wg.Done()
+			<-start
+
+			header := http.Header{"X-Request-Idx": {string(rune('0' + idx))}}
+			resp, _, err := g.DoRequest("cache-key-metadata", header, 50*time.Millisecond, func() (*http.Response, error) {
+				callCount.Add(1)
+				return &http.Response{
+					StatusCode: http.StatusOK,
+					Header:     make(http.Header),
+					Body:       io.NopCloser(strings.NewReader("shared-body")),
+				}, nil
+			})
+			if err != nil {
+				t.Errorf("caller %d: unexpected error: %v", idx, err)
+				return
+			}
+			body, readErr := io.ReadAll(resp.Body)
+			_ = resp.Body.Close()
+			if readErr != nil {
+				t.Errorf("caller %d: read error: %v", idx, readErr)
+				return
+			}
+			bodies[idx] = string(body)
+		}(i)
+	}
+
+	close(start)
+	wg.Wait()
+
+	if callCount.Load() != 1 {
+		t.Fatalf("request metadata split one object flight into %d calls", callCount.Load())
+	}
+	for i, body := range bodies {
+		if body != "shared-body" {
+			t.Errorf("caller %d: body = %q, want shared-body", i, body)
+		}
+	}
+}
+
+func TestObjectFlightRequestKey(t *testing.T) {
+	newRequest := func(method string, header http.Header) *http.Request {
+		req, err := http.NewRequest(method, "http://example.com/object", nil)
+		if err != nil {
+			t.Fatalf("new request: %v", err)
+		}
+		req.Header = header
+		return req
+	}
+
+	base := newRequest(http.MethodGet, http.Header{"X-Request-Idx": {"1"}})
+	metadataOnly := newRequest(http.MethodGet, http.Header{"X-Request-Idx": {"2"}})
+	if objectFlightRequestKey("object", base) != objectFlightRequestKey("object", metadataOnly) {
+		t.Fatal("request-local metadata changed the object-flight key")
+	}
+
+	representationOnly := newRequest(http.MethodGet, http.Header{"Accept-Encoding": {"br"}})
+	if objectFlightRequestKey("object", base) != objectFlightRequestKey("object", representationOnly) {
+		t.Fatal("Vary-managed representation fields changed the initial object-flight key")
+	}
+
+	for name, req := range map[string]*http.Request{
+		"method":        newRequest(http.MethodHead, nil),
+		"range":         newRequest(http.MethodGet, http.Header{"Range": {"bytes=0-99"}}),
+		"authorization": newRequest(http.MethodGet, http.Header{"Authorization": {"Bearer token"}}),
+		"upstream":      newRequest(http.MethodGet, http.Header{"i-x-ups-addr": {"127.0.0.1:9000"}}),
+	} {
+		if objectFlightRequestKey("object", base) == objectFlightRequestKey("object", req) {
+			t.Errorf("%s did not change the object-flight key", name)
+		}
+	}
+}
+
+func TestObjectFlight_VaryRepresentationsUseSeparateFlights(t *testing.T) {
+	g := &ObjectFlightGroup{}
+	var callCount atomic.Int32
+
+	encodings := []string{"gzip", "br", "gzip", "br"}
+	var wg sync.WaitGroup
+	start := make(chan struct{})
+	bodies := make([]string, len(encodings))
+
+	for i, encoding := range encodings {
+		wg.Add(1)
+		go func(idx int, encoding string) {
+			defer wg.Done()
+			<-start
+
+			header := http.Header{
+				"Accept-Encoding": {encoding},
+				"X-Request-Idx":   {string(rune('0' + idx))},
+			}
+			resp, _, err := g.DoRequest("cache-key-vary", header, 50*time.Millisecond, func() (*http.Response, error) {
+				callCount.Add(1)
+				return &http.Response{
+					StatusCode: http.StatusOK,
+					Header:     http.Header{"Vary": {"Accept-Encoding"}},
+					Body:       io.NopCloser(strings.NewReader(encoding)),
+				}, nil
+			})
+			if err != nil {
+				t.Errorf("caller %d: unexpected error: %v", idx, err)
+				return
+			}
+			body, readErr := io.ReadAll(resp.Body)
+			_ = resp.Body.Close()
+			if readErr != nil {
+				t.Errorf("caller %d: read error: %v", idx, readErr)
+				return
+			}
+			bodies[idx] = string(body)
+		}(i, encoding)
+	}
+
+	close(start)
+	wg.Wait()
+
+	if callCount.Load() != 2 {
+		t.Fatalf("Vary representations used %d origin calls, want 2", callCount.Load())
+	}
+	for i, body := range bodies {
+		if body != encodings[i] {
+			t.Errorf("caller %d: body = %q, want %q", i, body, encodings[i])
+		}
+	}
+}
+
 func TestObjectFlight_ErrorPropagation(t *testing.T) {
 	g := &ObjectFlightGroup{}
 	var callCount atomic.Int32
