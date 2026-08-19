@@ -4,9 +4,29 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
+
+	"github.com/omalloc/tavern/internal/protocol"
+	xhttp "github.com/omalloc/tavern/pkg/x/http"
+	"github.com/omalloc/tavern/pkg/x/http/varycontrol"
 )
+
+var objectFlightControlHeaders = map[string]struct{}{
+	"range":                       {},
+	"if-range":                    {},
+	"if-match":                    {},
+	"if-none-match":               {},
+	"if-modified-since":           {},
+	"if-unmodified-since":         {},
+	"authorization":               {},
+	"proxy-authorization":         {},
+	"cookie":                      {},
+	"cache-control":               {},
+	"pragma":                      {},
+	protocol.InternalUpstreamAddr: {},
+}
 
 // objectFlightCall represents an in-flight full-object origin fetch.
 //
@@ -16,11 +36,17 @@ import (
 // SavepartAsyncReader → disk writes) while simultaneously providing data
 // to all waiting callers — no cache re-lookup is needed.
 type objectFlightCall struct {
-	resp  *http.Response
-	pipes []*io.PipeWriter
-	mu    sync.Mutex     // protects pipes during registration and snapshot
-	wg    sync.WaitGroup // signals that resp headers / err are ready
-	err   error
+	resp         *http.Response
+	leaderHeader http.Header
+	waiters      []*objectFlightWaiter
+	wg           sync.WaitGroup // signals that resp headers / err are ready
+	err          error
+}
+
+type objectFlightWaiter struct {
+	header   http.Header
+	writer   *io.PipeWriter
+	retryKey string
 }
 
 // ObjectFlightGroup collapses concurrent full-MISS requests for the same
@@ -36,6 +62,17 @@ type ObjectFlightGroup struct {
 	m  map[string]*objectFlightCall
 }
 
+func objectFlightRequestKey(base string, req *http.Request) string {
+	selected := make(http.Header, len(objectFlightControlHeaders))
+	for name, values := range req.Header {
+		if _, ok := objectFlightControlHeaders[strings.ToLower(name)]; ok {
+			selected[name] = values
+		}
+	}
+
+	return base + "\x00method:" + req.Method + "\x00control:" + xhttp.HeaderFingerprint(selected)
+}
+
 // Do executes fn once per key and fans out the response body to all
 // concurrent callers.  All callers receive the same response headers
 // (cloned) and a shared body stream.
@@ -49,7 +86,20 @@ type ObjectFlightGroup struct {
 //	shared — true if this caller joined an existing flight
 //	err    — error from fn or from body copy
 func (g *ObjectFlightGroup) Do(key string, waiter time.Duration, fn func() (*http.Response, error)) (*http.Response, bool, error) {
+	return g.do(key, nil, waiter, fn)
+}
+
+// DoRequest is like Do, but also uses the response's Vary fields to avoid
+// sharing a representation with a request whose selected header values differ.
+// Requests rejected from the initial flight are collapsed again under a
+// representation-specific key.
+func (g *ObjectFlightGroup) DoRequest(key string, header http.Header, waiter time.Duration, fn func() (*http.Response, error)) (*http.Response, bool, error) {
+	return g.do(key, header, waiter, fn)
+}
+
+func (g *ObjectFlightGroup) do(key string, header http.Header, waiter time.Duration, fn func() (*http.Response, error)) (*http.Response, bool, error) {
 	pr, pw := io.Pipe()
+	w := &objectFlightWaiter{header: header.Clone(), writer: pw}
 
 	g.mu.Lock()
 	if g.m == nil {
@@ -57,15 +107,18 @@ func (g *ObjectFlightGroup) Do(key string, waiter time.Duration, fn func() (*htt
 	}
 	if c, ok := g.m[key]; ok {
 		// Waiter: register a pipe writer and wait for headers.
-		c.mu.Lock()
-		c.pipes = append(c.pipes, pw)
-		c.mu.Unlock()
+		c.waiters = append(c.waiters, w)
 		g.mu.Unlock()
 
 		c.wg.Wait()
 		if c.err != nil {
 			_ = pw.CloseWithError(c.err)
 			return nil, true, c.err
+		}
+		if w.retryKey != "" {
+			_ = pw.Close()
+			_ = pr.Close()
+			return g.do(w.retryKey, header, waiter, fn)
 		}
 
 		resp := cloneResponse(c.resp)
@@ -74,7 +127,10 @@ func (g *ObjectFlightGroup) Do(key string, waiter time.Duration, fn func() (*htt
 	}
 
 	// Leader: create the flight and execute fn.
-	c := &objectFlightCall{pipes: []*io.PipeWriter{pw}}
+	c := &objectFlightCall{
+		leaderHeader: header.Clone(),
+		waiters:      []*objectFlightWaiter{w},
+	}
 	c.wg.Add(1)
 	g.m[key] = c
 	g.mu.Unlock()
@@ -101,23 +157,23 @@ func (g *ObjectFlightGroup) Do(key string, waiter time.Duration, fn func() (*htt
 		g.mu.Unlock()
 		c.wg.Done()
 
-		// Snapshot pipes under c.mu to avoid racing with waiter registrations.
-		c.mu.Lock()
-		for _, p := range c.pipes {
-			_ = p.CloseWithError(err)
+		for _, waiter := range c.waiters {
+			_ = waiter.writer.CloseWithError(err)
 		}
-		c.mu.Unlock()
 		return nil, false, err
 	}
 
 	c.resp = resp
-	c.wg.Done() // release waiters — headers are now available
-
-	// Snapshot pipes under c.mu to avoid racing with waiter registrations.
-	c.mu.Lock()
-	pipes := make([]*io.PipeWriter, len(c.pipes))
-	copy(pipes, c.pipes)
-	c.mu.Unlock()
+	pipes := make([]*io.PipeWriter, 0, len(c.waiters))
+	for i, waiter := range c.waiters {
+		retryKey, compatible := objectFlightVaryMatch(key, c.leaderHeader, waiter.header, resp, i)
+		if compatible {
+			pipes = append(pipes, waiter.writer)
+			continue
+		}
+		waiter.retryKey = retryKey
+	}
+	c.wg.Done() // release waiters — headers and Vary matching are ready
 	g.mu.Unlock()
 
 	// Fan out the response body to all pipes (including the leader's).
@@ -147,6 +203,31 @@ func (g *ObjectFlightGroup) Do(key string, waiter time.Duration, fn func() (*htt
 	leaderResp := cloneResponse(resp)
 	leaderResp.Body = pr
 	return leaderResp, false, nil
+}
+
+func objectFlightVaryMatch(key string, leader, waiter http.Header, resp *http.Response, position int) (string, bool) {
+	if resp == nil {
+		return "", true
+	}
+
+	varyKey := varycontrol.Clean(resp.Header.Values("Vary")...)
+	if len(varyKey) == 0 {
+		return "", true
+	}
+
+	if varyKey.HasWildcard() {
+		if position == 0 {
+			return "", true
+		}
+		return fmt.Sprintf("%s\x00vary:*:%d", key, position), false
+	}
+
+	leaderVaryData := varyKey.VaryData(leader)
+	waiterVaryData := varyKey.VaryData(waiter)
+	if leaderVaryData == waiterVaryData {
+		return "", true
+	}
+	return key + "\x00vary:" + waiterVaryData, false
 }
 
 // cloneResponse returns a shallow copy of resp with a cloned Header map.
