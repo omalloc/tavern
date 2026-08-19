@@ -35,18 +35,53 @@ func (f CacheFlag) String() string {
 type Metadata struct {
 	Flags CacheFlag `json:"flags"`
 
-	ID          *ID           `json:"id"`             // object ID
-	BlockSize   uint64        `json:"bsize"`          // block size
-	Chunks      bitmap.Bitmap `json:"chunks"`         // file chunk
-	Parts       bitmap.Bitmap `json:"parts"`          // file chunk parts
-	Code        int           `json:"code"`           // http response code
-	Size        uint64        `json:"size"`           // object size
-	RespUnix    int64         `json:"resp_unix"`      // response time
-	LastRefUnix int64         `json:"last_ref_unix"`  // last reference time
-	Refs        int64         `json:"refs"`           // reference count
-	ExpiresAt   int64         `json:"expires_at"`     // expiration time
-	Headers     http.Header   `json:"headers"`        // http headers
-	VirtualKey  []string      `json:"vkey,omitempty"` // vary keys
+	ID           *ID           `json:"id"`             // object ID
+	BlockSize    uint64        `json:"bsize"`          // block size
+	Chunks       bitmap.Bitmap `json:"chunks"`         // file chunk
+	Parts        bitmap.Bitmap `json:"parts"`          // file chunk parts
+	Code         int           `json:"code"`           // http response code
+	Size         uint64        `json:"size"`           // object size
+	RespUnix     int64         `json:"resp_unix"`      // response time
+	LastRefUnix  int64         `json:"last_ref_unix"`  // last reference time
+	Refs         int64         `json:"refs"`           // reference count
+	ExpiresAt    int64         `json:"expires_at"`     // expiration time
+	Headers      http.Header   `json:"headers"`        // http headers
+	VirtualKey   []string      `json:"vkey,omitempty"` // v1 vary keys
+	VariantIndex *VariantIndex `json:"variant_index,omitempty"`
+	Variant      *VariantMeta  `json:"variant,omitempty"`
+}
+
+type VariantIndex struct {
+	Version  uint8        `json:"version"`
+	Revision uint64       `json:"revision"`
+	Variants []VariantRef `json:"variants,omitempty"`
+}
+
+type VariantRef struct {
+	ObjectKey      string             `json:"object_key"`
+	Schema         VarySchema         `json:"schema"`
+	SelectorDigest string             `json:"selector_digest"`
+	Dimensions     []VariantDimension `json:"dimensions,omitempty"`
+	StoredAtUnix   int64              `json:"stored_at_unix"`
+	ResponseDate   int64              `json:"response_date"`
+}
+
+type VarySchema struct {
+	ID                   string   `json:"id"`
+	Fields               []string `json:"fields,omitempty"`
+	NormalizationVersion uint16   `json:"normalization_version"`
+	PolicyFingerprint    string   `json:"policy_fingerprint,omitempty"`
+}
+
+type VariantDimension struct {
+	Namespace string `json:"namespace"`
+	Value     string `json:"value"`
+}
+
+type VariantMeta struct {
+	Schema         VarySchema         `json:"schema"`
+	SelectorDigest string             `json:"selector_digest"`
+	Dimensions     []VariantDimension `json:"dimensions,omitempty"`
 }
 
 // IsVary returns true if the metadata is a vary metadata.
@@ -92,18 +127,43 @@ func (m *Metadata) HasComplete() bool {
 // Clone clones the metadata.
 func (m *Metadata) Clone() *Metadata {
 	return &Metadata{
-		ID:          m.ID,
-		BlockSize:   m.BlockSize,
-		Chunks:      m.Chunks.Clone(nil),
-		Parts:       m.Parts.Clone(nil),
-		Code:        m.Code,
-		Size:        m.Size,
-		RespUnix:    m.RespUnix,
-		LastRefUnix: m.LastRefUnix,
-		Refs:        m.Refs,
-		ExpiresAt:   m.ExpiresAt,
-		Headers:     m.Headers.Clone(),
-		Flags:       m.Flags,
-		VirtualKey:  append([]string{}, m.VirtualKey...),
+		ID:           m.ID,
+		BlockSize:    m.BlockSize,
+		Chunks:       m.Chunks.Clone(nil),
+		Parts:        m.Parts.Clone(nil),
+		Code:         m.Code,
+		Size:         m.Size,
+		RespUnix:     m.RespUnix,
+		LastRefUnix:  m.LastRefUnix,
+		Refs:         m.Refs,
+		ExpiresAt:    m.ExpiresAt,
+		Headers:      m.Headers.Clone(),
+		Flags:        m.Flags,
+		VirtualKey:   append([]string{}, m.VirtualKey...),
+		VariantIndex: cloneVariantIndex(m.VariantIndex),
+		Variant:      cloneVariantMeta(m.Variant),
 	}
+}
+
+func cloneVariantIndex(index *VariantIndex) *VariantIndex {
+	if index == nil {
+		return nil
+	}
+	cloned := *index
+	cloned.Variants = append([]VariantRef(nil), index.Variants...)
+	for i := range cloned.Variants {
+		cloned.Variants[i].Schema.Fields = append([]string(nil), index.Variants[i].Schema.Fields...)
+		cloned.Variants[i].Dimensions = append([]VariantDimension(nil), index.Variants[i].Dimensions...)
+	}
+	return &cloned
+}
+
+func cloneVariantMeta(meta *VariantMeta) *VariantMeta {
+	if meta == nil {
+		return nil
+	}
+	cloned := *meta
+	cloned.Schema.Fields = append([]string(nil), meta.Schema.Fields...)
+	cloned.Dimensions = append([]VariantDimension(nil), meta.Dimensions...)
+	return &cloned
 }

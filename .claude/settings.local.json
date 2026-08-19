@@ -1,0 +1,16 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(go test *)",
+      "Bash(git commit *)",
+      "Bash(git push *)",
+      "Bash(gh pr *)",
+      "Bash(git fetch *)",
+      "Bash(git merge *)",
+      "Bash(python3 *)",
+      "Bash(go build *)",
+      "Bash(go diff *)",
+      "Bash(git add *)"
+    ]
+  }
+}

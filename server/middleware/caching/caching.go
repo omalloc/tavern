@@ -81,6 +81,12 @@ func Middleware(c *configv1.Middleware) (middleware.Middleware, func(), error) {
 	}
 
 	log.Infof("middleware.caching init slice_size %d", opts.SliceSize)
+	if len(opts.VaryIgnoreKey) > 0 {
+		log.Warnf("middleware.caching vary_ignore_key is an unsafe override: %v", opts.VaryIgnoreKey)
+	}
+	if opts.VaryLimit <= 0 {
+		log.Warnf("middleware.caching variant storage disabled: vary_limit=%d", opts.VaryLimit)
+	}
 
 	processor := NewProcessorChain(
 		// Cache-State
@@ -172,7 +178,7 @@ func Middleware(c *configv1.Middleware) (middleware.Middleware, func(), error) {
 			// concurrent requests for the same cache object share one
 			// origin fetch (Squid-style collapsed_forwarding).
 			if opts.CollapsedRequest {
-				flightResp, _, flightErr := objectFlight.Do(caching.id.HashStr(), opts.CollapsedRequestWaitTimeout.AsDuration(), func() (*http.Response, error) {
+				flightResp, _, flightErr := objectFlight.Do(collapsedFlightKey(caching.id.HashStr(), req), opts.CollapsedRequestWaitTimeout.AsDuration(), func() (*http.Response, error) {
 					r, e := caching.doProxy(req, false)
 					if e != nil {
 						return nil, e
@@ -515,6 +521,9 @@ func (c *Caching) flushbufferSlice(respRange xhttp.ContentRange) (iobuf.EventSuc
 	}()
 
 	writerBuffer := func(buf []byte, index uint32, current uint64, eof bool) error {
+		if c.bypassStore {
+			return nil
+		}
 		f, wpath, err := c.bucket.WriteChunkFile(c.req.Context(), c.id, index)
 		if err != nil {
 			cacheChunkWriteTotal.With(prometheus.Labels{"result": "failed", "store_type": c.bucket.StoreType()}).Inc()
@@ -576,14 +585,25 @@ func (c *Caching) flushbufferSlice(respRange xhttp.ContentRange) (iobuf.EventSuc
 	}
 
 	writerCloser := func(eof bool) {
+		if c.bypassStore {
+			return
+		}
 		if !eof && chunked {
 			_ = c.bucket.DiscardWithMessage(c.req.Context(), c.id, "incomplete chunked file discard")
 			return
 		}
 
-		if c.opt.AsyncFlushChunk {
-			// store chunk with last eof event.
-			_ = c.bucket.Store(c.req.Context(), c.md)
+		if eof {
+			// Always commit the complete child metadata before publishing a
+			// variant root. In synchronous mode chunks may already have
+			// updated metadata, but this final store also covers empty bodies.
+			if err := c.bucket.Store(c.req.Context(), c.md); err != nil {
+				c.log.Errorf("store complete cache metadata failed: %v", err)
+				eof = false
+			}
+		}
+		if c.publishVariant != nil {
+			c.publishVariant(eof)
 		}
 
 	}

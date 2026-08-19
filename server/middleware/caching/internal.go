@@ -35,25 +35,27 @@ var cachingPool = sync.Pool{
 }
 
 type Caching struct {
-	log          *log.Helper
-	processor    *ProcessorChain
-	opt          *cachingOption
-	req          *http.Request
-	ctx          context.Context
-	id           *object.ID
-	md           *object.Metadata
-	rootmd       *object.Metadata
-	bucket       storage.Bucket
-	proxyClient  proxy.Proxy
-	chunkFlight  *ChunkFlightGroup
-	cacheStatus  storage.CacheStatus
-	cacheable    bool
-	hit          bool
-	prefetch     bool
-	revalidate   bool
-	fileChanged  bool
-	noContentLen bool // noContentLen indicates whether the content length is omitted in the HTTP response.
-	migration    bool // cache migration
+	log            *log.Helper
+	processor      *ProcessorChain
+	opt            *cachingOption
+	req            *http.Request
+	ctx            context.Context
+	id             *object.ID
+	md             *object.Metadata
+	rootmd         *object.Metadata
+	bucket         storage.Bucket
+	proxyClient    proxy.Proxy
+	chunkFlight    *ChunkFlightGroup
+	cacheStatus    storage.CacheStatus
+	cacheable      bool
+	hit            bool
+	prefetch       bool
+	revalidate     bool
+	fileChanged    bool
+	noContentLen   bool // noContentLen indicates whether the content length is omitted in the HTTP response.
+	bypassStore    bool
+	publishVariant func(complete bool)
+	migration      bool // cache migration
 }
 
 func (c *Caching) markCacheStatus(start, end int64) {
@@ -116,6 +118,8 @@ func (c *Caching) reset() {
 	c.revalidate = false
 	c.fileChanged = false
 	c.noContentLen = false
+	c.bypassStore = false
+	c.publishVariant = nil
 	c.migration = false
 }
 

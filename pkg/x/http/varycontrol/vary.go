@@ -1,152 +1,131 @@
 package varycontrol
 
 import (
+	"crypto/sha256"
+	"encoding/base64"
+	"encoding/binary"
 	"net/http"
 	"slices"
 	"sort"
 	"strings"
 )
 
-const (
-	VaryEmptyIdentity = "tr_identity"
-)
+const NormalizationVersion uint16 = 1
 
 type Key []string
 
-func (k *Key) String() string {
-	return strings.Join(*k, ",")
-}
+func (k Key) String() string         { return strings.Join(k, ",") }
+func (k *Key) Append(value string)   { *k = Clean(append([]string(*k), value)...) }
+func (k Key) Compare(other Key) bool { return slices.Equal(k, other) }
+func (k Key) Wildcard() bool         { return slices.Contains(k, "*") }
 
-func (k *Key) Append(val string) {
-	keys := canonical(val)
-	if len(keys) > 0 {
-		if slices.Contains(*k, val) {
-			return
+func Clean(values ...string) Key { return CleanWithIgnore(nil, values...) }
+
+func CleanWithIgnore(ignore map[string]struct{}, values ...string) Key {
+	var keys []string
+	for _, value := range values {
+		for _, part := range strings.Split(value, ",") {
+			name := strings.ToLower(strings.TrimSpace(part))
+			if name == "" {
+				continue
+			}
+			if name != "*" {
+				if _, ok := ignore[name]; ok {
+					continue
+				}
+			}
+			keys = append(keys, name)
 		}
-		*k = append(*k, keys...)
 	}
-}
-
-func (k *Key) VaryData(h http.Header) string {
-	l := len(*k)
-	if l <= 0 {
-		return ""
-	}
-
-	kv := make(map[string]string, l)
-	for _, key := range *k {
-		v := sortValues(h.Values(key))
-		kv[key] = v
-	}
-
-	keys := make([]string, 0, len(kv))
-	for key := range kv {
-		keys = append(keys, key)
-	}
-
 	sort.Strings(keys)
-
-	var buf strings.Builder
-	for _, key := range keys {
-		v := kv[key]
-		if buf.Len() > 0 {
-			buf.WriteByte('&')
-		}
-		buf.WriteString(key)
-		buf.WriteByte('=')
-		buf.WriteString(v)
-	}
-	return buf.String()
-}
-
-func (k Key) Compare(k2 Key) bool {
-	if len(k) != len(k2) {
-		return false
-	}
-
-	for i, vk1 := range k {
-		if vk1 != k2[i] {
-			return false
-		}
-	}
-	return true
-}
-
-func Clean(values ...string) Key {
-	keys := make([]string, 0)
-
-	for _, val := range values {
-		key := canonical(val)
-		if len(key) > 0 {
-			keys = append(keys, key...)
-		}
-	}
-
-	sort.Strings(keys)
-
 	return slices.Compact(keys)
 }
 
-func canonical(val string) []string {
-	s := strings.TrimSpace(val)
-	if s == "" || s == "," {
-		return nil
-	}
-
-	keys := make([]string, 0)
-
-	vk := strings.Split(s, ",")
-	for _, k := range vk {
-		key := strings.TrimSpace(k)
-		if key != "" {
-			keys = append(keys, key)
+// SelectorDigest keeps field-line and comma-member order and distinguishes a
+// missing field from an explicitly present empty field.
+func (k Key) SelectorDigest(h http.Header) string {
+	hash := sha256.New()
+	writeUint16(hash.Write, NormalizationVersion)
+	writeUint32(hash.Write, uint32(len(k)))
+	for _, field := range k {
+		writeBytes(hash.Write, []byte(field))
+		values, present := headerValues(h, field)
+		if present {
+			_, _ = hash.Write([]byte{1})
+		} else {
+			_, _ = hash.Write([]byte{0})
+		}
+		writeUint32(hash.Write, uint32(len(values)))
+		for _, value := range values {
+			writeBytes(hash.Write, normalize(field, value))
 		}
 	}
-
-	if len(keys) == 0 {
-		return nil
-	}
-
-	return keys
+	return base64.RawURLEncoding.EncodeToString(hash.Sum(nil))
 }
 
-func sortValues(vals []string) string {
-	if len(vals) == 1 {
-		return sortValue(vals[0])
+func normalize(field, value string) []byte {
+	value = strings.Trim(value, " \t")
+	if field != "accept-encoding" {
+		return []byte(value)
 	}
-
-	v := make([]string, 0, len(vals))
-	for _, val := range vals {
-		v = append(v, sortValue(val))
+	// Content-coding names and parameter names are case-insensitive. Keep the
+	// member order and qvalue intact while removing only insignificant OWS.
+	members := strings.Split(value, ",")
+	for i, member := range members {
+		params := strings.Split(member, ";")
+		params[0] = strings.ToLower(strings.TrimSpace(params[0]))
+		for j := 1; j < len(params); j++ {
+			param := strings.TrimSpace(params[j])
+			if name, val, ok := strings.Cut(param, "="); ok {
+				params[j] = strings.ToLower(strings.TrimSpace(name)) + "=" + strings.TrimSpace(val)
+			} else {
+				params[j] = strings.ToLower(param)
+			}
+		}
+		members[i] = strings.Join(params, ";")
 	}
-
-	sort.Strings(v)
-
-	return strings.Join(v, ",")
+	return []byte(strings.Join(members, ","))
 }
 
-func sortValue(val string) string {
-	val = strings.TrimSpace(val)
-	if val == "" {
+func (k Key) ID() string {
+	hash := sha256.New()
+	writeUint16(hash.Write, NormalizationVersion)
+	for _, field := range k {
+		writeBytes(hash.Write, []byte(field))
+	}
+	return base64.RawURLEncoding.EncodeToString(hash.Sum(nil)[:12])
+}
+
+// VaryData remains for compatibility with v1 callers.
+func (k Key) VaryData(h http.Header) string {
+	if len(k) == 0 {
 		return ""
 	}
-
-	v := splitTrimSpace(val)
-
-	sort.Strings(v)
-
-	return strings.Join(v, ",")
+	return k.SelectorDigest(h)
 }
 
-func splitTrimSpace(s string) []string {
-	if s == "" {
-		return nil
+func headerValues(h http.Header, field string) ([]string, bool) {
+	for name, values := range h {
+		if strings.EqualFold(name, field) {
+			return values, true
+		}
 	}
+	return nil, false
+}
 
-	v := strings.Split(s, ",")
-	for i := range v {
-		v[i] = strings.TrimSpace(v[i])
-	}
+type writer func([]byte) (int, error)
 
-	return v
+func writeUint16(w writer, value uint16) {
+	var buf [2]byte
+	binary.BigEndian.PutUint16(buf[:], value)
+	_, _ = w(buf[:])
+}
+func writeUint32(w writer, value uint32) {
+	var buf [4]byte
+	binary.BigEndian.PutUint32(buf[:], value)
+	_, _ = w(buf[:])
+}
+func writeBytes(w writer, value []byte) {
+	writeUint32(w, uint32(len(value)))
+	_, _ = w(value)
 }

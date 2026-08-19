@@ -272,8 +272,14 @@ func (d *diskBucket) discard(ctx context.Context, md *object.Metadata) error {
 	indexdbOperationDuration.With(prometheus.Labels{"op": "delete", "bucket": d.ID()}).Observe(time.Since(start).Seconds())
 
 	// 如果缓存为1级，则清除全部子缓存(vary)
-	if md.IsVary() && len(md.VirtualKey) > 0 {
-		for _, varyKey := range md.VirtualKey {
+	if md.IsVary() {
+		varyKeys := append([]string(nil), md.VirtualKey...)
+		if md.VariantIndex != nil {
+			for _, ref := range md.VariantIndex.Variants {
+				varyKeys = append(varyKeys, ref.ObjectKey)
+			}
+		}
+		for _, varyKey := range varyKeys {
 			oid := object.NewVirtualID(md.ID.Path(), varyKey)
 			if strings.EqualFold(oid.HashStr(), md.ID.HashStr()) {
 				clog.Warnf("discard %s but level1 id equal level2 id", md.ID.WPath(d.path))

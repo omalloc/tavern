@@ -2,346 +2,324 @@ package caching
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/base64"
 	"errors"
-	"fmt"
 	"net/http"
 	"os"
 	"slices"
-	"strconv"
+	"sort"
+	"strings"
+	"sync"
 	"time"
 
 	"github.com/kelindar/bitmap"
 
 	"github.com/omalloc/tavern/api/defined/v1/storage/object"
-	"github.com/omalloc/tavern/contrib/log"
-	xhttp "github.com/omalloc/tavern/pkg/x/http"
 	"github.com/omalloc/tavern/pkg/x/http/varycontrol"
 )
 
 var (
 	ErrHeaderNoMatchVaryKey  = errors.New("header no match vary key")
 	ErrHeaderNoMatchVaryData = errors.New("header no match vary data")
-
-	// ErrVarySizeLimited indicates the number of Vary versions has exceeded the maximum limit.
-	ErrVarySizeLimited = errors.New("vary size exceed limit")
-
-	// ErrVaryDowngradeNormal indicates the cache has been downgraded from Vary to normal cache.
-	ErrVaryDowngradeNormal = errors.New("vary downgrade to normal cache")
+	ErrVarySizeLimited       = errors.New("vary size exceed limit")
+	ErrVaryDowngradeNormal   = errors.New("vary downgrade to normal cache")
 )
 
-// Compile-time interface implementation check.
+const variantIndexVersion uint8 = 2
+
+var variantIndexLocks [64]sync.Mutex
+
 var _ Processor = (*VaryProcessor)(nil)
 
-type VaryOption func(r *VaryProcessor)
+type VaryOption func(*VaryProcessor)
 
 type VaryProcessor struct {
 	maxLimit      int
 	varyIgnoreKey map[string]struct{}
 }
 
-// Lookup checks if a cached response exists for the given request.
-// It returns true if a matching Vary cache entry is found, false otherwise.
-//
-// The lookup process:
-//  1. Check if the request has no-cache directive
-//  2. Verify if the cached object has Vary index
-//  3. Find the matching Vary cache based on request headers
-func (v *VaryProcessor) Lookup(caching *Caching, req *http.Request) (bool, error) {
-	if caching.hasNoCache() {
+func (v *VaryProcessor) Lookup(c *Caching, req *http.Request) (bool, error) {
+	if c.hasNoCache() {
 		return false, nil
 	}
-
-	// Check if the cached object has Vary index.
-	if !caching.md.IsVary() {
+	if !c.md.IsVary() {
 		return true, nil
 	}
-
-	// Find the matching Vary cache.
-	vmd := v.lookup(caching, req)
-	if vmd == nil {
-		// MISS: No matching Vary cache found for current request.
+	if c.md.VariantIndex == nil || c.md.VariantIndex.Version != variantIndexVersion {
+		// v1 is deliberately not guessed into v2. A later miss rebuilds it.
 		return false, nil
 	}
 
-	// HIT: Found matching Vary cache, update caching context.
-	caching.rootmd = caching.md
-	caching.id = vmd.ID
-	caching.md = vmd
+	type candidate struct {
+		ref object.VariantRef
+		md  *object.Metadata
+	}
+	digests := make(map[string]string)
+	var matches []object.VariantRef
+	for _, ref := range c.md.VariantIndex.Variants {
+		digest, ok := digests[ref.Schema.ID]
+		if !ok {
+			digest = varycontrol.Key(ref.Schema.Fields).SelectorDigest(req.Header)
+			digests[ref.Schema.ID] = digest
+		}
+		if digest == ref.SelectorDigest && len(ref.Dimensions) == 0 {
+			matches = append(matches, ref)
+		}
+	}
+	sort.SliceStable(matches, func(i, j int) bool {
+		if (len(matches[i].Schema.Fields) > 0) != (len(matches[j].Schema.Fields) > 0) {
+			return len(matches[i].Schema.Fields) > 0
+		}
+		if matches[i].ResponseDate != matches[j].ResponseDate {
+			return matches[i].ResponseDate > matches[j].ResponseDate
+		}
+		return matches[i].StoredAtUnix > matches[j].StoredAtUnix
+	})
+
+	var found *candidate
+	dangling := make(map[string]struct{})
+	for _, ref := range matches {
+		id := object.NewVirtualID(c.md.ID.Path(), ref.ObjectKey)
+		md, err := c.bucket.Lookup(req.Context(), id)
+		if err == nil && md != nil {
+			found = &candidate{ref: ref, md: md}
+			break
+		}
+		dangling[ref.ObjectKey] = struct{}{}
+	}
+	if len(dangling) > 0 {
+		v.removeDangling(c, dangling)
+	}
+	if found == nil {
+		return false, nil
+	}
+	c.rootmd = c.md
+	c.id = found.md.ID
+	c.md = found.md
 	return true, nil
 }
 
-// PreRequest performs pre-processing before the request is forwarded to the origin.
-// Currently, this is a no-op for VaryProcessor.
+func (v *VaryProcessor) removeDangling(c *Caching, dangling map[string]struct{}) {
+	baseID := c.md.ID
+	lock := &variantIndexLocks[int(baseID.Hash()[0])%len(variantIndexLocks)]
+	lock.Lock()
+	defer lock.Unlock()
+	latest, _ := c.bucket.Lookup(context.Background(), baseID)
+	if latest == nil || latest.VariantIndex == nil {
+		return
+	}
+	root := latest.Clone()
+	root.VariantIndex.Variants = slices.DeleteFunc(root.VariantIndex.Variants, func(ref object.VariantRef) bool {
+		_, remove := dangling[ref.ObjectKey]
+		return remove
+	})
+	if len(root.VariantIndex.Variants) == 0 {
+		_ = c.bucket.Discard(context.Background(), baseID)
+		return
+	}
+	root.VariantIndex.Revision++
+	_ = c.bucket.Store(c.ctx, root)
+	c.md = root
+}
+
 func (v *VaryProcessor) PreRequest(_ *Caching, req *http.Request) (*http.Request, error) {
 	return req, nil
 }
 
-// PostRequest processes the response from the origin server and handles Vary caching.
-// It converts the response to a Vary-aware cache structure if the response contains
-// Vary headers.
-func (v *VaryProcessor) PostRequest(caching *Caching, req *http.Request, resp *http.Response) (*http.Response, error) {
-	if caching.md.IsVaryCache() {
+func (v *VaryProcessor) PostRequest(c *Caching, req *http.Request, resp *http.Response) (*http.Response, error) {
+	if c.md.IsVaryCache() {
 		return resp, nil
 	}
 
-	// Convert to Vary metadata and upgrade cache structure if needed.
-	varyMetadata, err := v.convertVaryMetadata(caching, resp)
-	if err != nil && !errors.Is(err, ErrHeaderNoMatchVaryKey) {
-		caching.log.Errorf("PostRequest convertVaryMetadata failed: %s", err)
+	schemaKey := varycontrol.CleanWithIgnore(v.varyIgnoreKey, resp.Header.Values("Vary")...)
+	if schemaKey.Wildcard() {
+		c.bypassStore = true
+		c.cacheable = false
 		return resp, nil
 	}
 
-	// No Vary header matched, return original response.
-	if varyMetadata == nil {
+	wasIndex := c.md.IsVary()
+	if len(schemaKey) == 0 && !wasIndex {
+		return resp, nil
+	}
+	if req.Method == http.MethodHead || v.maxLimit <= 0 {
+		c.bypassStore = true
+		c.cacheable = false
 		return resp, nil
 	}
 
-	// Build Vary index for retrieving all Vary versions of this URL.
-	originVary := caching.md.Headers.Values("Vary")
-	originVary = append(originVary, resp.Header.Values("Vary")...)
-
-	caching.rootmd = caching.md
-	caching.rootmd.ID = caching.id
-	caching.rootmd.Size = 0
-	caching.rootmd.Flags = object.FlagVaryIndex
-	caching.rootmd.Chunks = bitmap.Bitmap{}
-	caching.rootmd.Parts = bitmap.Bitmap{}
-	caching.rootmd.Headers = http.Header{
-		"Vary": varycontrol.Clean(originVary...),
+	baseID := object.NewID(c.md.ID.Path())
+	if wasIndex && (c.md.VariantIndex == nil || c.md.VariantIndex.Version != variantIndexVersion) {
+		// v1 VirtualKey is ambiguous: recursively delete it and rebuild v2.
+		if err := c.bucket.Discard(context.Background(), baseID); err != nil && !os.IsNotExist(err) {
+			c.log.Warnf("discard legacy Vary family failed: %v", err)
+		}
+		wasIndex = false
 	}
 
-	// Inherit timestamps from root metadata.
-	varyMetadata.RespUnix = caching.rootmd.RespUnix
-	varyMetadata.LastRefUnix = caching.rootmd.LastRefUnix
-	varyMetadata.ExpiresAt = caching.rootmd.ExpiresAt
+	digest := schemaKey.SelectorDigest(req.Header)
+	schema := object.VarySchema{
+		ID:                   schemaKey.ID(),
+		Fields:               append([]string(nil), schemaKey...),
+		NormalizationVersion: varycontrol.NormalizationVersion,
+	}
+	objectKey := variantObjectKey(schema.ID, digest, nil)
+	childID := object.NewVirtualID(baseID.Path(), objectKey)
 
-	caching.md = varyMetadata
-	caching.id = varyMetadata.ID
+	child := c.md.Clone()
+	child.ID = childID
+	child.Flags = object.FlagVaryCache
+	child.VirtualKey = nil
+	child.VariantIndex = nil
+	child.Variant = &object.VariantMeta{Schema: schema, SelectorDigest: digest}
+	child.Chunks = bitmap.Bitmap{}
+	child.Parts = bitmap.Bitmap{}
 
+	now := time.Now().Unix()
+	ref := object.VariantRef{
+		ObjectKey: objectKey, Schema: schema, SelectorDigest: digest,
+		StoredAtUnix: now, ResponseDate: child.RespUnix,
+	}
+	c.id = childID
+	c.md = child
+	c.rootmd = nil // publication happens after the child reaches EOF.
+	c.publishVariant = func(complete bool) {
+		if complete {
+			v.publish(c, baseID, ref, wasIndex)
+		}
+	}
 	return resp, nil
 }
 
-// lookup finds the matching Vary cache entry based on request headers.
-func (v *VaryProcessor) lookup(caching *Caching, req *http.Request) *object.Metadata {
-	varyKey := varycontrol.Clean(caching.md.Headers.Values("Vary")...)
+func (v *VaryProcessor) publish(c *Caching, baseID *object.ID, ref object.VariantRef, wasIndex bool) {
+	lock := &variantIndexLocks[int(baseID.Hash()[0])%len(variantIndexLocks)]
+	lock.Lock()
+	defer lock.Unlock()
 
-	// Generate object ID based on Vary data from request headers.
-	vid, err := newObjectIDFromRequest(req, varyKey.VaryData(req.Header), caching.opt.IncludeQueryInCacheKey)
-	if err != nil {
-		return nil
-	}
-
-	vmd, err := caching.bucket.Lookup(req.Context(), vid)
-	if err != nil {
-		return nil
-	}
-
-	return vmd
-}
-
-// convertVaryMetadata handles the conversion and creation of Vary-aware cache metadata.
-// It processes both cases:
-//   - When the origin response has no Vary header but cached metadata has Vary info
-//   - When the origin response contains Vary header
-func (v *VaryProcessor) convertVaryMetadata(caching *Caching, resp *http.Response) (*object.Metadata, error) {
-	metaVary := varycontrol.Clean(caching.md.Headers.Values("Vary")...)
-	respVary := varycontrol.Clean(resp.Header.Values("Vary")...)
-
-	if caching.log.Enabled(log.LevelDebug) && (len(metaVary) > 0 || len(respVary) > 0) {
-		caching.log.Debugf("convertVaryMetadata: metaVaryKey: %s, respVaryKey: %s", metaVary, respVary)
-	}
-
-	// Case 1: Origin response has no Vary header.
-	if len(respVary) <= 0 {
-		return v.handleNoResponseVary(caching, resp, metaVary)
-	}
-
-	// Case 2: Origin response has Vary header.
-	return v.handleResponseVary(caching, resp, metaVary, respVary)
-}
-
-// handleNoResponseVary processes the case when origin response has no Vary header.
-func (v *VaryProcessor) handleNoResponseVary(caching *Caching, resp *http.Response, metaVary varycontrol.Key) (*object.Metadata, error) {
-	// No cached Vary info exists, skip Vary processing.
-	if len(metaVary) <= 0 {
-		return nil, ErrHeaderNoMatchVaryKey
-	}
-
-	// Generate Vary data from current request headers.
-	varyData := metaVary.VaryData(caching.req.Header)
-	if varyData == "" {
-		// Request headers don't match Vary requirements, discard old cache.
-		if err := caching.bucket.Discard(context.Background(), caching.id); err != nil {
-			caching.log.Errorf("request header not match vary, discard old cache err: %v", err)
-		}
-		if caching.rootmd != nil {
-			caching.rootmd = nil
-		}
-		return nil, ErrHeaderNoMatchVaryData
-	}
-
-	// Check Vary version limit.
-	if len(caching.md.VirtualKey) >= v.maxLimit {
-		caching.log.Errorf("vary version exceed limit: %d", len(caching.md.VirtualKey))
-		return nil, ErrVarySizeLimited
-	}
-
-	// Append new Vary data if not already exists.
-	if !slices.Contains(caching.md.VirtualKey, varyData) {
-		caching.md.VirtualKey = append(caching.md.VirtualKey, varyData)
+	latest, _ := c.bucket.Lookup(context.Background(), baseID)
+	var root *object.Metadata
+	if latest != nil && latest.IsVary() && latest.VariantIndex != nil && latest.VariantIndex.Version == variantIndexVersion {
+		root = latest.Clone()
 	} else {
-		caching.log.Debugf("vary data already exist: %s", varyData)
-	}
-
-	l2MetaID, err := newObjectIDFromRequest(caching.req, varyData, caching.opt.IncludeQueryInCacheKey)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create hash-key: %w", err)
-	}
-
-	cl, _ := strconv.Atoi(resp.Header.Get("Content-Length"))
-	return &object.Metadata{
-		ID:        l2MetaID,
-		RespUnix:  time.Now().Unix(),
-		Code:      resp.StatusCode,
-		Size:      uint64(cl),
-		BlockSize: caching.md.BlockSize,
-		Chunks:    bitmap.Bitmap{},
-		Parts:     bitmap.Bitmap{},
-		Headers:   resp.Header.Clone(),
-		ExpiresAt: caching.md.ExpiresAt,
-		Flags:     object.FlagVaryCache,
-	}, nil
-}
-
-// handleResponseVary processes the case when origin response has Vary header.
-func (v *VaryProcessor) handleResponseVary(caching *Caching, resp *http.Response, metaVary, respVary varycontrol.Key) (*object.Metadata, error) {
-	var varyData string
-
-	// Cached Vary key exists, compare with response Vary key.
-	if len(metaVary) > 0 {
-		if metaVary.Compare(respVary) {
-			// Vary keys match, try to find existing Vary cache.
-			varyData = metaVary.VaryData(caching.req.Header)
-			varyKey, _ := newObjectIDFromRequest(caching.req, varyData, caching.opt.IncludeQueryInCacheKey)
-			varyMeta, err := caching.bucket.Lookup(caching.req.Context(), varyKey)
-			if err != nil {
-				caching.log.Warnf("Vary key lookup failed: %v", err)
-			}
-			if varyMeta != nil {
-				caching.log.Debugf("Vary header match, returning existing vary metadata")
-				return varyMeta, nil
-			}
-		} else {
-			// Vary keys differ, origin has updated Vary header, rebuild cache.
-			caching.log.Infof("Vary header changed, rebuilding vary cache")
-			if discardErr := caching.bucket.Discard(context.Background(), caching.id); discardErr != nil && !os.IsNotExist(discardErr) {
-				caching.log.Errorf("error discarding old vary cache: %s", discardErr)
-			}
-
-			caching.md.VirtualKey = nil
-			if len(respVary) <= 0 {
-				// Origin removed Vary header, downgrade to normal cache.
-				caching.md.Headers.Del("Vary")
-				caching.md.Flags = object.FlagCache
-				caching.log.Debugf("Vary header removed by origin, downgrading to normal cache")
-				return nil, ErrVaryDowngradeNormal
-			}
-
-			varyData = respVary.VaryData(caching.req.Header)
+		root = &object.Metadata{
+			ID: baseID, Flags: object.FlagVaryIndex, BlockSize: c.md.BlockSize,
+			Headers: http.Header{}, Chunks: bitmap.Bitmap{}, Parts: bitmap.Bitmap{},
+			VariantIndex: &object.VariantIndex{Version: variantIndexVersion},
 		}
-
-		// Build new Vary cache object.
-		varyObjectID, _ := newObjectIDFromRequest(caching.req, varyData, caching.opt.IncludeQueryInCacheKey)
-		return v.upgrade(caching, resp, varyObjectID, varyData)
-	}
-
-	// No metaVary exists, this is the first Vary request for this resource.
-	if caching.md.Chunks.Count() > 0 {
-		if discardErr := caching.bucket.DiscardWithMessage(context.Background(), caching.id, "upgrading cache to vary structure"); discardErr != nil {
-			caching.log.Errorf("error discarding cache for vary upgrade: %s", discardErr)
+		if wasIndex && latest != nil {
+			root.RespUnix = latest.RespUnix
 		}
 	}
 
-	caching.md.VirtualKey = nil
-	varyData = respVary.VaryData(caching.req.Header)
-	varyObjectID, _ := newObjectIDFromRequest(caching.req, varyData, caching.opt.IncludeQueryInCacheKey)
-	return v.upgrade(caching, resp, varyObjectID, varyData)
+	replaced := false
+	for i := range root.VariantIndex.Variants {
+		if root.VariantIndex.Variants[i].ObjectKey == ref.ObjectKey {
+			root.VariantIndex.Variants[i] = ref
+			replaced = true
+			break
+		}
+	}
+	if !replaced {
+		if len(root.VariantIndex.Variants) >= v.maxLimit {
+			_ = v.evictOldest(c, root)
+		}
+		if len(root.VariantIndex.Variants) >= v.maxLimit {
+			_ = c.bucket.Discard(context.Background(), object.NewVirtualID(baseID.Path(), ref.ObjectKey))
+			return
+		}
+		root.VariantIndex.Variants = append(root.VariantIndex.Variants, ref)
+	}
+	root.VariantIndex.Revision++
+	root.LastRefUnix = time.Now().Unix()
+	_ = c.bucket.Store(context.Background(), root)
 }
 
-// upgrade converts a normal cache object to a Vary-aware cache structure.
-// It creates a new Vary metadata entry and updates the cache flags.
-func (v *VaryProcessor) upgrade(c *Caching, resp *http.Response, id *object.ID, varyData string) (*object.Metadata, error) {
-	virtualKey := varycontrol.Clean(append(c.md.VirtualKey, varyData)...)
-
-	if len(virtualKey) > v.maxLimit {
-		c.log.Errorf("Vary version limit exceeded: %d", len(c.md.VirtualKey))
-		return nil, ErrVarySizeLimited
+func (v *VaryProcessor) evictOldest(c *Caching, root *object.Metadata) bool {
+	oldest := -1
+	var oldestAt int64
+	for i, ref := range root.VariantIndex.Variants {
+		at := ref.StoredAtUnix
+		if md, _ := c.bucket.Lookup(context.Background(), object.NewVirtualID(root.ID.Path(), ref.ObjectKey)); md == nil {
+			oldest = i
+			break
+		} else if md.LastRefUnix > 0 {
+			at = md.LastRefUnix
+		}
+		if oldest < 0 || at < oldestAt {
+			oldest, oldestAt = i, at
+		}
 	}
-
-	c.md.VirtualKey = virtualKey
-	c.md.ID = id
-	c.md.Flags = object.FlagVaryIndex
-
-	// Merge Vary headers from response and existing metadata.
-	headers := c.md.Headers.Clone()
-	newVaryKey := resp.Header.Values("Vary")
-	newVaryKey = append(newVaryKey, headers.Values("Vary")...)
-	headers.Del("Vary")
-	for _, key := range varycontrol.Clean(newVaryKey...) {
-		headers.Add("Vary", key)
+	if oldest >= 0 {
+		ref := root.VariantIndex.Variants[oldest]
+		err := c.bucket.Discard(context.Background(), object.NewVirtualID(root.ID.Path(), ref.ObjectKey))
+		if err != nil && !os.IsNotExist(err) {
+			return false
+		}
+		root.VariantIndex.Variants = slices.Delete(root.VariantIndex.Variants, oldest, oldest+1)
+		return true
 	}
-
-	// Parse content length from response.
-	cr, err := xhttp.ParseContentRange(resp.Header)
-	if err != nil {
-		c.log.Debugf("ParseContentRange failed (may be chunked response): %v", err)
-	}
-	c.log.Infof("Vary upgrade completed, content-length: %d", cr.ObjSize)
-
-	// Create new Vary metadata.
-	now := time.Now().Unix()
-	return &object.Metadata{
-		ID:          id,
-		RespUnix:    now,
-		LastRefUnix: now,
-		Code:        resp.StatusCode,
-		Size:        cr.ObjSize,
-		BlockSize:   c.md.BlockSize,
-		Chunks:      bitmap.Bitmap{},
-		Parts:       bitmap.Bitmap{},
-		Headers:     headers,
-		ExpiresAt:   c.md.ExpiresAt,
-		Flags:       object.FlagVaryCache,
-	}, nil
+	return false
 }
 
-// NewVaryProcessor creates a new VaryProcessor with the given options.
-// Default configuration:
-//   - maxLimit: 100 (maximum Vary versions per URL)
+func variantObjectKey(schemaID, selector string, dimensions []object.VariantDimension) string {
+	hash := sha256.New()
+	for _, dim := range dimensions {
+		_, _ = hash.Write([]byte(dim.Namespace))
+		_, _ = hash.Write([]byte{0})
+		_, _ = hash.Write([]byte(dim.Value))
+		_, _ = hash.Write([]byte{0})
+	}
+	dimensionDigest := base64.RawURLEncoding.EncodeToString(hash.Sum(nil)[:9])
+	return "vk2." + schemaID + "." + selector + "." + dimensionDigest
+}
+
+func collapsedFlightKey(base string, req *http.Request) string {
+	names := make([]string, 0, len(req.Header))
+	for name := range req.Header {
+		lower := strings.ToLower(name)
+		switch lower {
+		case "connection", "keep-alive", "proxy-authenticate", "proxy-authorization",
+			"te", "trailer", "transfer-encoding", "upgrade", "traceparent", "tracestate",
+			"x-request-id":
+			continue
+		}
+		if strings.HasPrefix(lower, "x-protocol-") {
+			continue
+		}
+		names = append(names, lower)
+	}
+	sort.Strings(names)
+	hash := sha256.New()
+	for _, name := range names {
+		_, _ = hash.Write([]byte(name))
+		_, _ = hash.Write([]byte{0})
+		for _, value := range req.Header.Values(name) {
+			_, _ = hash.Write([]byte(value))
+			_, _ = hash.Write([]byte{0})
+		}
+	}
+	return base + "." + base64.RawURLEncoding.EncodeToString(hash.Sum(nil)[:12])
+}
+
 func NewVaryProcessor(opts ...VaryOption) *VaryProcessor {
-	v := &VaryProcessor{
-		maxLimit:      100,
-		varyIgnoreKey: make(map[string]struct{}),
-	}
-
+	v := &VaryProcessor{maxLimit: 100, varyIgnoreKey: make(map[string]struct{})}
 	for _, opt := range opts {
 		opt(v)
 	}
 	return v
 }
 
-// WithVaryMaxLimit sets the maximum number of Vary versions allowed per URL.
 func WithVaryMaxLimit(limit int) VaryOption {
-	return func(r *VaryProcessor) {
-		r.maxLimit = limit
-	}
+	return func(v *VaryProcessor) { v.maxLimit = limit }
 }
 
-// WithVaryIgnoreKeys specifies header keys to be ignored during Vary processing.
 func WithVaryIgnoreKeys(keys ...string) VaryOption {
-	return func(r *VaryProcessor) {
+	return func(v *VaryProcessor) {
 		for _, key := range keys {
-			r.varyIgnoreKey[key] = struct{}{}
+			if key = strings.ToLower(strings.TrimSpace(key)); key != "" && key != "*" {
+				v.varyIgnoreKey[key] = struct{}{}
+			}
 		}
 	}
 }
