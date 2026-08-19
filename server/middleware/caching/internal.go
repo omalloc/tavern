@@ -40,6 +40,7 @@ type Caching struct {
 	opt          *cachingOption
 	req          *http.Request
 	ctx          context.Context
+	rootID       *object.ID
 	id           *object.ID
 	md           *object.Metadata
 	rootmd       *object.Metadata
@@ -110,6 +111,10 @@ func (c *Caching) hasNoCache() bool {
 }
 
 func (c *Caching) reset() {
+	c.rootID = nil
+	c.id = nil
+	c.md = nil
+	c.rootmd = nil
 	c.cacheable = false
 	c.hit = false
 	c.prefetch = false
