@@ -15,6 +15,7 @@ import (
 	"github.com/omalloc/proxy/selector/node/direct"
 	"github.com/omalloc/proxy/selector/random"
 
+	xhttp "github.com/omalloc/tavern/pkg/x/http"
 	"github.com/omalloc/tavern/proxy/singleflight"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -193,8 +194,10 @@ func (r *ReverseProxy) uncompress(resp *http.Response, err error) (*http.Respons
 func onceKey(req *http.Request) string {
 	sb := strings.Builder{}
 	sb.WriteString(req.Method)
+	sb.WriteByte('\x00')
 	sb.WriteString(req.URL.String())
-	sb.WriteString(req.Header.Get("Range"))
+	sb.WriteByte('\x00')
+	sb.WriteString(xhttp.HeaderFingerprint(req.Header))
 	return sb.String()
 }
 

@@ -172,7 +172,12 @@ func Middleware(c *configv1.Middleware) (middleware.Middleware, func(), error) {
 			// concurrent requests for the same cache object share one
 			// origin fetch (Squid-style collapsed_forwarding).
 			if opts.CollapsedRequest {
-				flightResp, _, flightErr := objectFlight.Do(caching.id.HashStr(), opts.CollapsedRequestWaitTimeout.AsDuration(), func() (*http.Response, error) {
+				// VaryProcessor selects a representation-specific ID before a
+				// known-variant miss reaches this point. For a cold miss,
+				// ObjectFlightGroup checks the origin's Vary fields before sharing
+				// the response with requests carrying different headers.
+				flightKey := objectFlightRequestKey(caching.id.HashStr(), req)
+				flightResp, _, flightErr := objectFlight.DoRequest(flightKey, req.Header, opts.CollapsedRequestWaitTimeout.AsDuration(), func() (*http.Response, error) {
 					r, e := caching.doProxy(req, false)
 					if e != nil {
 						return nil, e
@@ -515,6 +520,10 @@ func (c *Caching) flushbufferSlice(respRange xhttp.ContentRange) (iobuf.EventSuc
 	}()
 
 	writerBuffer := func(buf []byte, index uint32, current uint64, eof bool) error {
+		if !c.cacheable {
+			return nil
+		}
+
 		f, wpath, err := c.bucket.WriteChunkFile(c.req.Context(), c.id, index)
 		if err != nil {
 			cacheChunkWriteTotal.With(prometheus.Labels{"result": "failed", "store_type": c.bucket.StoreType()}).Inc()
@@ -576,6 +585,10 @@ func (c *Caching) flushbufferSlice(respRange xhttp.ContentRange) (iobuf.EventSuc
 	}
 
 	writerCloser := func(eof bool) {
+		if !c.cacheable {
+			return
+		}
+
 		if !eof && chunked {
 			_ = c.bucket.DiscardWithMessage(c.req.Context(), c.id, "incomplete chunked file discard")
 			return

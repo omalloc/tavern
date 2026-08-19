@@ -97,6 +97,7 @@ func (pc *ProcessorChain) preCacheProcessor(proxyClient proxy.Proxy, store stora
 		return caching, fmt.Errorf("failed new object-objectID from request err: %w", err)
 	}
 	caching.id = objectID
+	caching.rootID = objectID
 
 	// Select storage bucket by object ID
 	// hashring or diskhash
@@ -134,13 +135,18 @@ func (pc *ProcessorChain) postCacheProcessor(caching *Caching, req *http.Request
 	}
 
 	if caching.cacheable {
-		// HEAD request need store metadata
-		if req.Method == http.MethodHead {
-			_ = caching.bucket.Store(caching.req.Context(), caching.md)
+		if caching.rootmd != nil {
+			if err := caching.storeRootMetadata(); err != nil {
+				caching.log.Errorf("failed to store Vary root metadata: %v", err)
+				caching.cacheable = false
+			}
 		}
 
-		if caching.rootmd != nil {
-			_ = caching.bucket.Store(caching.req.Context(), caching.rootmd)
+		// HEAD request need store metadata
+		if caching.cacheable && req.Method == http.MethodHead {
+			if err := caching.bucket.Store(caching.req.Context(), caching.md); err != nil {
+				caching.log.Errorf("failed to store cache metadata: %v", err)
+			}
 		}
 	}
 
