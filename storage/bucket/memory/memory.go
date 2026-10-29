@@ -122,8 +122,13 @@ func (m *memoryBucket) discard(ctx context.Context, md *object.Metadata) error {
 		}
 	}
 
+	// V2 filling records also own unconfirmed files tracked in Parts.
+	chunks := md.Chunks.Clone(nil)
+	if !md.IsLegacy() {
+		md.Parts.Range(func(x uint32) { chunks.Set(x) })
+	}
 	// 删除所有 slice 缓存文件
-	md.Chunks.Range(func(x uint32) {
+	chunks.Range(func(x uint32) {
 		wpath := md.ID.WPathSlice(m.path, x)
 		if err := m.fs.Remove(wpath); err != nil && !errors.Is(err, os.ErrNotExist) {
 			log.Context(ctx).Errorf("failed to remove cached slice file %s: %v", wpath, err)

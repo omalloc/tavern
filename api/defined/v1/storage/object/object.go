@@ -82,7 +82,7 @@ func (m *Metadata) HasComplete() bool {
 	if !m.IsResponse() || m.BlockSize == 0 {
 		return false
 	}
-	if m.Representation != nil && m.Representation.State != RepresentationComplete {
+	if m.Representation != nil && (m.Representation.State != RepresentationComplete || m.Parts.Count() != 0) {
 		return false
 	}
 	if m.IsVary() {

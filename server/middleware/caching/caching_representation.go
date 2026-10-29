@@ -8,50 +8,33 @@ import (
 	"time"
 
 	"github.com/omalloc/tavern/api/defined/v1/storage"
-	"github.com/omalloc/tavern/api/defined/v1/storage/object"
-	"github.com/omalloc/tavern/internal/protocol"
-	xhttp "github.com/omalloc/tavern/pkg/x/http"
 	"github.com/omalloc/tavern/storage/representation"
 )
 
-// Read-only integration for the controlled P1.3 path. It has no YAML/JSON
-// exposure and cannot publish an origin response through the legacy writer.
+// Internal staged integration with read-only behavior by default. Its write
+// path has no YAML/JSON exposure and never uses the legacy body writer.
 type representationLookup struct {
 	repository     *representation.IndexRepository
 	namespace      string
 	isolationScope string
+	writes         bool // internal P1.4 admission path, never exposed to config
 }
 
 func (c *Caching) lookupRepresentation(store storage.Storage) error {
 	c.cacheStatus, c.bypass = storage.BYPASS, true
-	if requestBypassesCache(c.req) {
+	c.representationBuckets = store.Buckets()
+	if requestBypassesCache(c.req) || hasClientConditions(c.req) || (c.req.Body != nil && c.req.Body != http.NoBody) {
 		return nil
-	}
-	// Conditional response assembly and validation updates belong to P1.4.
-	for _, field := range []string{"If-None-Match", "If-Modified-Since", "If-Match", "If-Unmodified-Since", "If-Range"} {
-		if _, present := c.req.Header[field]; present {
-			return nil
-		}
 	}
 	config := c.opt.representation
 	if config.repository == nil {
 		return storage.ErrControlUnsupported
 	}
-	u := *c.req.URL
-	if u.Host == "" {
-		u.Host = c.req.Host
-	}
-	if u.Scheme == "" {
-		u.Scheme = xhttp.Scheme(c.req)
-	}
-	if !c.opt.IncludeQueryInCacheKey {
-		u.RawQuery, u.ForceQuery = "", false
-	}
-	key, err := object.NewResourceKey(u.String(), config.namespace, config.isolationScope)
+	key, err := c.representationKey(c.req)
 	if err != nil {
 		return err
 	}
-	selected, err := config.repository.Lookup(c.req.Context(), key, c.req.Header)
+	selected, err := config.repository.Lookup(c.req.Context(), key, representationSelectionHeader(c.req))
 	if selected != nil {
 		c.resourceMD = selected.Resource
 	}
@@ -61,23 +44,26 @@ func (c *Caching) lookupRepresentation(store storage.Storage) error {
 	if err != nil {
 		return err
 	}
-	if !selected.Fresh {
+	if !selected.Fresh && !config.writes {
 		return nil
 	}
-	if _, allowed := xhttp.ParseCacheTime(protocol.ProtocolCacheTime, selected.Representation.Headers); !allowed {
+	received := time.Unix(selected.Representation.RespUnix, 0)
+	if _, err := representationFreshness(selected.Representation.Headers.Clone(), received, received); err != nil {
 		return nil
 	}
 	// Resolve the location recorded by the resource, not a newly selected
 	// bucket for the representation's hash or a dynamically healthy fallback.
-	for _, bucket := range store.Buckets() {
+	for _, bucket := range c.representationBuckets {
 		if bucket.ID() == selected.Resource.Resource.ActiveLocation {
 			c.bucket = bucket
 			c.md = selected.Representation
 			ref := selected.Reference.Clone()
 			c.variantRef = &ref
 			c.id = c.md.ID.Clone()
-			c.hit, c.bypass = true, false
-			c.cacheStatus = storage.CacheHit
+			c.hit, c.bypass = selected.Fresh, !selected.Fresh
+			if c.hit {
+				c.cacheStatus = storage.CacheHit
+			}
 			return nil
 		}
 	}
@@ -86,6 +72,9 @@ func (c *Caching) lookupRepresentation(store storage.Storage) error {
 
 func (c *Caching) decorateRepresentation(resp *http.Response) {
 	now := time.Now().Unix()
+	if c.opt.representation != nil && c.opt.representation.repository != nil {
+		now = c.opt.representation.repository.Now().Unix()
+	}
 	resident := max(int64(0), now-c.md.RespUnix)
 	age, err := strconv.ParseInt(c.md.Headers.Get("Age"), 10, 64)
 	if err != nil || age < 0 {

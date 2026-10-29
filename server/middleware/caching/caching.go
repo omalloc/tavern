@@ -56,7 +56,7 @@ type cachingOption struct {
 	VaryIgnoreKey               []string `json:"vary_ignore_key" yaml:"vary_ignore_key"`
 	Hostname                    string   `json:"hostname" yaml:"hostname"`
 	AsyncFlushChunk             bool     `json:"async_flush_chunk" yaml:"async_flush_chunk"`
-	// Bound internally for controlled read tests. No external v2 enable switch
+	// Bound internally for controlled representation tests. No external v2 enable switch
 	// is exposed until the P2 lifecycle and invalidation protocol is complete.
 	representation *representationLookup
 	// events.
@@ -334,6 +334,9 @@ func (c *Caching) getUpstreamReader(fromByte, toByte uint64, async bool) (io.Rea
 }
 
 func (c *Caching) doProxy(req *http.Request, subRequest bool) (*http.Response, error) {
+	if c.opt.representation != nil && c.opt.representation.writes {
+		return c.proxyRepresentation(req)
+	}
 	proxyReq := cloneRequest(req)
 	var err error
 	if !c.bypass {

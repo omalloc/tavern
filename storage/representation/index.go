@@ -26,6 +26,7 @@ var (
 	ErrInvalidRecord     = errors.New("invalid representation index record")
 	ErrUnsupportedSchema = errors.New("unsupported representation schema")
 	ErrSelectorLimit     = errors.New("representation selector limit exceeded")
+	ErrSuperseded        = errors.New("representation update superseded")
 )
 
 // LookupFunc loads response metadata at the root's fixed active location.
@@ -75,6 +76,8 @@ func NewIndexRepository(controls storage.ControlStore, initialLocation string, l
 func (r *IndexRepository) shard(key object.ResourceKey) *indexShard {
 	return &r.shards[key.ID().Hash()[0]]
 }
+
+func (r *IndexRepository) Now() time.Time { return r.now() }
 
 // Load returns an owned root. Unknown versions and malformed records are misses;
 // Update distinguishes them so it cannot overwrite unrecognized purge state.
@@ -129,6 +132,10 @@ func (r *IndexRepository) Update(ctx context.Context, key object.ResourceKey, up
 	shard := r.shard(key)
 	shard.mu.Lock()
 	defer shard.mu.Unlock()
+	return r.updateLocked(ctx, key, update)
+}
+
+func (r *IndexRepository) updateLocked(ctx context.Context, key object.ResourceKey, update func(*object.ResourceRecord) error) (*object.Metadata, error) {
 	md, err := r.load(ctx, key)
 	if errors.Is(err, storage.ErrKeyNotFound) {
 		md = &object.Metadata{ID: key.ID(), RecordKind: object.RecordResource, Resource: &object.ResourceRecord{
@@ -298,12 +305,19 @@ func validChild(key object.ResourceKey, root *object.ResourceRecord, ref object.
 		return false
 	}
 	info := md.Representation
+	if info.Revision != ref.Revision {
+		return false
+	}
 	if info.ResourceID != root.ResourceID || info.Incarnation != root.Incarnation || info.PurgeEpoch != root.PurgeEpoch ||
 		info.ValidatedEpoch > root.RevalidateEpoch || info.Kind != object.RepresentationOrigin || info.SourceID != nil ||
 		info.SourceVersion != "" || len(info.TransformSpec) != 0 || info.BodyGeneration == "" {
 		return false
 	}
-	expectedID, err := key.RepresentationID(root.Incarnation, root.PurgeEpoch, ref.SelectorFingerprint, info.BodyGeneration)
+	storageSelector := info.StorageSelectorFingerprint
+	if storageSelector == "" {
+		storageSelector = ref.SelectorFingerprint
+	}
+	expectedID, err := key.RepresentationID(root.Incarnation, root.PurgeEpoch, storageSelector, info.BodyGeneration)
 	if err != nil || !sameID(md.ID, expectedID) {
 		return false
 	}

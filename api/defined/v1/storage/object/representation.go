@@ -44,6 +44,7 @@ type ResourceRecord struct {
 }
 
 type VariantRef struct {
+	Revision              uint64               `json:"revision,omitempty" yaml:"revision,omitempty"`
 	SelectionKind         SelectionKind        `json:"selection_kind" yaml:"selection_kind"`
 	VaryFields            []string             `json:"vary_fields" yaml:"vary_fields"`
 	SelectorSnapshot      varycontrol.Snapshot `json:"selector_snapshot" yaml:"selector_snapshot"`
@@ -57,16 +58,20 @@ type VariantRef struct {
 }
 
 type RepresentationInfo struct {
-	SchemaVersion  uint16              `json:"schema_version" yaml:"schema_version"`
-	ResourceID     string              `json:"resource_id" yaml:"resource_id"`
-	Incarnation    string              `json:"incarnation" yaml:"incarnation"`
-	PurgeEpoch     uint64              `json:"purge_epoch" yaml:"purge_epoch"`
-	ValidatedEpoch uint64              `json:"validated_epoch" yaml:"validated_epoch"`
-	BodyGeneration string              `json:"body_generation" yaml:"body_generation"`
-	State          RepresentationState `json:"state" yaml:"state"`
-	Kind           RepresentationKind  `json:"kind" yaml:"kind"`
-	SourceID       *ID                 `json:"source_id,omitempty" yaml:"source_id,omitempty"`
-	SourceVersion  string              `json:"source_version,omitempty" yaml:"source_version,omitempty"`
+	Revision       uint64 `json:"revision,omitempty" yaml:"revision,omitempty"`
+	SchemaVersion  uint16 `json:"schema_version" yaml:"schema_version"`
+	ResourceID     string `json:"resource_id" yaml:"resource_id"`
+	Incarnation    string `json:"incarnation" yaml:"incarnation"`
+	PurgeEpoch     uint64 `json:"purge_epoch" yaml:"purge_epoch"`
+	ValidatedEpoch uint64 `json:"validated_epoch" yaml:"validated_epoch"`
+	BodyGeneration string `json:"body_generation" yaml:"body_generation"`
+	// The selector used when the immutable body ID was allocated. A 304 may
+	// change the logical selector without moving or rewriting those bytes.
+	StorageSelectorFingerprint string              `json:"storage_selector_fingerprint,omitempty" yaml:"storage_selector_fingerprint,omitempty"`
+	State                      RepresentationState `json:"state" yaml:"state"`
+	Kind                       RepresentationKind  `json:"kind" yaml:"kind"`
+	SourceID                   *ID                 `json:"source_id,omitempty" yaml:"source_id,omitempty"`
+	SourceVersion              string              `json:"source_version,omitempty" yaml:"source_version,omitempty"`
 	// Normalized transform specifications are opaque to the storage model.
 	// The transform package will own their interpretation and validation.
 	TransformSpec  json.RawMessage `json:"transform_spec,omitempty" yaml:"transform_spec,omitempty"`

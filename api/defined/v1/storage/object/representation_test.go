@@ -30,13 +30,13 @@ func representationFixture(t *testing.T) (*Metadata, *Metadata) {
 		SchemaVersion: RepresentationSchemaVersion, Revision: 9, ResourceID: key.ResourceID(),
 		CanonicalURL: key.CanonicalURL(), Namespace: key.Namespace(), Incarnation: "incarnation",
 		PurgeEpoch: 3, RevalidateEpoch: 4, ActiveLocation: "disk-a", RoutingEpoch: 5,
-		Variants: []VariantRef{{SelectionKind: SelectionHTTP, VaryFields: []string{"accept", "x-empty"},
+		Variants: []VariantRef{{Revision: 9, SelectionKind: SelectionHTTP, VaryFields: []string{"accept", "x-empty"},
 			SelectorSnapshot: snapshot, SelectorFingerprint: varycontrol.Fingerprint(snapshot),
 			RepresentationID: id, ResponseDate: 100, LastAccess: 110}},
 	}}
 	response := &Metadata{ID: id.Clone(), RecordKind: RecordRepresentation, BlockSize: 64, Size: 4, Code: 200,
 		Headers: http.Header{"Content-Type": {"image/webp"}, "Vary": {"Accept, X-Empty"}},
-		Representation: &RepresentationInfo{SchemaVersion: RepresentationSchemaVersion, ResourceID: key.ResourceID(),
+		Representation: &RepresentationInfo{Revision: 9, StorageSelectorFingerprint: varycontrol.Fingerprint(snapshot), SchemaVersion: RepresentationSchemaVersion, ResourceID: key.ResourceID(),
 			Incarnation: "incarnation", PurgeEpoch: 3, ValidatedEpoch: 4, BodyGeneration: "generation",
 			State: RepresentationComplete, Kind: RepresentationOrigin},
 	}
@@ -147,6 +147,11 @@ func TestRepresentationReadability(t *testing.T) {
 	copy.BlockSize = 0
 	if copy.HasComplete() {
 		t.Fatal("zero block size is complete")
+	}
+	copy = response.Clone()
+	copy.Parts.Set(0)
+	if copy.HasComplete() {
+		t.Fatal("unconfirmed chunk was readable")
 	}
 	copy = response.Clone()
 	copy.Chunks.Clear()

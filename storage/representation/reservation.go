@@ -36,7 +36,11 @@ func (r *IndexRepository) Reserve(ctx context.Context, key object.ResourceKey, s
 	if err != nil {
 		return nil, err
 	}
-	record := root.Resource
+	return r.reserveLocked(ctx, key, root.Resource, selector, limit)
+}
+
+func (r *IndexRepository) reserveLocked(ctx context.Context, key object.ResourceKey, record *object.ResourceRecord, selector object.VariantRef, limit int) (*Reservation, error) {
+	shard := r.shard(key)
 	if shard.pending == nil {
 		shard.pending = make(map[object.IDHash]map[string]*Reservation)
 	}

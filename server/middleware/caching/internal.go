@@ -35,28 +35,29 @@ var cachingPool = sync.Pool{
 }
 
 type Caching struct {
-	log          *log.Helper
-	processor    *ProcessorChain
-	opt          *cachingOption
-	req          *http.Request
-	ctx          context.Context
-	id           *object.ID
-	md           *object.Metadata
-	rootmd       *object.Metadata
-	resourceMD   *object.Metadata // independent v2 control root; never a response
-	variantRef   *object.VariantRef
-	bucket       storage.Bucket
-	proxyClient  proxy.Proxy
-	chunkFlight  *ChunkFlightGroup
-	cacheStatus  storage.CacheStatus
-	cacheable    bool
-	bypass       bool // no shared lookup, response reuse, or cache writes
-	hit          bool
-	prefetch     bool
-	revalidate   bool
-	fileChanged  bool
-	noContentLen bool // noContentLen indicates whether the content length is omitted in the HTTP response.
-	migration    bool // cache migration
+	log                   *log.Helper
+	processor             *ProcessorChain
+	opt                   *cachingOption
+	req                   *http.Request
+	ctx                   context.Context
+	id                    *object.ID
+	md                    *object.Metadata
+	rootmd                *object.Metadata
+	resourceMD            *object.Metadata // independent v2 control root; never a response
+	variantRef            *object.VariantRef
+	representationBuckets []storage.Bucket
+	bucket                storage.Bucket
+	proxyClient           proxy.Proxy
+	chunkFlight           *ChunkFlightGroup
+	cacheStatus           storage.CacheStatus
+	cacheable             bool
+	bypass                bool // no shared lookup, response reuse, or cache writes
+	hit                   bool
+	prefetch              bool
+	revalidate            bool
+	fileChanged           bool
+	noContentLen          bool // noContentLen indicates whether the content length is omitted in the HTTP response.
+	migration             bool // cache migration
 }
 
 func (c *Caching) markCacheStatus(start, end int64) {
@@ -115,6 +116,7 @@ func (c *Caching) hasNoCache() bool {
 func (c *Caching) reset() {
 	c.resourceMD = nil
 	c.variantRef = nil
+	c.representationBuckets = nil
 	c.cacheable = false
 	c.bypass = false
 	c.hit = false
