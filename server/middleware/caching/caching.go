@@ -56,6 +56,9 @@ type cachingOption struct {
 	VaryIgnoreKey               []string `json:"vary_ignore_key" yaml:"vary_ignore_key"`
 	Hostname                    string   `json:"hostname" yaml:"hostname"`
 	AsyncFlushChunk             bool     `json:"async_flush_chunk" yaml:"async_flush_chunk"`
+	// Bound internally for controlled read tests. No external v2 enable switch
+	// is exposed until the P2 lifecycle and invalidation protocol is complete.
+	representation *representationLookup
 	// events.
 	publish func(ctx context.Context, payload event.CacheCompleted) `json:"-" yaml:"-"`
 }
@@ -202,6 +205,16 @@ func (c *Caching) respondFromCache(req *http.Request) (*http.Response, error) {
 	resp, err := c.lazilyRespond(req, rng.Start, rng.End)
 	if err != nil {
 		closeBody(resp)
+		if c.resourceMD != nil && errors.Is(err, os.ErrNotExist) {
+			c.md, c.variantRef = nil, nil
+			c.hit, c.cacheable, c.bypass = false, false, true
+			c.cacheStatus = storage.BYPASS
+			resp, err = c.doProxy(req, false)
+			if err != nil {
+				return resp, err
+			}
+			return c.processor.postCacheProcessor(c, req, resp)
+		}
 		return nil, err
 	}
 

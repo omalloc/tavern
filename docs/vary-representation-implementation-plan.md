@@ -2,7 +2,7 @@
 
 日期：2026-10-29。
 
-状态：实施中。P1.1、P1.2 已实现并通过定向验证；P1.3 及后续批次尚未完成。勾选框只标记已经落实的工作，v2 持久化缓存和图片转换尚未开放。
+状态：实施中。P1.1—P1.3 已实现并通过定向验证；P1.4 及后续批次尚未完成。勾选框只标记已经落实的工作，v2 持久化缓存和图片转换尚未开放。
 
 前置分析：[HTTP Vary 与资源转换缓存改造设计](./vary-representation-design.md)。前置文档说明问题和目标架构；本文进一步确定模块边界、实施批次、阶段依赖、兼容方式和验收门槛。若两份文档在实施细节上存在差异，以本文的细化决策为准。
 
@@ -202,12 +202,12 @@ unpublished → filling → complete → retired
 
 ### P1.3 v2 索引查询基础
 
-- [ ] 新增上一节定义的对象模型、格式版本和独立键空间；旧 VirtualKey 仅用于旧数据识别，v2 不读写它。
-- [ ] 在 `storage/representation` 实现 IndexRepository 基础：Load、按资源加锁的 Update、变体预留和 Release。阶段二在同一模块补全 Store，不另建临时实现。
-- [ ] 根中直接记录 RepresentationID，不从请求头字符串重建物理子键。
-- [ ] 每个引用保留自己的字段集合。查询可按字段集合分组计算请求快照，选择候选后再检查响应新鲜度。
-- [ ] 多候选选择遵循有效 Vary 和响应 Date 的规则；Date 相同使用稳定次序。根控制记录的时间不能替代各响应的时间。
-- [ ] 查找成功后，Caching 持有独立的 resource 引用与 representation 引用；替换 c.md 不得丢掉根控制状态，也不得把响应头写入根。
+- [x] 新增上一节定义的对象模型、格式版本和独立键空间；旧 VirtualKey 仅用于旧数据识别，v2 不读写它。
+- [x] 在 `storage/representation` 实现 IndexRepository 基础：Load、按资源加锁的 Update、变体预留和 Release。阶段二在同一模块补全 Store，不另建临时实现。
+- [x] 根中直接记录 RepresentationID，不从请求头字符串重建物理子键。
+- [x] 每个引用保留自己的字段集合。查询可按字段集合分组计算请求快照，选择候选后再检查响应新鲜度。
+- [x] 多候选选择遵循有效 Vary 和响应 Date 的规则；Date 相同使用稳定次序。根控制记录的时间不能替代各响应的时间。
+- [x] 查找成功后，Caching 持有独立的 resource 引用与 representation 引用；替换 c.md 不得丢掉根控制状态，也不得把响应头写入根。
 
 过渡边界：阶段一先支持完整响应写入；206 的缓存写入、缺块补齐及未知长度响应的持久化先旁路，原请求仍正确透传。阶段二完成代际校验后恢复这些能力。阶段一允许 HEAD 命中既有表示，但 HEAD 冷 MISS 不发布“完整 Body”对象。
 
@@ -547,6 +547,7 @@ server:
 | 批次/模块 | 优先验证命令 |
 | --- | --- |
 | P1.2 Vary 工具 | `go test ./pkg/x/http/varycontrol -run 'Test(ParseVary|Snapshot|VaryMatch|Fingerprint)' -count=1` |
+| P1.3 索引、预留和控制记录 | `go test -race ./storage/representation -count=1` |
 | P1.3 元数据/键 | `go test ./api/defined/v1/storage/object -run 'Test(Representation|ResourceRecord|StructuredKey)' -count=1` |
 | P1.1/P1.4 缓存行为 | `go test ./server/middleware/caching -run 'TestVary|TestCacheAdmission' -count=1` |
 | 请求合并改动 | `go test -race ./server/middleware/caching ./proxy ./proxy/singleflight -run 'Test.*(Flight|Vary|Collapse)' -count=1` |
@@ -631,4 +632,26 @@ server:
 
 环境说明：go.mod 声明 Go 1.26，本机默认 Go 1.27 被现有 cockroachdb/swiss 依赖的构建约束排除。缓存测试通过 GOTOOLCHAIN=go1.26.0 执行；未为此修改依赖或 go.mod。
 
-后续从 P1.3 的 v2 模型、独立键空间、索引查询与预留开始；P1.4/P1.5 及 P2 生命周期验收完成前继续旁路 Vary，不将当前补丁标为完整阶段一或 v2 上线。
+P1.1/P1.2 交付时尚待实现的 v2 模型、索引与预留，已由下面的 P1.3 批次接续；P1.4/P1.5 及 P2 生命周期验收完成前继续旁路外部 Vary 流量。
+
+
+### 2026-10-29：P1.3
+
+- Metadata 增加 resource/representation 记录类型及统一 v2 嵌套模型，保留 legacy 解码。深拷贝覆盖 ID、快照、引用、源 ID、转换规格和位图，保留 nil 状态；未知记录类型/版本和 filling/failed 状态不能被当作完整响应。
+- ResourceKey 对 namespace、规范 URL 和隔离范围进行长度编码后计算 SHA-256。规范化去除 fragment，保留转义路径、重复查询参数顺序和空查询分隔符。物理 ID 后缀只包含固定版本、种类和摘要，并对 URL/后缀采用独立的边界编码；JSON/CBOR 解码恢复相同物理 ID。
+- IndexRepository 提供 Load、资源锁内重新读取并 Update、Reserve 和幂等 Release。不同 ready/pending 选择项共用预算，同一选择项多个写入者各持租约但只占一个选择预算；控制写失败、取消和未知版本不确认发布，也不覆盖旧失效状态。
+- HTTP 变体引用记录自己的字段集合、完整快照和实际表示 ID；按字段集合分组捕获请求，指纹筛选后核对完整快照。候选按各响应 Date 排序，同 Date 以 ID 稳定排序，选定后再判断过期及 validated_epoch；不以较老的新鲜表示掩盖较新的过期表示。
+- 根发布前要求子元数据已经存在，且资源、incarnation、purge_epoch、body_generation、完整块位图及 Vary 相符。此批只接受完整、长度已知的 200 描述；部分响应、未知长度、错误块偏移和旧 chunked 标志均拒绝。
+- disk/memory 提前加入本批所需的可选 LoadControl/StoreControl 基础能力；控制写不进入 LRU、计数或普通目录索引。普通 Store、Discard、Remove、迁移及块读写保护控制记录，磁盘加载 LRU 时跳过它们；普通响应 Store 不为 v2 合并旧位图。empty 不声明控制能力。
+- caching 通过内部注入接入受控只读查询，分别保存 resourceMD、variantRef 和响应 md。命中可读取 GET/HEAD/Range，保留源 Date/Age；选择项 MISS、过期、冷 HEAD 和条件请求先透传，不进入旧写入器。已选表示缺块时回退原请求，不把新字节补进旧代际。
+
+验证结果（Go 1.26.0）：
+
+- v2 元数据、托管/派生字段的 JSON/CBOR 往返、旧格式解码、深拷贝及结构化键测试通过。
+- IndexRepository 的字段笛卡尔积、字段集合变化、Date 稳定选择、并发追加、ready/pending 预算、取消/写失败、未知版本和损坏/缺失子对象测试通过，包含 race。
+- 磁盘和内存控制记录保护契约通过；caching 受控读取及旧 Vary/缓存资格回归通过，包含 race。
+- 受影响 bucket、Pebble/NutsDB 和目录包装调用者编译通过；原有磁盘读写、内存读写、提升/降级定向回归通过。
+
+发布边界：没有新增可从 YAML/JSON 打开的 v2 开关；外部 Vary 流量仍采用 P1.1 旁路。当前 ControlStore 基础能力不承诺同步落盘或跨进程原子性，预留也不是回源前捕获的 FillTicket。P2 仍须完成持久化屏障、固定写入、失效、迁移、恢复和单写交接，之后才能开放透明 v2 缓存。
+
+下一批为 P1.4：完整 200/304 更新、缓存资格决策、索引替换与提交时的预算处理。

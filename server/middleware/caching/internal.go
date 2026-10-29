@@ -43,6 +43,8 @@ type Caching struct {
 	id           *object.ID
 	md           *object.Metadata
 	rootmd       *object.Metadata
+	resourceMD   *object.Metadata // independent v2 control root; never a response
+	variantRef   *object.VariantRef
 	bucket       storage.Bucket
 	proxyClient  proxy.Proxy
 	chunkFlight  *ChunkFlightGroup
@@ -111,6 +113,8 @@ func (c *Caching) hasNoCache() bool {
 }
 
 func (c *Caching) reset() {
+	c.resourceMD = nil
+	c.variantRef = nil
 	c.cacheable = false
 	c.bypass = false
 	c.hit = false
@@ -178,6 +182,11 @@ func getContents(c *Caching, reqChunks []uint32, from uint32) (io.ReadCloser, in
 			return f, 1, nil
 		}
 		_ = f.Close()
+	}
+	if c.resourceMD != nil {
+		// V2 reads never refill a damaged/missing chunk into an existing
+		// generation through the legacy writer. Retry the client request.
+		return nil, 0, os.ErrNotExist
 	}
 
 	// get all hit block

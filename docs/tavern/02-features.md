@@ -71,7 +71,7 @@ server:
 - `vary_limit` 保留配置兼容，v2 版本预算尚未接通；v2 开放前不承诺多版本持久化缓存。
 - Authorization、请求 no-store/no-cache、max-age=0 保守旁路；响应 no-store/private/no-cache 优先于 max-age 和内部 TTL。
 
-选择工具已实现合法字段解析、缺失/空值区分、有序快照和版本化 SHA-256 指纹，默认限制 32 个字段、16 KiB 快照。这些能力不等于 v2 存储已经开放。
+选择工具已实现合法字段解析、缺失/空值区分、有序快照和版本化 SHA-256 指纹，默认限制 32 个字段、16 KiB 快照。P1.3 已补充 v2 模型、独立键、索引查询/预留和受控只读集成；这些能力不等于 v2 存储已经开放。
 
 **代码路径：** `pkg/x/http/varycontrol/`、`server/middleware/caching/caching_vary.go`。
 

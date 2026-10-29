@@ -371,7 +371,7 @@ server/middleware/caching/
 
 普通缓存使用 URL 构造 object.ID；`include_query_in_cache_key: true` 区分 `/path?a=1` 与 `/path?a=2`。当前 Vary 响应和旧 Vary 索引安全旁路，不再用请求头拼接字符串构造或清理变体。`vary_ignore_key` 已弃用且不生效。
 
-新选择工具对字段集合归一化，并对保留缺失状态和字段值顺序的快照使用版本化、带长度编码后计算 SHA-256；命中还必须比较完整快照。v2 根/表示键和存储发布协议尚待后续批次接入，详见 [实现方案](../vary-representation-implementation-plan.md)。
+新选择工具对字段集合归一化，并对保留缺失状态和字段值顺序的快照使用版本化、带长度编码后计算 SHA-256；命中还必须比较完整快照。v2 根/表示键、索引查询和预留基础已实现，目前仅通过内部注入受控读取；完整写入、提交和失效协议仍待后续批次完成，详见 [实现方案](../vary-representation-implementation-plan.md)。
 
 ### 4.3 请求合并流程 / Request Collapsing Flow
 

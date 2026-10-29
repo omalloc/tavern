@@ -2,6 +2,7 @@ package object
 
 import (
 	"crypto/sha1"
+	"encoding/binary"
 	"encoding/hex"
 	"fmt"
 	"path/filepath"
@@ -60,6 +61,14 @@ func (id *ID) HashStr() string {
 
 func (id *ID) Bytes() []byte {
 	return id.hash[:]
+}
+
+func (id *ID) Clone() *ID {
+	if id == nil {
+		return nil
+	}
+	out := *id
+	return &out
 }
 
 func (id *ID) unmarshal(data []string) error {
@@ -130,6 +139,19 @@ func NewID(path string) *ID {
 
 func NewVirtualID(path string, virtualKey string) *ID {
 	hash := sha1.Sum([]byte(path + virtualKey))
+	if representationKeyKind(virtualKey) != "" {
+		// V2 IDs frame the URL and suffix independently. A public URL ending
+		// in our marker cannot alias a virtual object, including after decode.
+		h := sha1.New()
+		h.Write([]byte("tavern-physical-v2\x00"))
+		for _, part := range []string{path, virtualKey} {
+			var length [8]byte
+			binary.BigEndian.PutUint64(length[:], uint64(len(part)))
+			h.Write(length[:])
+			h.Write([]byte(part))
+		}
+		copy(hash[:], h.Sum(nil))
+	}
 	return &ID{
 		path:    path,
 		ext:     virtualKey,

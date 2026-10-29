@@ -98,6 +98,9 @@ func (m *memoryBucket) discard(ctx context.Context, md *object.Metadata) error {
 	if md == nil {
 		return os.ErrNotExist
 	}
+	if md.IsControl() || md.ID.IsControl() {
+		return storage.ErrProtectedControl
+	}
 
 	clog := log.Context(ctx)
 
@@ -192,6 +195,9 @@ func (m *memoryBucket) ID() string {
 // Iterate implements [storage.Bucket].
 func (m *memoryBucket) Iterate(ctx context.Context, fn func(*object.Metadata) error) error {
 	return m.indexdb.Iterate(ctx, nil, func(key []byte, val *object.Metadata) bool {
+		if !val.IsResponse() {
+			return true
+		}
 		return fn(val) == nil
 	})
 }
@@ -199,11 +205,17 @@ func (m *memoryBucket) Iterate(ctx context.Context, fn func(*object.Metadata) er
 // Lookup implements [storage.Bucket].
 func (m *memoryBucket) Lookup(ctx context.Context, id *object.ID) (*object.Metadata, error) {
 	md, err := m.indexdb.Get(ctx, id.Bytes())
+	if err == nil && !md.IsResponse() {
+		return nil, storage.ErrKeyNotFound
+	}
 	return md, err
 }
 
 // Touch implements [storage.Bucket].
 func (m *memoryBucket) Touch(ctx context.Context, id *object.ID) {
+	if id.IsControl() {
+		return
+	}
 	mark := m.cache.Get(id.Hash())
 	if mark == nil {
 		return
@@ -239,11 +251,17 @@ func (m *memoryBucket) TopK(k int) []string {
 
 // Remove implements [storage.Bucket].
 func (m *memoryBucket) Remove(ctx context.Context, id *object.ID) error {
+	if id.IsControl() {
+		return storage.ErrProtectedControl
+	}
 	return nil
 }
 
 // Store implements [storage.Bucket].
 func (m *memoryBucket) Store(ctx context.Context, meta *object.Metadata) error {
+	if meta == nil || !meta.IsResponse() || meta.ID == nil || meta.ID.IsControl() {
+		return storage.ErrProtectedControl
+	}
 	if log.Enabled(log.LevelDebug) {
 		clog := log.Context(ctx)
 
@@ -279,6 +297,9 @@ func (m *memoryBucket) Store(ctx context.Context, meta *object.Metadata) error {
 }
 
 func (m *memoryBucket) WriteChunkFile(ctx context.Context, id *object.ID, index uint32) (io.WriteCloser, string, error) {
+	if id.IsControl() {
+		return nil, "", storage.ErrProtectedControl
+	}
 	wpath := id.WPathSlice(m.path, index)
 	_ = m.fs.MkdirAll(filepath.Dir(wpath), m.fileMode)
 
@@ -297,6 +318,9 @@ func (m *memoryBucket) WriteChunkFile(ctx context.Context, id *object.ID, index 
 }
 
 func (m *memoryBucket) ReadChunkFile(_ context.Context, id *object.ID, index uint32) (storage.File, string, error) {
+	if id.IsControl() {
+		return nil, "", storage.ErrProtectedControl
+	}
 	wpath := id.WPathSlice(m.path, index)
 	f, err := m.fs.Open(wpath)
 	if err != nil {
@@ -310,6 +334,9 @@ func (m *memoryBucket) Migrate(ctx context.Context, id *object.ID, dest storage.
 	md, err := m.indexdb.Get(ctx, id.Bytes())
 	if err != nil {
 		return err
+	}
+	if !md.IsLegacy() {
+		return storage.ErrProtectedControl
 	}
 	clog := log.Context(ctx)
 

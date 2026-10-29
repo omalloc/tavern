@@ -187,7 +187,7 @@ func (d *diskBucket) loadLRU() {
 
 		// iterate all keys
 		_ = d.indexdb.Iterate(context.Background(), nil, func(key []byte, meta *object.Metadata) bool {
-			if meta != nil {
+			if meta.IsResponse() && meta.ID != nil {
 				mdCount++
 				chunkCount += meta.Chunks.Count()
 				d.cache.Set(meta.ID.Hash(), storage.NewMark(meta.LastRefUnix, meta.Refs))
@@ -260,6 +260,9 @@ func (d *diskBucket) discard(ctx context.Context, md *object.Metadata) error {
 	if md == nil {
 		return os.ErrNotExist
 	}
+	if md.IsControl() || md.ID.IsControl() {
+		return storage.ErrProtectedControl
+	}
 
 	clog := log.Context(ctx)
 
@@ -304,7 +307,8 @@ func (d *diskBucket) discard(ctx context.Context, md *object.Metadata) error {
 
 // Exist implements storage.Bucket.
 func (d *diskBucket) Exist(ctx context.Context, id []byte) bool {
-	return d.indexdb.Exist(ctx, id)
+	md, err := d.indexdb.Get(ctx, id)
+	return err == nil && md.IsResponse()
 }
 
 // Expired implements storage.Bucket.
@@ -316,6 +320,9 @@ func (d *diskBucket) Expired(ctx context.Context, id *object.ID, md *object.Meta
 // Iterate implements storage.Bucket.
 func (d *diskBucket) Iterate(ctx context.Context, fn func(*object.Metadata) error) error {
 	return d.indexdb.Iterate(ctx, nil, func(key []byte, val *object.Metadata) bool {
+		if !val.IsResponse() {
+			return true
+		}
 		return fn(val) == nil
 	})
 }
@@ -325,6 +332,9 @@ func (d *diskBucket) Lookup(ctx context.Context, id *object.ID) (*object.Metadat
 	start := time.Now()
 	md, err := d.indexdb.Get(ctx, id.Bytes())
 	indexdbOperationDuration.With(prometheus.Labels{"op": "get", "bucket": d.ID()}).Observe(time.Since(start).Seconds())
+	if err == nil && !md.IsResponse() {
+		return nil, storage.ErrKeyNotFound
+	}
 	if err == nil && md != nil {
 		d.touch(ctx, id)
 	}
@@ -338,11 +348,21 @@ func (d *diskBucket) Touch(ctx context.Context, id *object.ID) {
 
 // Remove implements storage.Bucket.
 func (d *diskBucket) Remove(ctx context.Context, id *object.ID) error {
+	md, err := d.indexdb.Get(ctx, id.Bytes())
+	if err != nil {
+		return err
+	}
+	if md.IsControl() || id.IsControl() {
+		return storage.ErrProtectedControl
+	}
 	return d.indexdb.Delete(ctx, id.Bytes())
 }
 
 // Store implements storage.Bucket.
 func (d *diskBucket) Store(ctx context.Context, meta *object.Metadata) error {
+	if meta == nil || !meta.IsResponse() || meta.ID == nil || meta.ID.IsControl() {
+		return storage.ErrProtectedControl
+	}
 	if log.Enabled(log.LevelDebug) {
 		clog := log.Context(ctx)
 
@@ -366,7 +386,7 @@ func (d *diskBucket) Store(ctx context.Context, meta *object.Metadata) error {
 
 	// merge old chunks
 	oldmd, _ := d.indexdb.Get(ctx, meta.ID.Bytes())
-	if oldmd != nil {
+	if oldmd.IsLegacy() && meta.IsLegacy() {
 		oldmd.Chunks.Range(func(x uint32) {
 			meta.Chunks.Set(x)
 		})
@@ -395,6 +415,9 @@ func (d *diskBucket) Store(ctx context.Context, meta *object.Metadata) error {
 }
 
 func (d *diskBucket) touch(_ context.Context, id *object.ID) {
+	if id.IsControl() {
+		return
+	}
 	mark := d.cache.Get(id.Hash())
 	if mark == nil {
 		return
@@ -494,6 +517,9 @@ func (d *diskBucket) TopK(k int) []string {
 }
 
 func (d *diskBucket) WriteChunkFile(ctx context.Context, id *object.ID, index uint32) (io.WriteCloser, string, error) {
+	if id.IsControl() {
+		return nil, "", storage.ErrProtectedControl
+	}
 	wpath := id.WPathSlice(d.path, index)
 	_ = os.MkdirAll(filepath.Dir(wpath), d.fileMode)
 
@@ -509,6 +535,9 @@ func (d *diskBucket) WriteChunkFile(ctx context.Context, id *object.ID, index ui
 }
 
 func (d *diskBucket) ReadChunkFile(ctx context.Context, id *object.ID, index uint32) (storage.File, string, error) {
+	if id.IsControl() {
+		return nil, "", storage.ErrProtectedControl
+	}
 	wpath := id.WPathSlice(d.path, index)
 	f, err := os.OpenFile(wpath, d.fileFlag, d.fileMode)
 	return f, wpath, err
@@ -519,6 +548,9 @@ func (d *diskBucket) Migrate(ctx context.Context, id *object.ID, dest storage.Bu
 	md, err := d.indexdb.Get(ctx, id.Bytes())
 	if err != nil {
 		return err
+	}
+	if !md.IsLegacy() {
+		return storage.ErrProtectedControl
 	}
 	clog := log.Context(ctx)
 

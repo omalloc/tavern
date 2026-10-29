@@ -108,6 +108,9 @@ func (pc *ProcessorChain) preCacheProcessor(proxyClient proxy.Proxy, store stora
 		return caching, fmt.Errorf("failed select bucket for objectID: %s", objectID)
 	}
 	caching.bucket = bucket
+	if opt.representation != nil {
+		return caching, caching.lookupRepresentation(store)
+	}
 
 	// lookup cache with cache-key
 	md, _ := bucket.Lookup(req.Context(), objectID)
@@ -146,9 +149,13 @@ func (pc *ProcessorChain) postCacheProcessor(caching *Caching, req *http.Request
 	caching.setXCache(resp)
 
 	if resp != nil && resp.Header != nil && caching.md != nil {
-		resp.Header.Set("Age", strconv.FormatInt(time.Now().Unix()-caching.md.RespUnix, 10))
-		resp.Header.Set("Date", time.Unix(caching.md.RespUnix, 0).Local().UTC().Format(http.TimeFormat))
-		resp.Header.Set("Expires", time.Unix(caching.md.ExpiresAt, 0).Local().UTC().Format(http.TimeFormat))
+		if caching.resourceMD != nil {
+			caching.decorateRepresentation(resp)
+		} else {
+			resp.Header.Set("Age", strconv.FormatInt(time.Now().Unix()-caching.md.RespUnix, 10))
+			resp.Header.Set("Date", time.Unix(caching.md.RespUnix, 0).Local().UTC().Format(http.TimeFormat))
+			resp.Header.Set("Expires", time.Unix(caching.md.ExpiresAt, 0).Local().UTC().Format(http.TimeFormat))
+		}
 	}
 
 	if caching.cacheable {

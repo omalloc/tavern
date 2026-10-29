@@ -2,6 +2,7 @@ package object
 
 import (
 	"net/http"
+	"slices"
 
 	"github.com/kelindar/bitmap"
 )
@@ -33,7 +34,10 @@ func (f CacheFlag) String() string {
 }
 
 type Metadata struct {
-	Flags CacheFlag `json:"flags"`
+	Flags          CacheFlag           `json:"flags"`
+	RecordKind     RecordKind          `json:"record_kind,omitempty" yaml:"record_kind,omitempty"`
+	Resource       *ResourceRecord     `json:"resource,omitempty" yaml:"resource,omitempty"`
+	Representation *RepresentationInfo `json:"representation,omitempty" yaml:"representation,omitempty"`
 
 	ID          *ID           `json:"id"`             // object ID
 	BlockSize   uint64        `json:"bsize"`          // block size
@@ -75,6 +79,12 @@ func (m *Metadata) HasVary() bool {
 }
 
 func (m *Metadata) HasComplete() bool {
+	if !m.IsResponse() || m.BlockSize == 0 {
+		return false
+	}
+	if m.Representation != nil && m.Representation.State != RepresentationComplete {
+		return false
+	}
 	if m.IsVary() {
 		return false
 	}
@@ -86,24 +96,36 @@ func (m *Metadata) HasComplete() bool {
 	if m.Size%m.BlockSize != 0 {
 		n++
 	}
+	if m.Representation != nil {
+		last, ok := m.Chunks.Max()
+		if !ok || uint64(last) != n-1 {
+			return false
+		}
+	}
 	return n == uint64(m.Chunks.Count())
 }
 
 // Clone clones the metadata.
 func (m *Metadata) Clone() *Metadata {
+	if m == nil {
+		return nil
+	}
 	return &Metadata{
-		ID:          m.ID,
-		BlockSize:   m.BlockSize,
-		Chunks:      m.Chunks.Clone(nil),
-		Parts:       m.Parts.Clone(nil),
-		Code:        m.Code,
-		Size:        m.Size,
-		RespUnix:    m.RespUnix,
-		LastRefUnix: m.LastRefUnix,
-		Refs:        m.Refs,
-		ExpiresAt:   m.ExpiresAt,
-		Headers:     m.Headers.Clone(),
-		Flags:       m.Flags,
-		VirtualKey:  append([]string{}, m.VirtualKey...),
+		ID:             m.ID.Clone(),
+		RecordKind:     m.RecordKind,
+		Resource:       m.Resource.Clone(),
+		Representation: m.Representation.Clone(),
+		BlockSize:      m.BlockSize,
+		Chunks:         slices.Clone(m.Chunks),
+		Parts:          slices.Clone(m.Parts),
+		Code:           m.Code,
+		Size:           m.Size,
+		RespUnix:       m.RespUnix,
+		LastRefUnix:    m.LastRefUnix,
+		Refs:           m.Refs,
+		ExpiresAt:      m.ExpiresAt,
+		Headers:        m.Headers.Clone(),
+		Flags:          m.Flags,
+		VirtualKey:     slices.Clone(m.VirtualKey),
 	}
 }
