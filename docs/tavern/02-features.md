@@ -19,8 +19,8 @@
 | **缓存校验 (Cache Validation)** | ✅ | v1.0 | If-None-Match / If-Modified-Since |
 | **热点迁移 (Hot Migration)** | ✅ | v1.1 | `storage.migration` |
 | **冷热分离 (Warm/Cold Split)** | ✅ | v1.1 | Bucket `type: hot/cold/warm` |
-| **请求合并 (Request Collapsing)** | ✅ | v1.0 | `caching.collapsed_request` |
-| **Vary 多版本缓存** | ✅ | v1.0 | `caching.vary_limit` / `vary_ignore_key` |
+| **请求合并 (Request Collapsing)** | 暂停 | — | 旧共享路径停用，配置保留兼容 |
+| **Vary 多版本缓存** | 改造中 | — | 当前安全旁路，等待 v2 生命周期验收 |
 | **Header 重写 (Rewrite)** | ✅ | v1.0 | `server.middleware.rewrite` |
 | **Multi-Range 支持** | ✅ | v1.0 | `server.middleware.multirange` |
 | **CRC 文件校验** | ✅ | v1.1 | `plugin.verifier` |
@@ -57,46 +57,23 @@ server:
 
 ### 1.4 请求合并 (Request Collapsing) / Request Collapsing
 
-**配置：**
-```yaml
-server:
-  middleware:
-    - name: caching
-      options:
-        collapsed_request: true
-        collapsed_request_wait_timeout: 100ms  # 等待超时
-```
+**当前状态：** 缓存中间件暂停 ObjectFlight、ChunkFlight 和 proxy singleflight 的响应共享；即使配置 `collapsed_request: true` 也独立回源。只有按实际源站 Vary、缓存资格和请求条件验证等待者后才会恢复合并。并发 MISS 的回源次数可能增加，应关注源站负载。
 
-**行为：**
-- 当多个并发请求同时请求同一个未缓存的资源时，仅第一个请求回源
-- 后续请求等待第一个请求返回后共享结果（fan-out）
-- 超时后自动放弃等待，独立回源
-
-**实现：** 基于 `proxy/singleflight/` 的自定义实现，使用 `io.TeeReader` 将响应体同时写入等待者。
-
-**代码路径：** `proxy/singleflight/`
+**代码路径：** `server/middleware/caching/caching.go`。合并组件仍保留，后续优化方案见 [P4.3](../vary-representation-implementation-plan.md#p43-安全恢复请求合并)。
 
 ### 1.5 Vary 多版本缓存 / Vary-Based Versioned Cache
 
-**配置：**
-```yaml
-server:
-  middleware:
-    - name: caching
-      options:
-        vary_limit: 100                  # Vary 版本数上限
-        vary_ignore_key:
-          - "Cookie"                      # 忽略 Cookie（避免版本爆炸）
-          - "Access-Control-Request-Headers"
-          - "Access-Control-Request-Method"
-```
+**当前状态：** 正在按 [实现方案](../vary-representation-implementation-plan.md) 分批改造，目前采用安全旁路：
 
-**行为：**
-- 根据源站响应的 `Vary` 头创建同一 URL 的多个缓存版本
-- `vary_ignore_key` 列表中的 Header 不计入 Vary Key，提高缓存命中率
-- `vary_limit` 限制单一 URL 的版本数上限，防止版本爆炸
+- 非空 Vary、`Vary: *`、非法字段和超过选择字段预算的响应均透传，不创建缓存写入器；保留源站 Vary。
+- 旧 Vary 索引及子表示不再用于命中；普通无 Vary 缓存继续工作。
+- `vary_ignore_key` 已弃用且不生效；非空配置在初始化时提示一次，不忽略 Cookie 等选择字段。示例配置已删除此项。
+- `vary_limit` 保留配置兼容，v2 版本预算尚未接通；v2 开放前不承诺多版本持久化缓存。
+- Authorization、请求 no-store/no-cache、max-age=0 保守旁路；响应 no-store/private/no-cache 优先于 max-age 和内部 TTL。
 
-**代码路径：** `server/middleware/caching/caching_vary.go`
+选择工具已实现合法字段解析、缺失/空值区分、有序快照和版本化 SHA-256 指纹，默认限制 32 个字段、16 KiB 快照。这些能力不等于 v2 存储已经开放。
+
+**代码路径：** `pkg/x/http/varycontrol/`、`server/middleware/caching/caching_vary.go`。
 
 ### 1.6 缓存校验 (Cache Validation) / Cache Validation
 
@@ -493,7 +470,7 @@ server:
     - name: caching
       options:
         fuzzy_refresh: true
-        collapsed_request: true
+        collapsed_request: false # 旧响应共享暂停
         vary_limit: 100
         object_pool_size: 20000
   access_log:

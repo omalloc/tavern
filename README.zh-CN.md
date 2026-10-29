@@ -2,7 +2,7 @@
 
 <p align="center">
   <strong>面向 CDN 边缘分发与源站保护的自托管 HTTP 缓存。</strong><br>
-  合并重复回源、高效分发部分内容，并用一个聚焦缓存的 Go 服务运维边缘节点。
+  缓存源站响应、高效分发部分内容，并用一个聚焦缓存的 Go 服务运维边缘节点。
 </p>
 
 <p align="center">
@@ -51,9 +51,9 @@ Tavern 以不依赖 CGO 的 Go 二进制交付，使用 YAML 配置。既可以�
 
 | 关注点 | Tavern 的处理方式 | 运维效果 |
 |:---|:---|:---|
-| **源站保护** | 合并同一对象的并发全量 MISS；把并发 Range MISS 合并为一次联合区间回源；在硬过期前刷新对象 | 减少重复回源，并让重校验流量更平滑 |
+| **源站保护** | 在硬过期前刷新对象；Vary 正确性改造期间暂停响应共享 | 重校验流量更平滑；并发 MISS 需按独立回源评估源站负载 |
 | **部分内容分发** | 缓存单区间、后缀区间、开放区间和多区间请求；复用已有切片并补齐缺失区间 | 减少安装包、软件包和媒体对象的重复传输 |
-| **显式缓存生命周期** | 支持 URL/目录 `PURGE`、软过期/硬删除、`Vary` 版本上限、淘汰与存储分层 | 缓存失效与存储行为更可控 |
+| **显式缓存生命周期** | 支持 URL/目录 `PURGE`、软过期/硬删除、淘汰与存储分层 | 缓存失效与存储行为更可控 |
 | **缓存节点运维** | 提供 Prometheus、健康检查、性能分析、结构化日志、终端实时视图和二进制平滑切换 | 减少运维缓存节点所需的外围组件 |
 
 NGINX、Varnish、Squid 和 Apache Traffic Server 也以不同形式提供其中部分能力。Tavern 的定位是把这些能力整合成一个紧凑、Go 原生的边缘缓存，而不是宣称每项功能都为 Tavern 独有。
@@ -110,7 +110,7 @@ curl -sS -D - -o /dev/null http://localhost:8080/path/to/object
 
 ### 缓存与回源控制
 
-- 对全量 MISS 和并发缺失区间执行合并回源
+- 全量 MISS 和缺块获取独立回源，等待响应共享复用校验完成
 - 在硬过期前按概率异步刷新
 - 基于 `ETag` / `If-None-Match` 和 `Last-Modified` / `If-Modified-Since` 的条件重校验
 - 通过请求头触发缓存预取
@@ -120,7 +120,7 @@ curl -sS -D - -o /dev/null http://localhost:8080/path/to/object
 
 - 单区间、后缀区间、开放区间和多区间响应
 - 部分命中与可配置的缺失区间填充
-- 支持 `Vary` 多版本，可限制版本数量并忽略指定键
+- [v2 改造](docs/vary-representation-implementation-plan.md)期间安全旁路 Vary 响应和旧变体；`vary_ignore_key` 已弃用且不生效
 - 可选择是否把查询参数纳入缓存键
 - 通过声明式规则重写请求头和响应头
 - 对象切片存储，支持渐进式读写
@@ -154,7 +154,7 @@ server:
     - name: multirange
     - name: caching
       options:
-        collapsed_request: true
+        collapsed_request: false # Vary 改造期间暂停旧响应共享
         collapsed_request_wait_timeout: 100ms
         fuzzy_refresh: true
         fuzzy_refresh_rate: 0.1
@@ -223,7 +223,7 @@ HTTP Server
     └── Upstream proxy
         ├── 连接池
         ├── TCP / Unix Socket 传输
-        └── 请求合并
+        └── 独立回源（响应共享暂停）
 
 Caching
 └── Storage selector

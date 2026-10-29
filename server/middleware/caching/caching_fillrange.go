@@ -108,7 +108,8 @@ func (f *fillRange) PostRequest(c *Caching, req *http.Request, resp *http.Respon
 		resp.Body = iobuf.RangeReader(resp.Body, fill.newStart, fill.newEnd, fill.rawStart, fill.rawEnd)
 
 		resp.Header.Set("Content-Range", xhttp.BuildHeaderRange(uint64(fill.rawStart), uint64(fill.rawEnd), uint64(cr.ObjSize)))
-		resp.Header.Set("Content-Length", fmt.Sprintf("%d", fill.rawEnd-fill.rawStart+1))
+		resp.ContentLength = int64(fill.rawEnd - fill.rawStart + 1)
+		resp.Header.Set("Content-Length", strconv.FormatInt(resp.ContentLength, 10))
 	}
 	return resp, nil
 }

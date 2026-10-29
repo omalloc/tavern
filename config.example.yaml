@@ -43,7 +43,7 @@ server:
       options:
         fuzzy_refresh: true
         fuzzy_refresh_rate: 0.1
-        collapsed_request: true
+        collapsed_request: false # 旧响应共享暂停，等待基于实际 Vary 的复用校验
         collapsed_request_wait_timeout: 100ms
         include_query_in_cache_key: true
         fill_range_percent: 100
@@ -51,10 +51,6 @@ server:
         object_pool_size: 20000
         async_flush_chunk: true
         vary_limit: 100
-        vary_ignore_key:
-          - "Cookie"
-          - "Access-Control-Request-Headers"
-          - "Access-Control-Request-Method"
   access_log:
     enabled: true
     encrypt:

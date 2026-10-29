@@ -12,6 +12,8 @@ import (
 
 	"github.com/omalloc/tavern/api/defined/v1/storage"
 	"github.com/omalloc/tavern/contrib/log"
+	"github.com/omalloc/tavern/internal/protocol"
+	xhttp "github.com/omalloc/tavern/pkg/x/http"
 	"github.com/omalloc/tavern/proxy"
 )
 
@@ -114,6 +116,22 @@ func (pc *ProcessorChain) preCacheProcessor(proxyClient proxy.Proxy, store stora
 
 	caching.md = md
 	caching.cacheStatus = storage.CacheMiss
+	// Legacy Vary indexes cannot identify representations reliably. Keep
+	// them out of the processor chain until the v2 store owns their lifecycle.
+	if requestBypassesCache(req) || legacyVary(md) {
+		caching.bypass = true
+		caching.md = nil
+		caching.cacheStatus = storage.BYPASS
+		return caching, nil
+	}
+	if md != nil {
+		// Earlier versions admitted max-age before checking no-store/private.
+		// Do not keep serving such an object after the admission fix.
+		if _, allowed := xhttp.ParseCacheTime(protocol.ProtocolCacheTime, md.Headers); !allowed {
+			_ = bucket.DiscardWithMessage(req.Context(), objectID, "stored response is not eligible for shared caching")
+			caching.md = nil
+		}
+	}
 
 	hit, err := pc.Lookup(caching, req)
 	if err != nil {
@@ -150,7 +168,9 @@ func (pc *ProcessorChain) postCacheProcessor(caching *Caching, req *http.Request
 	}
 
 	// incr index ref count.
-	caching.bucket.Touch(caching.ctx, caching.id)
+	if !caching.bypass {
+		caching.bucket.Touch(caching.ctx, caching.id)
+	}
 
 	return resp, nil
 }

@@ -81,6 +81,9 @@ func Middleware(c *configv1.Middleware) (middleware.Middleware, func(), error) {
 	}
 
 	log.Infof("middleware.caching init slice_size %d", opts.SliceSize)
+	if len(opts.VaryIgnoreKey) > 0 {
+		log.Warn("middleware.caching: vary_ignore_key is deprecated and ignored; legacy Vary caching is bypassed")
+	}
 
 	processor := NewProcessorChain(
 		// Cache-State
@@ -113,11 +116,8 @@ func Middleware(c *configv1.Middleware) (middleware.Middleware, func(), error) {
 		proxyClient := proxy.GetProxy()
 		store := storagev1.Current()
 
-		// Flight groups for collapsed forwarding at object and chunk level.
-		// These mirror Squid's collapsed_forwarding: one origin request
-		// serves many waiting clients.
-		objectFlight := &ObjectFlightGroup{}
-		chunkFlight := &ChunkFlightGroup{}
+		// Response sharing stays disabled until followers are checked against
+		// the actual origin Vary and cache admission headers (P4.3).
 
 		return middleware.RoundTripperFunc(func(req *http.Request) (resp *http.Response, err error) {
 			// only cache GET/HEAD request
@@ -137,20 +137,22 @@ func Middleware(c *configv1.Middleware) (middleware.Middleware, func(), error) {
 			//	cachingPool.Put(caching)
 			//}()
 
-			// Wire up chunk-level collapsed forwarding.
-			caching.chunkFlight = chunkFlight
-
 			// Increment cacheRequestTotal on every response path (BYPASS,
-			// HIT, MISS-collapsed, MISS-direct).  Placed as a defer so it
+			// HIT, MISS). Placed as a defer so it
 			// fires after cacheStatus is finalized.
 			defer func() {
-				cacheRequestTotal.WithLabelValues(caching.cacheStatus.String(), caching.bucket.StoreType()).Inc()
+				storeType := "none"
+				if caching.bucket != nil {
+					storeType = caching.bucket.StoreType()
+				}
+				cacheRequestTotal.WithLabelValues(caching.cacheStatus.String(), storeType).Inc()
 			}()
 
 			// err to BYPASS caching
 			if err != nil {
 				caching.log.Warnf("Precache processor failed: %v BYPASS", err)
 				caching.cacheStatus = storage.BYPASS
+				caching.bypass = true
 				resp, err = caching.doProxy(req, false) // do reverse proxy
 				if err != nil {
 					return nil, err
@@ -168,25 +170,7 @@ func Middleware(c *configv1.Middleware) (middleware.Middleware, func(), error) {
 				return caching.respondFromCache(req)
 			}
 
-			// full MISS — use object-level collapsed forwarding so that
-			// concurrent requests for the same cache object share one
-			// origin fetch (Squid-style collapsed_forwarding).
-			if opts.CollapsedRequest {
-				flightResp, _, flightErr := objectFlight.Do(caching.id.HashStr(), opts.CollapsedRequestWaitTimeout.AsDuration(), func() (*http.Response, error) {
-					r, e := caching.doProxy(req, false)
-					if e != nil {
-						return nil, e
-					}
-					return processor.postCacheProcessor(caching, req, r)
-				})
-				if flightErr != nil {
-					return nil, flightErr
-				}
-				resp = flightResp
-				return
-			}
-
-			// full MISS (collapsed forwarding disabled)
+			// A MISS fetches independently: its response Vary is not known yet.
 			resp, err = caching.doProxy(req, false)
 			if err != nil {
 				return nil, err
@@ -291,17 +275,22 @@ func (c *Caching) getUpstreamReader(fromByte, toByte uint64, async bool) (io.Rea
 	// get from origin request header
 	rawRange := c.req.Header.Get("Range")
 
-	// doSubRequest is parameterized by the union range so the flight group
-	// can expand the range to cover multiple concurrent callers.
+	// Every missing range fetches independently; response headers have not
+	// yet established whether another request could safely reuse its bytes.
 	doSubRequest := func(unionFrom, unionTo uint64) (*http.Response, error) {
 		newRange := fmt.Sprintf("bytes=%d-%d", unionFrom, unionTo)
-		subReq := c.req.Clone(context.Background())
+		subReq := c.req.Clone(c.req.Context())
 		subReq.Header.Set("Range", newRange)
 		subReq.Header.Del(protocol.ProtocolCacheStatusKey)
+		// A background fetch owns its metadata and processor state. Do not
+		// change the object the foreground reader is still assembling.
+		sub := *c
+		sub.md = c.md.Clone()
+		sub.req = subReq
 
 		now := time.Now()
 		c.log.Debugf("getUpstreamReader doProxy[chunk]: begin: %s, rawRange: %s, newRange: %s", now, rawRange, newRange)
-		resp, err := c.doProxy(subReq, true)
+		resp, err := sub.doProxy(subReq, true)
 		c.log.Infof("getUpstreamReader doProxy[chunk]: timeCost: %s, rawRange: %s, newRange: %s", time.Since(now), rawRange, newRange)
 		if err != nil {
 			closeBody(resp)
@@ -316,30 +305,8 @@ func (c *Caching) getUpstreamReader(fromByte, toByte uint64, async bool) (io.Rea
 		return resp, nil
 	}
 
-	// Chunk-level collapsed forwarding: if another goroutine is already
-	// fetching (possibly a different) byte range for this object, wait
-	// and share the union response body (io.MultiWriter fan-out + RangeReader
-	// trimming). This mirrors Squid's collapsed_forwarding at the chunk
-	// level, with automatic range union.
-	if c.chunkFlight != nil && c.opt.CollapsedRequest && c.id != nil {
-		reader, _, err := c.chunkFlight.Do(c.id.HashStr(), fromByte, toByte,
-			c.opt.CollapsedRequestWaitTimeout.AsDuration(), doSubRequest)
-		// Both leader and shared callers are partial hits: at least one
-		// chunk was missing and is being fetched from origin.
-
-		// c.cacheStatus = storage.CachePartMiss
-		// if shared {
-		// 	c.cacheStatus = storage.CachePartHit
-		// }
-		return reader, err
-	}
-
-	// Any path that reaches getUpstreamReader is a partial hit: at least
-	// one chunk was missing from cache and is now being fetched from
-	// origin.  Set the status here for the async and sync paths (the
-	// chunk-flight path above already sets it before returning).
-	// c.cacheStatus = storage.CachePartMiss
-
+	// The old object ID alone cannot prove a new range response belongs
+	// to this representation. Fetch independently until generation validation.
 	if async {
 		return iobuf.AsyncReadCloser(func() (*http.Response, error) {
 			return doSubRequest(fromByte, toByte)
@@ -354,16 +321,53 @@ func (c *Caching) getUpstreamReader(fromByte, toByte uint64, async bool) (io.Rea
 }
 
 func (c *Caching) doProxy(req *http.Request, subRequest bool) (*http.Response, error) {
-	proxyReq, err := c.processor.PreRequest(c, cloneRequest(req))
-	if err != nil {
-		return nil, fmt.Errorf("pre-request failed: %w", err)
+	proxyReq := cloneRequest(req)
+	var err error
+	if !c.bypass {
+		proxyReq, err = c.processor.PreRequest(c, proxyReq)
+		if err != nil {
+			return nil, fmt.Errorf("pre-request failed: %w", err)
+		}
 	}
 
 	c.log.Debugf("doProxy begin with %s", proxyReq.URL.String())
 
-	resp, err := c.proxyClient.Do(proxyReq, c.opt.CollapsedRequest, c.opt.CollapsedRequestWaitTimeout.AsDuration())
+	resp, err := c.proxyClient.Do(proxyReq, false, c.opt.CollapsedRequestWaitTimeout.AsDuration())
 	if err != nil {
 		return resp, err
+	}
+
+	if c.bypass {
+		return resp, nil
+	}
+
+	// Decide admission before creating a body writer or running processors
+	// that could turn an origin 304 into a cached 200.
+	if !admitResponse(proxyReq, resp) {
+		revalidating := c.revalidate
+		c.bypass = true
+		c.cacheable = false
+		c.cacheStatus = storage.BYPASS
+		c.revalidate = false
+		if c.md != nil {
+			_ = c.bucket.DiscardWithMessage(req.Context(), c.id, "response no longer eligible for shared caching")
+		}
+		c.md = nil
+		c.rootmd = nil
+		if subRequest {
+			// Do not splice a response with changed selection or shared-cache
+			// policy into the headers and chunks of the old representation.
+			closeBody(resp)
+			return nil, errors.New("range fill response is no longer eligible for shared caching")
+		}
+		if revalidating && resp.StatusCode == http.StatusNotModified {
+			// The cached body can no longer satisfy this validation. Retry
+			// once using the client's original conditions, without our own.
+			closeBody(resp)
+			return c.doProxy(req, subRequest)
+		}
+		// A pre-request Range expansion still needs client-side trimming.
+		return c.processor.PostRequest(c, proxyReq, resp)
 	}
 
 	c.log.Debugf("doProxy upstream resp content-length %d content-range %s etag %q lm %q",

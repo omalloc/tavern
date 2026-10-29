@@ -1,152 +1,61 @@
+// Package varycontrol implements conservative HTTP Vary selection semantics.
 package varycontrol
 
 import (
-	"net/http"
+	"errors"
 	"slices"
-	"sort"
 	"strings"
 )
 
-const (
-	VaryEmptyIdentity = "tr_identity"
+const MaxFields = 32
+
+var (
+	ErrInvalidField  = errors.New("invalid Vary field name")
+	ErrTooManyFields = errors.New("too many Vary fields")
 )
 
 type Key []string
 
-func (k *Key) String() string {
-	return strings.Join(*k, ",")
-}
-
-func (k *Key) Append(val string) {
-	keys := canonical(val)
-	if len(keys) > 0 {
-		if slices.Contains(*k, val) {
-			return
+// Parse reads field names, not field values. It normalizes names to lowercase
+// and returns a sorted, unique set. A wildcard anywhere prevents reuse, even
+// when other fields are also present. Empty list members are ignored.
+func Parse(values ...string) (fields Key, wildcard bool, err error) {
+	seen := make(map[string]struct{})
+	for _, value := range values {
+		for item := range strings.SplitSeq(value, ",") {
+			name := strings.Trim(item, " \t")
+			if name == "" {
+				continue
+			}
+			if name == "*" {
+				wildcard = true
+				continue
+			}
+			if !validField(name) {
+				return nil, wildcard, ErrInvalidField
+			}
+			name = strings.ToLower(name)
+			seen[name] = struct{}{}
+			if len(seen) > MaxFields {
+				return nil, wildcard, ErrTooManyFields
+			}
 		}
-		*k = append(*k, keys...)
 	}
+	for name := range seen {
+		fields = append(fields, name)
+	}
+	slices.Sort(fields)
+	return fields, wildcard, nil
 }
 
-func (k *Key) VaryData(h http.Header) string {
-	l := len(*k)
-	if l <= 0 {
-		return ""
-	}
-
-	kv := make(map[string]string, l)
-	for _, key := range *k {
-		v := sortValues(h.Values(key))
-		kv[key] = v
-	}
-
-	keys := make([]string, 0, len(kv))
-	for key := range kv {
-		keys = append(keys, key)
-	}
-
-	sort.Strings(keys)
-
-	var buf strings.Builder
-	for _, key := range keys {
-		v := kv[key]
-		if buf.Len() > 0 {
-			buf.WriteByte('&')
+func validField(name string) bool {
+	for i := 0; i < len(name); i++ {
+		c := name[i]
+		if c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' ||
+			strings.ContainsRune("!#$%&'*+-.^_`|~", rune(c)) {
+			continue
 		}
-		buf.WriteString(key)
-		buf.WriteByte('=')
-		buf.WriteString(v)
-	}
-	return buf.String()
-}
-
-func (k Key) Compare(k2 Key) bool {
-	if len(k) != len(k2) {
 		return false
 	}
-
-	for i, vk1 := range k {
-		if vk1 != k2[i] {
-			return false
-		}
-	}
-	return true
-}
-
-func Clean(values ...string) Key {
-	keys := make([]string, 0)
-
-	for _, val := range values {
-		key := canonical(val)
-		if len(key) > 0 {
-			keys = append(keys, key...)
-		}
-	}
-
-	sort.Strings(keys)
-
-	return slices.Compact(keys)
-}
-
-func canonical(val string) []string {
-	s := strings.TrimSpace(val)
-	if s == "" || s == "," {
-		return nil
-	}
-
-	keys := make([]string, 0)
-
-	vk := strings.Split(s, ",")
-	for _, k := range vk {
-		key := strings.TrimSpace(k)
-		if key != "" {
-			keys = append(keys, key)
-		}
-	}
-
-	if len(keys) == 0 {
-		return nil
-	}
-
-	return keys
-}
-
-func sortValues(vals []string) string {
-	if len(vals) == 1 {
-		return sortValue(vals[0])
-	}
-
-	v := make([]string, 0, len(vals))
-	for _, val := range vals {
-		v = append(v, sortValue(val))
-	}
-
-	sort.Strings(v)
-
-	return strings.Join(v, ",")
-}
-
-func sortValue(val string) string {
-	val = strings.TrimSpace(val)
-	if val == "" {
-		return ""
-	}
-
-	v := splitTrimSpace(val)
-
-	sort.Strings(v)
-
-	return strings.Join(v, ",")
-}
-
-func splitTrimSpace(s string) []string {
-	if s == "" {
-		return nil
-	}
-
-	v := strings.Split(s, ",")
-	for i := range v {
-		v[i] = strings.TrimSpace(v[i])
-	}
-
-	return v
+	return name != ""
 }

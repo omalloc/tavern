@@ -369,21 +369,13 @@ server/middleware/caching/
 
 ### 4.2 缓存 Key 计算 / Cache Key Computation
 
-```go
-// 缓存 Key 由以下因素决定:
-cacheKey = hash(
-    req.URL.String(),           // 完整 URL
-    + include_query_in_cache_key  // 是否包含查询参数
-    + vary_headers                // Vary 头值
-    + vary_ignore_key             // 排除的 Vary 头列表
-)
-```
+普通缓存使用 URL 构造 object.ID；`include_query_in_cache_key: true` 区分 `/path?a=1` 与 `/path?a=2`。当前 Vary 响应和旧 Vary 索引安全旁路，不再用请求头拼接字符串构造或清理变体。`vary_ignore_key` 已弃用且不生效。
 
-**配置影响：**
-- `include_query_in_cache_key: true` → `/path?a=1` 和 `/path?a=2` 视为不同资源
-- `vary_ignore_key: ["Cookie"]` → 忽略 Cookie 变化，避免版本爆炸
+新选择工具对字段集合归一化，并对保留缺失状态和字段值顺序的快照使用版本化、带长度编码后计算 SHA-256；命中还必须比较完整快照。v2 根/表示键和存储发布协议尚待后续批次接入，详见 [实现方案](../vary-representation-implementation-plan.md)。
 
 ### 4.3 请求合并流程 / Request Collapsing Flow
+
+以下为保留组件的历史流程。当前缓存中间件已停用这三层旧共享路径，所有 MISS 和缺块获取独立回源；`collapsed_request` 配置不启用共享。恢复前须按实际源站 Vary 和缓存资格验证等待者。
 
 ```mermaid
 sequenceDiagram

@@ -131,6 +131,21 @@ func IsChunked(h http.Header) bool {
 //
 // It returns the parsed cache duration and a boolean indicating whether caching is allowed.
 func ParseCacheTime(withKey string, src http.Header) (time.Duration, bool) {
+	// Shared-cache prohibitions take precedence over both origin TTLs and
+	// the internal TTL override. Combine all field lines before parsing.
+	hcc := strings.Join(src.Values("Cache-Control"), ",")
+	ctrl := cachecontrol.Parse(hcc)
+	if ctrl.NoStore() {
+		return 0, false
+	}
+	if private, _ := ctrl.Private(); private {
+		return 0, false
+	}
+	// Until every read path supports mandatory validation, bypass no-cache
+	// responses rather than storing them as fresh.
+	if noCache, _ := ctrl.NoCache(); noCache {
+		return 0, false
+	}
 
 	if str := src.Get(withKey); str != "" {
 
@@ -143,16 +158,13 @@ func ParseCacheTime(withKey string, src http.Header) (time.Duration, bool) {
 		return time.Duration(ct) * time.Second, true
 	}
 
-	hcc := src.Get("Cache-Control")
 	expire := src.Get("Expires")
 
 	if hcc == "" && expire == "" {
 		return DefaultProtocolCacheTime, true
 	}
 
-	ctrl := cachecontrol.Parse(hcc)
-
-	if ctrl.MaxAge() > 0 {
+	if ctrl.MaxAge() >= 0 {
 		return ctrl.MaxAge(), true
 	}
 

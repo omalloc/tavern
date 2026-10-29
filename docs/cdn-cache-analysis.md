@@ -19,9 +19,9 @@ Tavern 是一个基于 Go 语言实现的高性能 HTTP 缓存代理服务器。
 - **目录感知 (Diraware)**: 支持目录级别的缓存管理和索引机制，非常有利于大规模的目录级缓存刷新 (DIR Purge)。
 
 ### 2.3 核心缓存能力
-- **防击穿/雪崩**: 实现了 `collapsed_request`（上游请求合并），有效防止缓存在同一时间失效时引发的回源风暴（Thundering Herd）。
+- **请求合并**: 组件保留，缓存入口暂时停用旧响应共享，等待按实际 Vary 和缓存资格验证复用；并发 MISS 会独立回源。
 - **模糊刷新 (Fuzzy Refresh)**: 支持按比例配置模糊刷新策略，在缓存即将过期时异步回源更新对象，避免流量毛刺。
-- **Vary 多版本缓存**: 完整支持基于 HTTP `Vary` 头的缓存版本控制，并支持配置 `vary_ignore_key` 忽略特定的不影响内容的头（如跨域头、Cookie），以此提高整体命中率。
+- **Vary 多版本缓存**: 改造中。当前透传 Vary 响应并旁路旧 Vary 数据；`vary_ignore_key` 已弃用且不生效，不忽略 Cookie 等选择字段。v2 存储开放条件见 [实现方案](./vary-representation-implementation-plan.md)。
 - **多区间请求 (Multi-Range)**: 良好支持 Range 和 Multiple Range 请求，充分适应大文件下载和流媒体分发场景。
 
 ### 2.4 扩展与生态
@@ -52,7 +52,7 @@ Tavern 是一个基于 Go 语言实现的高性能 HTTP 缓存代理服务器。
 
 | 特性 | Tavern | Squid | ATS |
 |---|---|---|---|
-| **回源防击穿** | `collapsed_request` 同步锁等待 | `collapsed_forwarding` 特性 | 读写锁与 `open_write_fail_action` 返回过期版本 |
+| **回源防击穿** | 旧共享路径暂停，独立回源 | `collapsed_forwarding` 特性 | 读写锁与 `open_write_fail_action` 返回过期版本 |
 | **缓存清理与控制** | 支持异步模糊刷新、支持 URL及目录 (Dir) Purge | ICP/HTCP 协议同步刷新，支持 PURGE 指令 | 严格依赖 Cache-Control，利用 `traffic_ctl` 强制清理 |
 | **规则路由与重写** | `rewrite` 中间件 YAML 配置，相对直观简单 | 结合复杂的 ACL 和 `refresh_pattern` 正则 | 极其强大的 `remap.config` 结合插件重写 |
 

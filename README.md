@@ -2,7 +2,7 @@
 
 <p align="center">
   <strong>A self-hosted HTTP cache for CDN edge delivery and origin protection.</strong><br>
-  Collapse duplicate origin fetches, serve partial content efficiently, and operate cache nodes as one focused Go service.
+  Cache origin responses, serve partial content efficiently, and operate cache nodes as one focused Go service.
 </p>
 
 <p align="center">
@@ -51,9 +51,9 @@ Tavern is delivered as a CGO-free Go binary and configured with YAML. Run it as 
 
 | Focus | What Tavern does | Operational result |
 |:---|:---|:---|
-| **Origin protection** | Collapses concurrent full-object misses and merges concurrent Range misses into one union fetch; refreshes objects before hard expiry | Fewer duplicate origin requests and smoother revalidation traffic |
+| **Origin protection** | Refreshes objects before hard expiry; response sharing is paused during the Vary correctness rollout | Smoother revalidation traffic; budget for independent concurrent misses |
 | **Partial-content delivery** | Caches single, suffix, open-ended, and multi-range requests; reuses cached slices and fills missing ranges | Less redundant transfer for downloads, packages, and media objects |
-| **Explicit cache lifecycle** | Supports URL or directory `PURGE`, soft expiry or hard deletion, bounded `Vary` variants, eviction, and storage tiering | Predictable invalidation and storage behavior |
+| **Explicit cache lifecycle** | Supports URL or directory `PURGE`, soft expiry or hard deletion, eviction, and storage tiering | Predictable invalidation and storage behavior |
 | **Cache-node operations** | Exposes Prometheus metrics, health and profiling endpoints, structured logs, live terminal views, and graceful binary handover | Fewer surrounding components are needed to operate a node |
 
 These capabilities also exist in different forms across NGINX, Varnish, Squid, and Apache Traffic Server. Tavern's focus is their integration in a compact, Go-native edge cache—not a claim that every individual feature is unique.
@@ -110,7 +110,7 @@ The example configuration restricts administrative routes and `PURGE` to local h
 
 ### Caching and origin control
 
-- Collapsed forwarding for full-object misses and concurrent missing ranges
+- Independent origin fetches while response-sharing validation is being implemented
 - Probabilistic asynchronous refresh before hard expiry
 - Conditional revalidation with `ETag` / `If-None-Match` and `Last-Modified` / `If-Modified-Since`
 - Header-triggered cache prefetch
@@ -120,7 +120,7 @@ The example configuration restricts administrative routes and `PURGE` to local h
 
 - Single-range, suffix-range, open-ended, and multi-range responses
 - Partial cache hits and configurable missing-range fill
-- `Vary`-aware variants with a configurable upper bound and ignored keys
+- Safe bypass of Vary responses and legacy variants during the [v2 rollout](docs/vary-representation-implementation-plan.md); `vary_ignore_key` is deprecated and ignored
 - Optional query-string inclusion in cache keys
 - Declarative request and response header rewriting
 - Chunked object storage for incremental reads and writes
@@ -154,7 +154,7 @@ server:
     - name: multirange
     - name: caching
       options:
-        collapsed_request: true
+        collapsed_request: false # Response sharing is paused during the Vary rollout
         collapsed_request_wait_timeout: 100ms
         fuzzy_refresh: true
         fuzzy_refresh_rate: 0.1

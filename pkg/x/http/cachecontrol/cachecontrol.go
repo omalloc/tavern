@@ -15,7 +15,7 @@ import (
 	"time"
 )
 
-var rx = regexp.MustCompile(`([a-zA-Z][a-zA-Z_-]*)\s*(?:=(?:"([^"]*)"|([^ \t",;]*)))?`)
+var rx = regexp.MustCompile(`([a-zA-Z][a-zA-Z_-]*)\s*(?:=\s*(?:"([^"]*)"|([^ \t",;]*)))?`)
 
 // CacheControl holds Cache-Control directives and gives a few utility methods to quickly deal
 // with directives values
@@ -140,7 +140,7 @@ func Parse(directive string) CacheControl {
 		if index := strings.Index(match, "="); index != -1 {
 			key, value = match[:index], match[index+1:]
 		}
-		cc[strings.ToLower(key)] = strings.TrimSpace(value)
+		cc[strings.ToLower(strings.TrimSpace(key))] = strings.Trim(strings.TrimSpace(value), `"`)
 	}
 
 	return cc

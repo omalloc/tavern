@@ -37,6 +37,7 @@ type ReverseProxy struct {
 	*direct.Builder
 
 	mu           sync.RWMutex
+	selectorMu   sync.Mutex // the default balancer owns a non-concurrent rand.Rand
 	activateMock func(*http.Client)
 	selector     selector.Selector
 
@@ -67,7 +68,9 @@ func New(opts ...Option) *ReverseProxy {
 }
 
 func (r *ReverseProxy) Do(req *http.Request, collapsed bool, waitTimeout time.Duration) (*http.Response, error) {
+	r.selectorMu.Lock()
 	current, done, err := r.selector.Select(req.Context())
+	r.selectorMu.Unlock()
 	if err != nil {
 		return nil, selector.ErrNoAvailable
 	}
@@ -200,6 +203,8 @@ func onceKey(req *http.Request) string {
 
 // Apply is apply all nodes when any changes happen
 func (r *ReverseProxy) Apply(nodes []selector.Node) {
+	r.selectorMu.Lock()
+	defer r.selectorMu.Unlock()
 	r.selector.Apply(nodes)
 }
 

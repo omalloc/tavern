@@ -48,6 +48,7 @@ type Caching struct {
 	chunkFlight  *ChunkFlightGroup
 	cacheStatus  storage.CacheStatus
 	cacheable    bool
+	bypass       bool // no shared lookup, response reuse, or cache writes
 	hit          bool
 	prefetch     bool
 	revalidate   bool
@@ -111,6 +112,7 @@ func (c *Caching) hasNoCache() bool {
 
 func (c *Caching) reset() {
 	c.cacheable = false
+	c.bypass = false
 	c.hit = false
 	c.prefetch = false
 	c.revalidate = false
