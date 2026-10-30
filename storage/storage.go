@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"strings"
 	"sync"
 	"time"
 
@@ -22,9 +21,10 @@ import (
 var _ storage.Storage = (*nativeStorage)(nil)
 
 type nativeStorage struct {
-	closed bool
-	mu     sync.Mutex
-	log    *log.Helper
+	representations representationRegistry
+	closed          bool
+	mu              sync.Mutex
+	log             *log.Helper
 
 	selector     storage.Selector
 	sharedkv     storage.SharedKV
@@ -145,99 +145,14 @@ func (n *nativeStorage) Rebuild(ctx context.Context, buckets []storage.Bucket) e
 
 // Buckets implements storage.Storage.
 func (n *nativeStorage) Buckets() []storage.Bucket {
-	return append(n.warmlBucket, n.hotBucket...)
+	buckets := make([]storage.Bucket, 0, len(n.warmlBucket)+len(n.hotBucket))
+	buckets = append(buckets, n.warmlBucket...)
+	return append(buckets, n.hotBucket...)
 }
 
 // PURGE implements storage.Storage.
 func (n *nativeStorage) PURGE(storeUrl string, typ storage.PurgeControl) error {
-	// Directory prefix purge
-	if typ.Dir {
-		// For mark-expired on dir, skip sharedkv hits and fallback to full scan below.
-		if typ.MarkExpired {
-			return nil
-		}
-
-		// For directory purge, we prefer SharedKV inverted index when available:
-		// key schema: ix/<bucketID>/<storeUrl>
-		// value: object.IDHash bytes
-		ctx := context.Background()
-		processed := 0
-
-		for _, b := range n.Buckets() {
-			prefix := fmt.Sprintf("ix/%s/%s", b.ID(), storeUrl)
-			_ = n.sharedkv.IteratePrefix(ctx, []byte(prefix), func(key, val []byte) error {
-				// parse hash
-				var h object.IDHash
-				if len(val) >= object.IdHashSize {
-					copy(h[:], val[:object.IdHashSize])
-				} else {
-					// skip invalid record
-					return nil
-				}
-
-				if typ.Hard || !typ.MarkExpired {
-					if err := b.DiscardWithHash(ctx, h); err == nil {
-						processed++
-					}
-				}
-
-				// remove index mapping
-				_ = n.sharedkv.Delete(ctx, key)
-				return nil
-			})
-		}
-
-		// fallback: scan indexdb if no sharedkv hits, or to ensure completeness
-		if processed == 0 {
-			for _, b := range n.Buckets() {
-				_ = b.Iterate(ctx, func(md *object.Metadata) error {
-					if md == nil {
-						return nil
-					}
-					if strings.HasPrefix(md.ID.Path(), storeUrl) {
-						if typ.Hard || !typ.MarkExpired {
-							_ = b.DiscardWithMetadata(ctx, md)
-						} else {
-							md.ExpiresAt = time.Now().Add(-1).Unix()
-							_ = b.Store(ctx, md)
-						}
-						processed++
-					}
-					return nil
-				})
-			}
-		}
-
-		if processed == 0 {
-			return storage.ErrKeyNotFound
-		}
-		return nil
-	}
-
-	// Single object purge
-	cacheKey := object.NewID(storeUrl)
-
-	bucket := n.Select(context.Background(), cacheKey)
-	if bucket == nil {
-		return fmt.Errorf("bucket not found")
-	}
-
-	// hard delete cache file mode.
-	if typ.Hard {
-		return bucket.Discard(context.Background(), cacheKey)
-	}
-
-	// MarkExpired to revalidate.
-	// soft delete cache file mode.
-	md, err := bucket.Lookup(context.Background(), cacheKey)
-	if err != nil {
-		return err
-	}
-
-	// set expire time to past time. and then store it back.
-	md.ExpiresAt = time.Now().Add(-1).Unix()
-	// TODO: we should acquire a globalResourceLock before updating.
-	return bucket.Store(context.Background(), md)
+	return n.representations.purge(context.Background(), n.Buckets(), storeUrl, typ)
 }
 
 func (n *nativeStorage) SharedKV() storage.SharedKV {

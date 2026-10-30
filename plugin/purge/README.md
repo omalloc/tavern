@@ -41,16 +41,20 @@ plugins:
 - **方法**: `PURGE`
 - **URL**: 资源的完整 URL
 - **Headers**:
-    - `Purge-Type`: (可选) 
+    - `Purge-Type`: (可选)
         - `file`: (默认) 清理单文件。
-        - `dir`: 清理该 URL 路径下的所有缓存（目录刷新）。
+        - `dir`: 标记目录内缓存过期；目录 URL 必须以 `/` 结尾且不带查询参数。
+        - `file,hard` / `dir,hard`: 硬失效文件或目录。
+        - `file,soft` / `dir,mark_expired`: 显式软失效；参数两侧允许空格。
 
 #### 响应状态码
 
-- `200 OK`: 清理成功。
+- `200 OK`: 已确认失效；启用内部 v2 协调器时包含冷资源屏障，旧读者的物理字节可延迟回收。
+- `400 Bad Request`: URL、目录边界或清理参数无效。
 - `403 Forbidden`: 客户端 IP 不在 `allow_hosts` 白名单中。
 - `404 Not Found`: 指定的资源在缓存中不存在。
-- `500 Internal Server Error`: 服务器内部错误。
+- `500 Internal Server Error`: 存储同步或清理失败；不会把未落实的屏障报告为成功。
+- `503 Service Unavailable`: 屏障预算不足或存储缺少所需能力。
 
 #### 使用示例
 

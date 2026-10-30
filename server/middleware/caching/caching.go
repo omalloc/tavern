@@ -130,6 +130,14 @@ func Middleware(c *configv1.Middleware) (middleware.Middleware, func(), error) {
 
 			// find indexdb cache-key has hit/miss.
 			caching, err := processor.preCacheProcessor(proxyClient, store, opts, req)
+			defer func() {
+				if err != nil {
+					closeBody(resp)
+					caching.finishLegacyLease(nil)
+					return
+				}
+				caching.finishLegacyLease(resp)
+			}()
 
 			// TODO: object pool
 			// 	reuse (wrapper Body.Close() call object reset and put Pool.)

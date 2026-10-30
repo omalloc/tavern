@@ -14,6 +14,7 @@ type BarrierCatalog struct {
 
 type PrefixBarrier struct {
 	CanonicalPrefix string `json:"canonical_prefix" yaml:"canonical_prefix"`
+	Exact           bool   `json:"exact,omitempty" yaml:"exact,omitempty"`
 	HardEpoch       uint64 `json:"hard_epoch" yaml:"hard_epoch"`
 	SoftEpoch       uint64 `json:"soft_epoch" yaml:"soft_epoch"`
 }

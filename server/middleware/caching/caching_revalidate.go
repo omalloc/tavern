@@ -252,9 +252,26 @@ func (r *RevalidateProcessor) asyncRevalidate(c *Caching, req *http.Request) {
 	bgReq := req.Clone(ctx)
 	c.ctx, c.req = ctx, bgReq
 	c.hit, c.prefetch, c.revalidate = false, false, true
+	if c.legacyLease != nil {
+		lease, usable, err := c.legacyLease.Renew(ctx)
+		if err != nil {
+			return
+		}
+		c.attachLegacyLease(lease)
+		defer func() {
+			if c.legacyLeaseStop != nil {
+				c.legacyLeaseStop()
+			}
+			lease.Close()
+		}()
+		if !usable {
+			c.md, c.rootmd = nil, nil
+			c.revalidate = false
+		}
+	}
 
 	// Set conditional headers for revalidation
-	if c.opt.representation == nil {
+	if c.opt.representation == nil && c.md != nil {
 		if c.md.Headers.Get("ETag") != "" {
 			bgReq.Header.Set("If-None-Match", c.md.Headers.Get("ETag"))
 		}

@@ -111,6 +111,15 @@ func (pc *ProcessorChain) preCacheProcessor(proxyClient proxy.Proxy, store stora
 	if opt.representation != nil {
 		return caching, caching.lookupRepresentation(store)
 	}
+	if coordinator, ok := store.(storage.LegacyFillCoordinator); ok {
+		lease, err := coordinator.BeginLegacyFill(req.Context(), objectID.Path())
+		if err != nil {
+			caching.bypass = true
+			return caching, err
+		}
+		caching.attachLegacyLease(lease)
+		bucket = caching.bucket
+	}
 
 	// lookup cache with cache-key
 	md, _ := bucket.Lookup(req.Context(), objectID)

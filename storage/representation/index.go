@@ -245,7 +245,7 @@ func (r *IndexRepository) Lookup(ctx context.Context, key object.ResourceKey, he
 	var candidates []object.VariantRef
 	groups := make(map[string]varycontrol.Snapshot)
 	for _, ref := range root.Resource.Variants {
-		if validateReference(ref) != nil {
+		if ref.SelectionKind != object.SelectionHTTP || validateReference(ref) != nil {
 			continue
 		}
 		group := stringsKey(ref.VaryFields)
@@ -308,8 +308,16 @@ func NewHTTPSelector(fields []string, header http.Header) (object.VariantRef, er
 }
 
 func validateSelector(ref object.VariantRef) error {
-	// Managed selections require the source-version contract in P3. They must
-	// never fall through to HTTP snapshot matching in this initial repository.
+	if ref.SelectionKind == object.SelectionManaged {
+		if len(ref.VaryFields) != 0 || len(ref.SelectorSnapshot.Fields) != 0 || ref.SelectorSnapshot.Version != 0 {
+			return ErrInvalidRecord
+		}
+		expected, err := object.ManagedSelectorFingerprint(ref.SelectedSourceID, ref.SelectedSourceVersion, ref.TransformFingerprint)
+		if err != nil || expected != ref.SelectorFingerprint {
+			return ErrInvalidRecord
+		}
+		return nil
+	}
 	if ref.SelectionKind != object.SelectionHTTP || ref.SelectedSourceID != nil || ref.SelectedSourceVersion != "" || ref.TransformFingerprint != "" {
 		return ErrInvalidRecord
 	}
@@ -358,8 +366,19 @@ func validChild(key object.ResourceKey, root *object.ResourceRecord, ref object.
 		return false
 	}
 	if info.ResourceID != root.ResourceID || info.Incarnation != root.Incarnation || info.PurgeEpoch != root.PurgeEpoch ||
-		info.ValidatedEpoch > root.RevalidateEpoch || info.Kind != object.RepresentationOrigin || info.SourceID != nil ||
-		info.SourceVersion != "" || len(info.TransformSpec) != 0 || info.BodyGeneration == "" {
+		info.ValidatedEpoch > root.RevalidateEpoch || info.BodyGeneration == "" {
+		return false
+	}
+	switch info.Kind {
+	case object.RepresentationOrigin:
+		if ref.SelectionKind != object.SelectionHTTP || info.SourceID != nil || info.SourceVersion != "" || len(info.TransformSpec) != 0 {
+			return false
+		}
+	case object.RepresentationDerived:
+		if !validDerived(ref, md) {
+			return false
+		}
+	default:
 		return false
 	}
 	storageSelector := info.StorageSelectorFingerprint
@@ -371,7 +390,7 @@ func validChild(key object.ResourceKey, root *object.ResourceRecord, ref object.
 		return false
 	}
 	fields, wildcard, err := varycontrol.Parse(md.Headers.Values("Vary")...)
-	if err != nil || wildcard || !slices.Equal(fields, ref.VaryFields) {
+	if err != nil || wildcard || (info.Kind == object.RepresentationOrigin && !slices.Equal(fields, ref.VaryFields)) {
 		return false
 	}
 	date := md.RespUnix
@@ -401,6 +420,10 @@ func equalSnapshot(a, b varycontrol.Snapshot) bool {
 	return true
 }
 func sameSelector(a, b object.VariantRef) bool {
+	if a.SelectionKind == object.SelectionManaged || b.SelectionKind == object.SelectionManaged {
+		return a.SelectionKind == b.SelectionKind && a.SelectorFingerprint == b.SelectorFingerprint && a.TransformFingerprint == b.TransformFingerprint &&
+			sameID(a.SelectedSourceID, b.SelectedSourceID) && a.SelectedSourceVersion == b.SelectedSourceVersion
+	}
 	return a.SelectionKind == b.SelectionKind && a.SelectorFingerprint == b.SelectorFingerprint &&
 		slices.Equal(a.VaryFields, b.VaryFields) && equalSnapshot(a.SelectorSnapshot, b.SelectorSnapshot)
 }

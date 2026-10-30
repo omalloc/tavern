@@ -53,17 +53,23 @@ func (w *wrappedStorage) SharedKV() storagev1.SharedKV {
 }
 
 func (w *wrappedStorage) PURGE(storeUrl string, typ storagev1.PurgeControl) error {
-	// 添加推送目录到前缀树
-	// TODO:
-	//	1. sharedkv 保存任务
-	//	2. 重新启动要还原回来
-	//  3. 任务多久过期
-	//  4. 凌晨2-4点低峰时期进行 Hard Delete, 然后删除任务
-	if typ.Dir && typ.MarkExpired {
-		w.checker.TrieAdd(context.Background(), storeUrl)
-		return nil
-	}
 	return w.base.PURGE(storeUrl, typ)
+}
+
+func (w *wrappedStorage) RegisterRepresentationPurger(name string, purger storagev1.RepresentationPurger) error {
+	registry, ok := w.base.(storagev1.RepresentationRegistry)
+	if !ok {
+		return storagev1.ErrControlUnsupported
+	}
+	return registry.RegisterRepresentationPurger(name, purger)
+}
+
+func (w *wrappedStorage) BeginLegacyFill(ctx context.Context, raw string) (storagev1.LegacyFillLease, error) {
+	coordinator, ok := w.base.(storagev1.LegacyFillCoordinator)
+	if !ok {
+		return nil, storagev1.ErrControlUnsupported
+	}
+	return coordinator.BeginLegacyFill(ctx, raw)
 }
 
 func (w *wrappedStorage) Close() error {

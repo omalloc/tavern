@@ -5,16 +5,18 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
-	"net/url"
 	"strconv"
 	"strings"
 
 	configv1 "github.com/omalloc/tavern/api/defined/v1/plugin"
 	storagev1 "github.com/omalloc/tavern/api/defined/v1/storage"
+	"github.com/omalloc/tavern/api/defined/v1/storage/object"
 	"github.com/omalloc/tavern/contrib/log"
 	"github.com/omalloc/tavern/internal/protocol"
 	"github.com/omalloc/tavern/pkg/encoding"
+	xhttp "github.com/omalloc/tavern/pkg/x/http"
 	"github.com/omalloc/tavern/plugin"
 	"github.com/omalloc/tavern/storage"
 )
@@ -81,89 +83,60 @@ func (r *PurgePlugin) AddRouter(router *http.ServeMux) {
 
 func (r *PurgePlugin) HandleFunc(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
-		// skip not PURGE request. e.g. curl -X PURGE http://www.example.com/
 		if req.Method != Method {
 			next(w, req)
 			return
 		}
-
-		ipPort := strings.Split(req.RemoteAddr, ":")
-		if _, ok := r.allowAddr[ipPort[0]]; !ok {
-			w.WriteHeader(http.StatusForbidden)
-			_metricPurgeRequestsTotal.WithLabelValues("403").Inc()
+		host, _, err := net.SplitHostPort(req.RemoteAddr)
+		if err != nil {
+			host = req.RemoteAddr
+		}
+		fail := func(status int) {
+			w.Header().Set("Content-Length", "0")
+			w.WriteHeader(status)
+			_metricPurgeRequestsTotal.WithLabelValues(strconv.Itoa(status)).Inc()
+		}
+		if _, allowed := r.allowAddr[host]; !allowed {
+			fail(http.StatusForbidden)
 			return
 		}
-
-		storeUrl := req.Header.Get(protocol.InternalStoreUrl)
-		if storeUrl == "" {
-			storeUrl = req.URL.String()
-		}
-
-		u, err1 := url.Parse(storeUrl)
-		if err1 != nil {
-			r.log.Errorf("failed to parse storeUrl %s: %s", storeUrl, err1)
-			_metricPurgeRequestsTotal.WithLabelValues("500").Inc()
+		control, err := parsePurgeControl(req.Header.Get(r.opt.HeaderName))
+		if err != nil {
+			fail(http.StatusBadRequest)
 			return
 		}
-
-		ctrl := parsePurgeControl(req.Header.Get(r.opt.HeaderName))
-
-		r.log.Debugf("purge request %s received: %s %s", ipPort[0], storeUrl, ctrl.String())
-
-		current := storage.Current()
-
-		// purge dir
-		if ctrl.Dir {
-			// check if/domain exist
-			if _, err := current.SharedKV().Get(context.Background(),
-				[]byte(fmt.Sprintf("if/domain/%s", u.Host))); err != nil && errors.Is(err, storagev1.ErrKeyNotFound) {
-				r.log.Infof("purge dir %s but is not caching in the service", u.Host)
-				_metricPurgeRequestsTotal.WithLabelValues("404").Inc()
-				return
+		target := req.Header.Get(protocol.InternalStoreUrl)
+		if target == "" {
+			u := *req.URL
+			if u.Host == "" {
+				u.Host = req.Host
 			}
-
-			if err := current.PURGE(storeUrl, ctrl); err != nil {
-				if errors.Is(err, storagev1.ErrKeyNotFound) {
-					w.Header().Set("Content-Length", "0")
-					w.Header().Set("Content-Type", "application/json; charset=utf-8")
-					w.WriteHeader(http.StatusNotFound)
-					_metricPurgeRequestsTotal.WithLabelValues("404").Inc()
-					return
-				}
-
-				r.log.Errorf("purge dir %s failed: %v", storeUrl, err)
-				w.WriteHeader(http.StatusInternalServerError)
-				_metricPurgeRequestsTotal.WithLabelValues("500").Inc()
-				return
+			if u.Scheme == "" {
+				u.Scheme = xhttp.Scheme(req)
 			}
-
-			payload := []byte(`{"message":"success"}`)
-			w.Header().Set("Content-Length", strconv.Itoa(len(payload)))
-			w.Header().Set("Content-Type", "application/json; charset=utf-8")
-			w.WriteHeader(http.StatusOK)
-			_, _ = w.Write(payload)
-			_metricPurgeRequestsTotal.WithLabelValues("200").Inc()
+			target = u.String()
+		}
+		key, err := object.NewResourceKey(target, "purge", "")
+		if err != nil {
+			fail(http.StatusBadRequest)
 			return
 		}
-
-		// purge single file.
-		if err := current.PURGE(storeUrl, ctrl); err != nil {
-			// key not found.
-			if errors.Is(err, storagev1.ErrKeyNotFound) {
-				w.Header().Set("Content-Length", "0")
-				w.Header().Set("Content-Type", "application/json; charset=utf-8")
-				w.WriteHeader(http.StatusNotFound)
-				_metricPurgeRequestsTotal.WithLabelValues("404").Inc()
-				return
+		target = key.CanonicalURL()
+		err = storage.Current().PURGE(target, control)
+		if err != nil {
+			status := http.StatusInternalServerError
+			switch {
+			case errors.Is(err, storagev1.ErrKeyNotFound):
+				status = http.StatusNotFound
+			case errors.Is(err, storagev1.ErrInvalidPurge):
+				status = http.StatusBadRequest
+			case errors.Is(err, storagev1.ErrInvalidationBudget), errors.Is(err, storagev1.ErrControlUnsupported), errors.Is(err, storagev1.ErrDurabilityUnsupported):
+				status = http.StatusServiceUnavailable
 			}
-
-			// others error
-			r.log.Errorf("purge %s failed: %v", storeUrl, err)
-			w.WriteHeader(http.StatusInternalServerError)
-			_metricPurgeRequestsTotal.WithLabelValues("500").Inc()
+			r.log.Errorf("purge %s failed: %v", target, err)
+			fail(status)
 			return
 		}
-
 		payload := []byte(`{"message":"success"}`)
 		w.Header().Set("Content-Length", strconv.Itoa(len(payload)))
 		w.Header().Set("Content-Type", "application/json; charset=utf-8")
@@ -193,25 +166,28 @@ func NewPurgePlugin(opts configv1.Option, log *log.Helper) (configv1.Plugin, err
 	}, nil
 }
 
-func parsePurgeControl(headValue string) storagev1.PurgeControl {
-	param := strings.Split(strings.ToLower(headValue), ",")
-
-	ctrl := storagev1.PurgeControl{
-		MarkExpired: true, // 默认用过期标记
+func parsePurgeControl(value string) (storagev1.PurgeControl, error) {
+	parts := strings.Split(strings.ToLower(value), ",")
+	control := storagev1.PurgeControl{MarkExpired: true}
+	if len(parts) > 2 {
+		return control, storagev1.ErrInvalidPurge
 	}
-
-	if len(param) >= 1 {
-		ctrl.Dir = param[0] == "dir"
+	switch strings.TrimSpace(parts[0]) {
+	case "", "file":
+	case "dir":
+		control.Dir = true
+	default:
+		return control, storagev1.ErrInvalidPurge
 	}
-
-	// 配置推送模式 hard / mark_expired
-	if len(param) == 2 {
-		hasHard := param[1] == "hard"
-
-		ctrl.Hard = hasHard
-		ctrl.MarkExpired = !hasHard
+	if len(parts) == 2 {
+		switch strings.TrimSpace(parts[1]) {
+		case "soft", "mark_expired":
+		case "hard":
+			control.Hard = true
+			control.MarkExpired = false
+		default:
+			return control, storagev1.ErrInvalidPurge
+		}
 	}
-
-	// 没有配置推送选项
-	return ctrl
+	return control, nil
 }

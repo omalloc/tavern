@@ -2,9 +2,12 @@ package representation
 
 import (
 	"context"
+	"errors"
 	"math"
 
 	"github.com/omalloc/tavern/api/defined/v1/storage/object"
+	"github.com/omalloc/tavern/internal/protocol"
+	xhttp "github.com/omalloc/tavern/pkg/x/http"
 )
 
 // IndexState is a fill ticket captured before an origin request, including the
@@ -82,6 +85,11 @@ func (r *IndexRepository) ReserveFor(ctx context.Context, state *IndexState, sel
 	if !currentState(state, root) {
 		return nil, ErrSuperseded
 	}
+	if selector.SelectionKind == object.SelectionManaged {
+		if _, err := r.currentSource(ctx, state.key, root.Resource, selector); err != nil {
+			return nil, err
+		}
+	}
 	return r.reserveLocked(ctx, state.key, root.Resource, selector, limit)
 }
 
@@ -152,6 +160,21 @@ func (r *IndexRepository) Publish(ctx context.Context, state *IndexState, lease 
 	if !previousFound {
 		return false, nil
 	}
+	if ref.SelectionKind == object.SelectionManaged {
+		source, err := r.currentSource(ctx, state.key, root.Resource, ref)
+		if err != nil {
+			if errors.Is(err, ErrSuperseded) {
+				return false, nil
+			}
+			return false, err
+		}
+		if md.ExpiresAt > source.ExpiresAt || md.Representation.ValidatedEpoch != source.Representation.ValidatedEpoch {
+			return false, ErrInvalidRecord
+		}
+		if _, allowed := xhttp.ParseCacheTime(protocol.ProtocolCacheTime, md.Headers); !allowed {
+			return false, ErrInvalidRecord
+		}
+	}
 	// A failed root write must not refresh an old reference, even when its
 	// Date is unchanged. Readers require matching child/reference versions.
 	ref.Revision = root.Resource.Revision + 1
@@ -172,6 +195,18 @@ func (r *IndexRepository) Publish(ctx context.Context, state *IndexState, lease 
 	var merged []object.VariantRef
 	for _, existing := range root.Resource.Variants {
 		if sameSelector(existing, ref) || previous != nil && sameReference(existing, *previous) {
+			continue
+		}
+		dependent := false
+		if existing.SelectionKind == object.SelectionManaged {
+			for _, source := range root.Resource.Variants {
+				if sameID(existing.SelectedSourceID, source.RepresentationID) && originReplaced(source, ref, previous) {
+					dependent = true
+					break
+				}
+			}
+		}
+		if dependent {
 			continue
 		}
 		merged = append(merged, existing.Clone())

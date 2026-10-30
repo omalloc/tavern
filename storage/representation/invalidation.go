@@ -24,7 +24,7 @@ const (
 	maxBarrierBytes                    = 1 << 20
 )
 
-var ErrBarrierLimit = errors.New("representation prefix barrier budget exhausted")
+var ErrBarrierLimit = storage.ErrInvalidationBudget
 
 type barrierEpochs struct {
 	hard, soft  uint64
@@ -36,6 +36,10 @@ func WithBarrierLimit(limit int) Option {
 }
 
 func canonicalPrefix(raw string) (string, error) {
+	return canonicalBarrier(raw, false)
+}
+
+func canonicalBarrier(raw string, exact bool) (string, error) {
 	if len(raw) > maxPrefixBytes {
 		return "", ErrInvalidRecord
 	}
@@ -44,11 +48,11 @@ func canonicalPrefix(raw string) (string, error) {
 		return "", ErrInvalidRecord
 	}
 	u, err := url.Parse(raw)
-	if err != nil || u.RawQuery != "" || u.ForceQuery || u.Fragment != "" {
+	if err != nil || (!exact && (u.RawQuery != "" || u.ForceQuery)) || u.Fragment != "" {
 		return "", ErrInvalidRecord
 	}
 	u, _ = url.Parse(key.CanonicalURL())
-	if !strings.HasSuffix(u.EscapedPath(), "/") {
+	if !exact && !strings.HasSuffix(u.EscapedPath(), "/") {
 		return "", ErrInvalidRecord
 	}
 	return u.String(), nil
@@ -76,13 +80,17 @@ func (r *IndexRepository) loadCatalog(ctx context.Context) (*object.Metadata, er
 	}
 	seen := make(map[string]struct{}, len(md.Barriers.Entries))
 	for _, entry := range md.Barriers.Entries {
-		prefix, err := canonicalPrefix(entry.CanonicalPrefix)
-		_, duplicate := seen[prefix]
+		prefix, err := canonicalBarrier(entry.CanonicalPrefix, entry.Exact)
+		identity := prefix
+		if entry.Exact {
+			identity = "exact:" + prefix
+		}
+		_, duplicate := seen[identity]
 		if err != nil || prefix != entry.CanonicalPrefix || duplicate || entry.HardEpoch > md.Barriers.Revision || entry.SoftEpoch > md.Barriers.Revision ||
 			(entry.HardEpoch == 0 && entry.SoftEpoch == 0) {
 			return nil, ErrInvalidRecord
 		}
-		seen[prefix] = struct{}{}
+		seen[identity] = struct{}{}
 	}
 	return md.Clone(), nil
 }
@@ -94,7 +102,7 @@ func (r *IndexRepository) barriersFor(ctx context.Context, key object.ResourceKe
 	}
 	epochs := barrierEpochs{incarnation: md.Barriers.Incarnation}
 	for _, entry := range md.Barriers.Entries {
-		if prefixMatches(entry.CanonicalPrefix, key.CanonicalURL()) {
+		if entry.Exact && entry.CanonicalPrefix == key.CanonicalURL() || !entry.Exact && prefixMatches(entry.CanonicalPrefix, key.CanonicalURL()) {
 			epochs.hard = max(epochs.hard, entry.HardEpoch)
 			epochs.soft = max(epochs.soft, entry.SoftEpoch)
 		}
@@ -107,10 +115,20 @@ func (r *IndexRepository) barriersFor(ctx context.Context, key object.ResourceKe
 // lookups and commits check the barrier immediately. P2.3 wires public PURGE.
 // A trailing slash is mandatory; escaped path separators remain distinct.
 func (r *IndexRepository) InvalidatePrefix(ctx context.Context, raw string, mode InvalidationMode) error {
+	return r.invalidateURLBarrier(ctx, raw, mode, false)
+}
+
+// InvalidateURL covers every namespace and cold isolation scope of an exact
+// canonical public URI without needing to enumerate existing resource roots.
+func (r *IndexRepository) InvalidateURL(ctx context.Context, raw string, mode InvalidationMode) error {
+	return r.invalidateURLBarrier(ctx, raw, mode, true)
+}
+
+func (r *IndexRepository) invalidateURLBarrier(ctx context.Context, raw string, mode InvalidationMode, exact bool) error {
 	if mode != InvalidateSoft && mode != InvalidateHard {
 		return ErrInvalidRecord
 	}
-	prefix, err := canonicalPrefix(raw)
+	prefix, err := canonicalBarrier(raw, exact)
 	if err != nil {
 		return err
 	}
@@ -123,12 +141,12 @@ func (r *IndexRepository) InvalidatePrefix(ctx context.Context, raw string, mode
 	if md.Barriers.Revision == math.MaxUint64 {
 		return ErrInvalidRecord
 	}
-	index := slices.IndexFunc(md.Barriers.Entries, func(entry object.PrefixBarrier) bool { return entry.CanonicalPrefix == prefix })
+	index := slices.IndexFunc(md.Barriers.Entries, func(entry object.PrefixBarrier) bool { return entry.CanonicalPrefix == prefix && entry.Exact == exact })
 	if index < 0 {
 		if len(md.Barriers.Entries) >= r.barrierLimit {
 			return ErrBarrierLimit
 		}
-		md.Barriers.Entries = append(md.Barriers.Entries, object.PrefixBarrier{CanonicalPrefix: prefix})
+		md.Barriers.Entries = append(md.Barriers.Entries, object.PrefixBarrier{CanonicalPrefix: prefix, Exact: exact})
 		if barrierBytes(md.Barriers) > maxBarrierBytes {
 			return ErrBarrierLimit
 		}
@@ -146,6 +164,27 @@ func (r *IndexRepository) InvalidatePrefix(ctx context.Context, raw string, mode
 	}
 	return r.storeControl(ctx, md)
 }
+
+// Purge is the storage routing contract. Physical collection remains separate
+// from the acknowledged logical barrier, so current readers can finish.
+func (r *IndexRepository) Purge(ctx context.Context, raw string, control storage.PurgeControl) error {
+	if control.Hard && control.MarkExpired {
+		return storage.ErrInvalidPurge
+	}
+	if _, err := canonicalBarrier(raw, !control.Dir); err != nil {
+		return storage.ErrInvalidPurge
+	}
+	mode := InvalidateSoft
+	if control.Hard {
+		mode = InvalidateHard
+	}
+	if control.Dir {
+		return r.InvalidatePrefix(ctx, raw, mode)
+	}
+	return r.InvalidateURL(ctx, raw, mode)
+}
+
+var _ storage.RepresentationPurger = (*IndexRepository)(nil)
 
 func barrierBytes(catalog *object.BarrierCatalog) int {
 	size := len(catalog.Incarnation) + 32

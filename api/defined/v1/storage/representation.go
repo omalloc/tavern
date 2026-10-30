@@ -45,3 +45,31 @@ type DurableRepresentationBucket interface {
 	SyncRepresentationData(context.Context, *object.Metadata) error
 	StoreRepresentationSync(context.Context, *object.Metadata) error
 }
+
+var (
+	ErrInvalidPurge       = errors.New("invalid purge target or control")
+	ErrFillSuperseded     = errors.New("legacy fill superseded by invalidation")
+	ErrInvalidationBudget = errors.New("representation invalidation budget exhausted")
+)
+
+// RepresentationPurger is registered once for each control owner, covering all
+// namespaces it manages. Success acknowledges the logical invalidation barrier.
+type RepresentationPurger interface {
+	Purge(context.Context, string, PurgeControl) error
+}
+
+type RepresentationRegistry interface {
+	RegisterRepresentationPurger(string, RepresentationPurger) error
+}
+
+// LegacyFillLease fences older format writers against PURGE in the same process.
+// Guard covers only local storage I/O, never an origin request or body Read.
+type LegacyFillLease interface {
+	Guard(context.Context, func() error) error
+	Renew(context.Context) (LegacyFillLease, bool, error)
+	Close() error
+}
+
+type LegacyFillCoordinator interface {
+	BeginLegacyFill(context.Context, string) (LegacyFillLease, error)
+}

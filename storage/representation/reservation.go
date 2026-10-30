@@ -67,7 +67,7 @@ func (r *IndexRepository) reserveLocked(ctx context.Context, key object.Resource
 		distinct = append(distinct, candidate)
 	}
 	for _, ref := range record.Variants {
-		if validateSelector(ref) == nil {
+		if ref.SelectionKind == selector.SelectionKind && validateSelector(ref) == nil {
 			add(ref)
 		}
 	}
@@ -77,7 +77,22 @@ func (r *IndexRepository) reserveLocked(ctx context.Context, key object.Resource
 			delete(pending, id)
 			continue
 		}
-		add(reservation.selector)
+		if reservation.selector.SelectionKind == object.SelectionManaged {
+			found := false
+			for _, source := range record.Variants {
+				if source.SelectionKind == object.SelectionHTTP && sameID(source.RepresentationID, reservation.selector.SelectedSourceID) {
+					found = true
+					break
+				}
+			}
+			if !found {
+				delete(pending, id)
+				continue
+			}
+		}
+		if reservation.selector.SelectionKind == selector.SelectionKind {
+			add(reservation.selector)
+		}
 	}
 	known := false
 	for _, existing := range distinct {

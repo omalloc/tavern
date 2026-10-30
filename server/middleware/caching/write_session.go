@@ -2,6 +2,7 @@ package caching
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"path/filepath"
@@ -19,26 +20,37 @@ import (
 // worker owns its metadata clone; callbacks never consult the frontend Caching
 // object. V2 uses representationWriter with an independently allocated body ID.
 type writeSession struct {
-	ctx     context.Context
-	bucket  storage.Bucket
-	md      *object.Metadata
-	log     *log.Helper
-	async   bool
-	publish func(context.Context, event.CacheCompleted)
-	failed  bool
-	mu      sync.Mutex
+	ctx      context.Context
+	bucket   storage.Bucket
+	md       *object.Metadata
+	log      *log.Helper
+	async    bool
+	publish  func(context.Context, event.CacheCompleted)
+	failed   bool
+	disabled bool
+	mu       sync.Mutex
+	lease    storage.LegacyFillLease
 }
 
 func (c *Caching) newWriteSession() *writeSession {
-	return &writeSession{ctx: c.req.Context(), bucket: c.bucket, md: c.md.Clone(), log: c.log,
+	s := &writeSession{ctx: c.req.Context(), bucket: c.bucket, md: c.md.Clone(), log: c.log,
 		async: c.opt.AsyncFlushChunk, publish: c.opt.publish}
+	if bucket, ok := c.bucket.(*leasedBucket); ok {
+		s.bucket, s.lease = bucket.Bucket, bucket.lease
+	}
+	return s
+}
+
+func (s *writeSession) guard(write func() error) error {
+	if s.lease != nil {
+		return s.lease.Guard(s.ctx, write)
+	}
+	return write()
 }
 
 func flushbufferSlice(s *writeSession, span xhttp.ContentRange) (iobuf.EventSuccess, iobuf.EventClose) {
 	chunked := span.ObjSize == 0
-	write := func(buf []byte, index uint32, current uint64, eof bool) error {
-		s.mu.Lock()
-		defer s.mu.Unlock()
+	writeLocal := func(buf []byte, index uint32, current uint64, eof bool) error {
 		if s.failed {
 			return io.ErrClosedPipe
 		}
@@ -83,10 +95,23 @@ func flushbufferSlice(s *writeSession, span xhttp.ContentRange) (iobuf.EventSucc
 		}
 		return nil
 	}
+	write := func(buf []byte, index uint32, current uint64, eof bool) error {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		if s.disabled {
+			return nil
+		}
+		err := s.guard(func() error { return writeLocal(buf, index, current, eof) })
+		if errors.Is(err, storage.ErrFillSuperseded) {
+			s.disabled = true
+			return nil
+		}
+		return err
+	}
 	close := func(eof bool) {
 		s.mu.Lock()
 		defer s.mu.Unlock()
-		if s.failed {
+		if s.failed || s.disabled {
 			return
 		}
 		if chunked && !eof {
@@ -94,7 +119,7 @@ func flushbufferSlice(s *writeSession, span xhttp.ContentRange) (iobuf.EventSucc
 			return
 		}
 		if s.async || chunked {
-			if err := s.bucket.Store(s.ctx, s.md); err != nil {
+			if err := s.guard(func() error { return s.bucket.Store(s.ctx, s.md) }); err != nil {
 				s.failLocked(err)
 			}
 		}
@@ -116,5 +141,9 @@ func (s *writeSession) failLocked(err error) {
 	s.log.Errorf("flush body to disk failed: %v", err)
 	cacheFlushFailedTotal.WithLabelValues(s.bucket.StoreType()).Inc()
 	cacheChunkWriteTotal.WithLabelValues("failed", s.bucket.StoreType()).Inc()
-	_ = s.bucket.DiscardWithMetadata(context.WithoutCancel(s.ctx), s.md)
+	if s.lease != nil {
+		_ = s.lease.Guard(context.WithoutCancel(s.ctx), func() error { return s.bucket.DiscardWithMetadata(context.WithoutCancel(s.ctx), s.md) })
+	} else {
+		_ = s.bucket.DiscardWithMetadata(context.WithoutCancel(s.ctx), s.md)
+	}
 }
