@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
+	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"image"
 	"image/color"
@@ -11,6 +13,7 @@ import (
 	"image/png"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -648,4 +651,101 @@ func TestCachingReadsTrustedManagedPlanBeforeOrdinaryLookup(t *testing.T) {
 		t.Fatal("unbound plan silently fell back to ordinary cache")
 	}
 	assertNoImageTemporaryFiles(t, f)
+}
+
+func TestManagedProviderPrivateOutputBoundsWholeTask(t *testing.T) {
+	f := newManagedFixture(t)
+	f.cacheControl = "private, max-age=600"
+	f.provider.limits.Timeout = 100 * time.Millisecond
+	var err error
+	f.provider.budget, err = planning.NewWorkBudget(1, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req, plan := f.request(t, "format=png", "image/png")
+	first, err := f.provider.resolve(req, plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer first.Close()
+	if _, err = f.provider.resolve(req, plan); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("private output did not retain whole-task budget: %v", err)
+	}
+	if f.origins.Load() != 1 {
+		t.Fatal("queued task fetched/decoded source outside its budget")
+	}
+	first.Close()
+	next, err := f.provider.resolve(req, plan)
+	if err != nil {
+		t.Fatalf("completed output leaked permit: %v", err)
+	}
+	next.Close()
+	if f.origins.Load() != 2 {
+		t.Fatal("released task was not executed")
+	}
+	entries, err := os.ReadDir(f.directory)
+	if err != nil || len(entries) != 0 {
+		t.Fatalf("private files leaked: %v %v", entries, err)
+	}
+}
+
+func TestManagedProviderHTTPWorkerCompletePublication(t *testing.T) {
+	f := newManagedFixture(t)
+	var rpc atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		rpc.Add(1)
+		encoded, err := base64.RawURLEncoding.DecodeString(r.Header.Get(planning.SpecHeader))
+		if err != nil {
+			t.Error(err)
+			http.Error(w, "invalid spec", 400)
+			return
+		}
+		var spec transformv1.TransformSpec
+		if err = json.Unmarshal(encoded, &spec); err != nil {
+			t.Error(err)
+			http.Error(w, "invalid spec", 400)
+			return
+		}
+		decoded, _, err := image.Decode(r.Body)
+		if err != nil {
+			t.Error(err)
+			http.Error(w, "invalid source", 400)
+			return
+		}
+		var output bytes.Buffer
+		if spec.OutputMIME == "image/png" {
+			err = png.Encode(&output, decoded)
+		} else {
+			err = jpeg.Encode(&output, decoded, &jpeg.Options{Quality: *spec.Quality})
+		}
+		if err != nil {
+			t.Error(err)
+			http.Error(w, "encoding failed", 500)
+			return
+		}
+		w.Header().Set("Content-Type", spec.OutputMIME)
+		w.Header().Set(planning.EncoderHeader, "test-e1")
+		w.Write(output.Bytes())
+	}))
+	defer server.Close()
+	worker, err := planning.NewHTTPWorker(planning.HTTPWorkerConfig{Endpoint: server.URL + "/v1/transform", Capabilities: f.backend.Capabilities(), Limits: planning.WorkerLimits{MaxInputBytes: 1 << 20, MaxOutputBytes: 1 << 20, MaxPixels: 1000, Concurrency: 2, QueueSize: 32, Timeout: time.Second, TemporaryDirectory: f.directory}}, server.Client())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = worker.Verify(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	probeCalls := rpc.Load()
+	f.provider.backend = worker
+	f.provider.caps = worker.Capabilities()
+	f.provider.inspector = planning.ImageInspector{}
+	_, first := f.get(t, "format=png", "image/png")
+	result, second := f.get(t, "format=png", "image/png")
+	if !bytes.Equal(first, second) || !result.Cached || f.origins.Load() != 1 || rpc.Load() != probeCalls+1 {
+		t.Fatalf("HTTP conversion was not fully published/reused: origin=%d rpc=%d", f.origins.Load(), rpc.Load()-probeCalls)
+	}
+	entries, err := os.ReadDir(f.directory)
+	if err != nil || len(entries) != 0 {
+		t.Fatalf("worker/cache temp files leaked: %v %v", entries, err)
+	}
 }

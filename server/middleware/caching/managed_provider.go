@@ -18,6 +18,7 @@ import (
 )
 
 type managedLimits struct {
+	Concurrency, QueueSize          int
 	InputBytes, OutputBytes, Pixels int64
 	Timeout                         time.Duration
 	Directory                       string
@@ -32,6 +33,7 @@ type managedProvider struct {
 	limits            managedLimits
 	manager           *representation.Manager
 	sources, products keyedGate
+	budget            *planning.WorkBudget
 }
 
 type managedResult struct {
@@ -85,11 +87,22 @@ func newManagedProvider(store storage.Storage, origin http.RoundTripper, opt cac
 	}
 	// Backend-owned slice mutation cannot change an accepted task's identity.
 	encoded, _ := json.Marshal(caps)
+	caps = transformv1.BackendCapabilities{}
 	json.Unmarshal(encoded, &caps)
 	opt.FuzzyRefresh = false
 	opt.IncludeQueryInCacheKey = true
 	opt.representation = &representationLookup{manager: owner.RepresentationManager(), namespace: opt.representation.namespace + "/managed-source-v1", isolationScope: opt.representation.isolationScope, writes: true}
-	return &managedProvider{store: store, origin: origin, opt: opt, backend: backend, caps: caps, inspector: inspector, limits: limits, manager: owner.RepresentationManager()}, nil
+	if limits.Concurrency == 0 {
+		limits.Concurrency = 2
+	}
+	if limits.QueueSize == 0 {
+		limits.QueueSize = 32
+	}
+	budget, err := planning.NewWorkBudget(limits.Concurrency, limits.QueueSize)
+	if err != nil {
+		return nil, err
+	}
+	return &managedProvider{store: store, origin: origin, opt: opt, backend: backend, caps: caps, inspector: inspector, limits: limits, manager: owner.RepresentationManager(), budget: budget}, nil
 }
 
 // resolve owns an accepted, bounded task independently of the requesting
@@ -110,7 +123,23 @@ func (p *managedProvider) resolve(req *http.Request, plan planning.Plan) (*manag
 	completed := make(chan outcome)
 	go func() {
 		defer finish()
-		result, err := p.resolveTask(req.Clone(ctx), plan)
+		release, err := p.budget.Acquire(ctx)
+		var result *managedResult
+		if err == nil {
+			result, err = p.resolveTask(req.Clone(ctx), plan)
+			if result != nil && result.Metadata.ID == nil {
+				previous := result.finish
+				result.finish = func() error {
+					defer release()
+					if previous != nil {
+						return previous()
+					}
+					return nil
+				}
+			} else {
+				release()
+			}
+		}
 		select {
 		case completed <- outcome{result, err}:
 		case <-req.Context().Done():
