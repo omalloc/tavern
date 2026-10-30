@@ -180,6 +180,9 @@ func (r *IndexRepository) Publish(ctx context.Context, state *IndexState, lease 
 			}
 			return false, err
 		}
+		if md.Representation.SourceBoundTTL && md.ExpiresAt != source.ExpiresAt {
+			return false, ErrInvalidRecord
+		}
 		if md.ExpiresAt > source.ExpiresAt || md.Representation.ValidatedEpoch != source.Representation.ValidatedEpoch {
 			return false, ErrInvalidRecord
 		}

@@ -23,6 +23,7 @@ import (
 	xhttp "github.com/omalloc/tavern/pkg/x/http"
 	"github.com/omalloc/tavern/server/middleware"
 	storagev1 "github.com/omalloc/tavern/storage"
+	planning "github.com/omalloc/tavern/transform"
 )
 
 const BYPASS = "BYPASS"
@@ -57,6 +58,7 @@ type cachingOption struct {
 	RepresentationIsolationScope string                `json:"representation_isolation_scope,omitempty" yaml:"representation_isolation_scope,omitempty"`
 	// Runtime representation binding is resolved from the storage owner.
 	representation *representationLookup
+	managed        *managedProvider
 	// events.
 	publish func(ctx context.Context, payload event.CacheCompleted) `json:"-" yaml:"-"`
 }
@@ -116,97 +118,105 @@ func Middleware(c *configv1.Middleware) (middleware.Middleware, func(), error) {
 	)
 
 	return func(origin http.RoundTripper) http.RoundTripper {
+		return bindCaching(origin, storagev1.Current(), opts, processor)
+	}, middleware.EmptyCleanup, nil
+}
 
-		store := storagev1.Current()
+func bindCaching(origin http.RoundTripper, store storage.Storage, opts *cachingOption, processor *ProcessorChain) http.RoundTripper {
 
-		// Response sharing stays disabled until followers are checked against
-		// the actual origin Vary and cache admission headers (P4.3).
+	// Response sharing stays disabled until followers are checked against
+	// the actual origin Vary and cache admission headers (P4.3).
 
-		return middleware.RoundTripperFunc(func(req *http.Request) (resp *http.Response, err error) {
-			// only cache GET/HEAD request
-			if req.Method != http.MethodGet && req.Method != http.MethodHead {
-				// discard RequestURI for proxy client
-				return origin.RoundTrip(prepareRepresentationRequest(req))
-			}
+	return middleware.RoundTripperFunc(func(req *http.Request) (resp *http.Response, err error) {
+		// only cache GET/HEAD request
+		if req.Method != http.MethodGet && req.Method != http.MethodHead {
+			// discard RequestURI for proxy client
+			return origin.RoundTrip(prepareRepresentationRequest(req))
+		}
 
-			taskCtx, finish, taskErr := beginCacheTask(store, req.Context(), defaultTaskTimeout)
-			if taskErr != nil {
-				return origin.RoundTrip(prepareRepresentationRequest(req))
-			}
-			req = req.Clone(taskCtx)
-			defer func() {
-				if err != nil {
-					closeBody(resp)
-					finishCacheTask(taskCtx, nil, finish)
-				} else {
-					finishCacheTask(taskCtx, resp, finish)
-				}
-			}()
-
-			// find indexdb cache-key has hit/miss.
-			caching, err := processor.preCacheProcessor(origin, store, opts, req)
-			defer func() {
-				if err != nil {
-					closeBody(resp)
-					caching.finishLegacyLease(nil)
-					caching.finishRepresentationLease(nil)
-					return
-				}
-				caching.finishLegacyLease(resp)
-				caching.finishRepresentationLease(resp)
-			}()
-
-			// TODO: object pool
-			// 	reuse (wrapper Body.Close() call object reset and put Pool.)
-			//defer func() {
-			//	caching.reset()
-			//	cachingPool.Put(caching)
-			//}()
-
-			// Increment cacheRequestTotal on every response path (BYPASS,
-			// HIT, MISS). Placed as a defer so it
-			// fires after cacheStatus is finalized.
-			defer func() {
-				storeType := "none"
-				if caching.bucket != nil {
-					storeType = caching.bucket.StoreType()
-				}
-				cacheRequestTotal.WithLabelValues(caching.cacheStatus.String(), storeType).Inc()
-			}()
-
-			// err to BYPASS caching
+		taskCtx, finish, taskErr := beginCacheTask(store, req.Context(), defaultTaskTimeout)
+		if taskErr != nil {
+			return origin.RoundTrip(prepareRepresentationRequest(req))
+		}
+		req = req.Clone(taskCtx)
+		defer func() {
 			if err != nil {
-				caching.log.Warnf("Precache processor failed: %v BYPASS", err)
-				caching.cacheStatus = storage.BYPASS
-				caching.bypass = true
-				resp, err = caching.doProxy(req, false) // do reverse proxy
-				if err != nil {
-					return nil, err
-				}
+				closeBody(resp)
+				finishCacheTask(taskCtx, nil, finish)
+			} else {
+				finishCacheTask(taskCtx, resp, finish)
+			}
+		}()
 
-				if resp != nil {
-					// set cache-staus header BYPASS
-					resp.Header.Set(protocol.ProtocolCacheStatusKey, BYPASS)
-				}
+		if plan, planned := planning.PlanFromContext(req.Context()); planned {
+			if opts.managed == nil {
+				return nil, fmt.Errorf("managed image plan has no bound provider")
+			}
+			return opts.managed.roundTrip(req, plan)
+		}
+
+		// find indexdb cache-key has hit/miss.
+		caching, err := processor.preCacheProcessor(origin, store, opts, req)
+		defer func() {
+			if err != nil {
+				closeBody(resp)
+				caching.finishLegacyLease(nil)
+				caching.finishRepresentationLease(nil)
 				return
 			}
+			caching.finishLegacyLease(resp)
+			caching.finishRepresentationLease(resp)
+		}()
 
-			// cache HIT
-			if caching.hit {
-				return caching.respondFromCache(req)
+		// TODO: object pool
+		// 	reuse (wrapper Body.Close() call object reset and put Pool.)
+		//defer func() {
+		//	caching.reset()
+		//	cachingPool.Put(caching)
+		//}()
+
+		// Increment cacheRequestTotal on every response path (BYPASS,
+		// HIT, MISS). Placed as a defer so it
+		// fires after cacheStatus is finalized.
+		defer func() {
+			storeType := "none"
+			if caching.bucket != nil {
+				storeType = caching.bucket.StoreType()
 			}
+			cacheRequestTotal.WithLabelValues(caching.cacheStatus.String(), storeType).Inc()
+		}()
 
-			// A MISS fetches independently: its response Vary is not known yet.
-			resp, err = caching.doProxy(req, false)
+		// err to BYPASS caching
+		if err != nil {
+			caching.log.Warnf("Precache processor failed: %v BYPASS", err)
+			caching.cacheStatus = storage.BYPASS
+			caching.bypass = true
+			resp, err = caching.doProxy(req, false) // do reverse proxy
 			if err != nil {
 				return nil, err
 			}
 
-			resp, err = processor.postCacheProcessor(caching, req, resp)
+			if resp != nil {
+				// set cache-staus header BYPASS
+				resp.Header.Set(protocol.ProtocolCacheStatusKey, BYPASS)
+			}
 			return
-		})
+		}
 
-	}, middleware.EmptyCleanup, nil
+		// cache HIT
+		if caching.hit {
+			return caching.respondFromCache(req)
+		}
+
+		// A MISS fetches independently: its response Vary is not known yet.
+		resp, err = caching.doProxy(req, false)
+		if err != nil {
+			return nil, err
+		}
+
+		resp, err = processor.postCacheProcessor(caching, req, resp)
+		return
+	})
 }
 
 // respondFromCache assembles a response from cached chunks for a cache HIT.

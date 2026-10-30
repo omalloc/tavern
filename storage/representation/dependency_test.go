@@ -1,11 +1,13 @@
 package representation_test
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"testing"
+	"time"
 
 	"github.com/omalloc/tavern/api/defined/v1/storage"
 	"github.com/omalloc/tavern/api/defined/v1/storage/object"
@@ -219,5 +221,62 @@ func TestDerivedAdmissionRequiresSourcePolicyAndExpiry(t *testing.T) {
 				t.Fatal("ineligible product admitted", published, err)
 			}
 		})
+	}
+}
+
+func TestSourceBoundDerivedLifetimeFollowsOnlySameFreshSourceVersion(t *testing.T) {
+	f, source := sourceFixture(t)
+	repo, err := representation.NewIndexRepository(f.controls, f.bucket.ID(), func(ctx context.Context, location string, id *object.ID) (*object.Metadata, error) {
+		return f.bucket.Lookup(ctx, id)
+	}, representation.WithClock(func() time.Time { return f.now }))
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.repo = repo
+	boundRef, bound := derivedCandidate(t, f, source, `{"quality":80}`)
+	bound.Representation.SourceBoundTTL = true
+	bound.ExpiresAt = source.Representation.ExpiresAt
+	publishDerived(t, f, boundRef, bound, 2)
+	ownRef, own := derivedCandidate(t, f, source, `{"quality":90}`)
+	publishDerived(t, f, ownRef, own, 2)
+	f.now = f.now.Add(2 * time.Hour)
+	if _, err = f.repo.LookupDerived(t.Context(), f.key, source.Representation.ID, source.Representation.Representation.BodyGeneration, boundRef.TransformFingerprint); !errors.Is(err, storage.ErrKeyNotFound) {
+		t.Fatal("old product bypassed expired source", err)
+	}
+	if err = f.repo.Invalidate(t.Context(), f.key, representation.InvalidateSoft); err != nil {
+		t.Fatal(err)
+	}
+	state, err := f.repo.Capture(t.Context(), f.key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	next := source.Representation.Clone()
+	next.ExpiresAt = f.now.Add(time.Hour).Unix()
+	next.RespUnix = f.now.Unix()
+	next.Headers.Set("Date", f.now.UTC().Format(http.TimeFormat))
+	next.Headers.Set("Cache-Control", "max-age=3600")
+	next.Representation.ValidatedEpoch = state.Resource().Resource.RevalidateEpoch
+	ref := source.Reference.Clone()
+	ref.ResponseDate = f.now.Unix()
+	lease, err := f.repo.ReserveFor(t.Context(), state, ref, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	published, err := f.repo.Publish(t.Context(), state, lease, ref, next, &source.Reference, func() error { return f.bucket.Store(t.Context(), next) })
+	if err != nil || !published {
+		t.Fatal(published, err)
+	}
+	selected, err := f.repo.LookupDerived(t.Context(), f.key, next.ID, next.Representation.BodyGeneration, boundRef.TransformFingerprint)
+	if err != nil || !selected.Fresh || selected.Representation.ExpiresAt != next.ExpiresAt || selected.Representation.ID.Hash() != bound.ID.Hash() {
+		t.Fatal("same source validation did not retain bound product", selected, err)
+	}
+	if _, err = f.repo.LookupDerived(t.Context(), f.key, next.ID, next.Representation.BodyGeneration, ownRef.TransformFingerprint); !errors.Is(err, storage.ErrKeyNotFound) {
+		t.Fatal("own TTL was extended", err)
+	}
+	if err = f.repo.Invalidate(t.Context(), f.key, representation.InvalidateHard); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = f.repo.LookupDerived(t.Context(), f.key, next.ID, next.Representation.BodyGeneration, boundRef.TransformFingerprint); !errors.Is(err, storage.ErrKeyNotFound) {
+		t.Fatal("source-bound TTL bypassed hard invalidation", err)
 	}
 }

@@ -17,6 +17,9 @@ type Plan struct {
 	Options      transformv1.RequestOptions
 	AcceptHeader http.Header
 }
+
+func (p Plan) Clone() Plan { return clonePlan(p) }
+
 type planKey struct{}
 
 func clonePlan(p Plan) Plan {

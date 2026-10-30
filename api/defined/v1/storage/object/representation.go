@@ -63,6 +63,9 @@ type VariantRef struct {
 }
 
 type RepresentationInfo struct {
+	// SourceBoundTTL derives freshness only from a current validation of exactly
+	// the selected source body version. It never grants independent lifetime.
+	SourceBoundTTL bool   `json:"source_bound_ttl,omitempty" yaml:"source_bound_ttl,omitempty"`
 	Revision       uint64 `json:"revision,omitempty" yaml:"revision,omitempty"`
 	SchemaVersion  uint16 `json:"schema_version" yaml:"schema_version"`
 	ResourceID     string `json:"resource_id" yaml:"resource_id"`
@@ -82,6 +85,21 @@ type RepresentationInfo struct {
 	TransformSpec  json.RawMessage `json:"transform_spec,omitempty" yaml:"transform_spec,omitempty"`
 	PolicyVersion  string          `json:"policy_version,omitempty" yaml:"policy_version,omitempty"`
 	EncoderVersion string          `json:"encoder_version,omitempty" yaml:"encoder_version,omitempty"`
+	Image          *ImageInfo      `json:"image,omitempty" yaml:"image,omitempty"`
+}
+
+// ImageInfo describes bounded inspection of a complete, decoded source body.
+// It belongs to one immutable body generation and survives a validating 304.
+type ImageInfo struct {
+	SchemaVersion    uint16 `json:"schema_version" yaml:"schema_version"`
+	InspectorVersion string `json:"inspector_version" yaml:"inspector_version"`
+	DecodedDigest    string `json:"decoded_digest" yaml:"decoded_digest"`
+	MIME             string `json:"mime" yaml:"mime"`
+	DecodedSize      int64  `json:"decoded_size" yaml:"decoded_size"`
+	Width            int    `json:"width" yaml:"width"`
+	Height           int    `json:"height" yaml:"height"`
+	HasAlpha         bool   `json:"has_alpha" yaml:"has_alpha"`
+	Animated         bool   `json:"animated" yaml:"animated"`
 }
 
 func (r *ResourceRecord) Clone() *ResourceRecord {
@@ -114,6 +132,10 @@ func (r *RepresentationInfo) Clone() *RepresentationInfo {
 	out := *r
 	out.SourceID = r.SourceID.Clone()
 	out.TransformSpec = slices.Clone(r.TransformSpec)
+	if r.Image != nil {
+		image := *r.Image
+		out.Image = &image
+	}
 	return &out
 }
 

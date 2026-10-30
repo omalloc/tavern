@@ -79,7 +79,8 @@ func (r *IndexRepository) lookupDerivedLocked(ctx context.Context, key object.Re
 	if root.Resource.BarrierIncarnation != epochs.incarnation || root.Resource.PrefixHardEpoch != epochs.hard || root.Resource.PrefixSoftEpoch != epochs.soft {
 		return result, storage.ErrKeyNotFound
 	}
-	if _, err := r.currentSource(ctx, key, root.Resource, selector); err != nil {
+	source, err := r.currentSource(ctx, key, root.Resource, selector)
+	if err != nil {
 		if errors.Is(err, ErrSuperseded) {
 			return result, storage.ErrKeyNotFound
 		}
@@ -96,7 +97,23 @@ func (r *IndexRepository) lookupDerivedLocked(ctx context.Context, key object.Re
 		if err != nil {
 			return result, err
 		}
-		if !validChild(key, root.Resource, ref, md) || md.ExpiresAt <= r.Now().Unix() || md.Representation.ValidatedEpoch != root.Resource.RevalidateEpoch {
+		if !validChild(key, root.Resource, ref, md) {
+			continue
+		}
+		if md.Representation.SourceBoundTTL {
+			// This explicit lifetime contract follows a fresh validation of exactly the
+			// same immutable source version. No content or stored ref revision changes.
+			md = md.Clone()
+			md.ExpiresAt, md.RespUnix = source.ExpiresAt, source.RespUnix
+			md.Representation.ValidatedEpoch = source.Representation.ValidatedEpoch
+			for _, name := range []string{"Date", "Age", "Cache-Control", "Expires", protocol.ProtocolCacheTime} {
+				md.Headers.Del(name)
+				if values, ok := source.Headers[name]; ok {
+					md.Headers[name] = append([]string(nil), values...)
+				}
+			}
+		}
+		if md.ExpiresAt <= r.Now().Unix() || md.Representation.ValidatedEpoch != root.Resource.RevalidateEpoch {
 			continue
 		}
 		if err := r.verifyChild(ctx, root.Resource.ActiveLocation, md); err != nil {

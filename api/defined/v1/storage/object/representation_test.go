@@ -277,3 +277,28 @@ func TestResourceKeyRestoresOpaqueIsolationWithoutChangingIDs(t *testing.T) {
 		t.Fatal("accepted noncanonical stored URL")
 	}
 }
+
+func TestInspectedImageMetadataRoundTripAndClone(t *testing.T) {
+	_, md := representationFixture(t)
+	md.Representation.Image = &ImageInfo{SchemaVersion: 1, InspectorVersion: "inspector-v1", DecodedDigest: strings.Repeat("a", 64), MIME: "image/png", DecodedSize: 4096, Width: 12, Height: 20, HasAlpha: true, Animated: true}
+	md.Representation.SourceBoundTTL = true
+	for _, codec := range []encoding.Codec{&jsoncodec.JSONCodec{}, &cobr.CborCodec{}} {
+		data, err := codec.Marshal(md)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var recovered Metadata
+		if err = codec.Unmarshal(data, &recovered); err != nil {
+			t.Fatal(err)
+		}
+		if !reflect.DeepEqual(md.Representation, recovered.Representation) {
+			t.Fatal("image/version lifetime contract lost", codec.Name())
+		}
+	}
+	owned := md.Clone()
+	owned.Representation.Image.DecodedDigest = "changed"
+	owned.Representation.Image.Width = 1
+	if md.Representation.Image.Width != 12 || md.Representation.Image.DecodedDigest == "changed" {
+		t.Fatal("inspection metadata aliases clone")
+	}
+}

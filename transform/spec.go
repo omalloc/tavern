@@ -23,14 +23,17 @@ var (
 // NormalizedSpec is immutable; all accessors return owned copies. The exact
 // canonical JSON sent to a worker is also used for its storage identity.
 type NormalizedSpec struct {
-	spec        transformv1.TransformSpec
-	canonical   []byte
-	fingerprint string
+	spec          transformv1.TransformSpec
+	canonical     []byte
+	fingerprint   string
+	policyVersion string
 }
 
 func (s NormalizedSpec) Spec() transformv1.TransformSpec { return cloneSpec(s.spec) }
 func (s NormalizedSpec) JSON() []byte                    { return slices.Clone(s.canonical) }
 func (s NormalizedSpec) Fingerprint() string             { return s.fingerprint }
+
+func (s NormalizedSpec) PolicyVersion() string { return s.policyVersion }
 
 type Decision struct {
 	OutputMIME     string
@@ -212,7 +215,7 @@ func Resolve(a Accept, source transformv1.SourceInfo, policy transformv1.Policy,
 	}
 	data, _ := json.Marshal(spec)
 	versions, _ := json.Marshal([]string{policy.PolicyVersion, capabilitiesFingerprint(caps)})
-	normalized := &NormalizedSpec{spec: cloneSpec(spec), canonical: data, fingerprint: object.TransformFingerprint(data, string(versions), caps.EncoderVersion)}
+	normalized := &NormalizedSpec{spec: cloneSpec(spec), canonical: data, fingerprint: object.TransformFingerprint(data, string(versions), caps.EncoderVersion), policyVersion: string(versions)}
 	return Decision{OutputMIME: output, Spec: normalized}, nil
 }
 

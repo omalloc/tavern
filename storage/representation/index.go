@@ -246,6 +246,18 @@ func (r *IndexRepository) Lookup(ctx context.Context, key object.ResourceKey, he
 }
 
 func (r *IndexRepository) lookupLocked(ctx context.Context, key object.ResourceKey, header http.Header) (*LookupResult, error) {
+	return r.lookupSelected(ctx, key, header, true)
+}
+
+// LookupOriginMetadata selects a source version without opening its data files.
+// It grants no permission to read bytes: acquire LookupRead before doing so.
+func (r *IndexRepository) LookupOriginMetadata(ctx context.Context, key object.ResourceKey, header http.Header) (*LookupResult, error) {
+	r.barrierMu.RLock()
+	defer r.barrierMu.RUnlock()
+	return r.lookupSelected(ctx, key, header, false)
+}
+
+func (r *IndexRepository) lookupSelected(ctx context.Context, key object.ResourceKey, header http.Header, verifyData bool) (*LookupResult, error) {
 	root, err := r.load(ctx, key)
 	if errors.Is(err, ErrUnsupportedSchema) || errors.Is(err, ErrInvalidRecord) {
 		err = storage.ErrKeyNotFound
@@ -297,11 +309,13 @@ func (r *IndexRepository) lookupLocked(ctx context.Context, key object.ResourceK
 		if !validChild(key, root.Resource, ref, child) {
 			continue
 		}
-		if err := r.verifyChild(ctx, root.Resource.ActiveLocation, child); err != nil {
-			if errors.Is(err, storage.ErrKeyNotFound) || errors.Is(err, os.ErrNotExist) {
-				continue
+		if verifyData {
+			if err := r.verifyChild(ctx, root.Resource.ActiveLocation, child); err != nil {
+				if errors.Is(err, storage.ErrKeyNotFound) || errors.Is(err, os.ErrNotExist) {
+					continue
+				}
+				return result, err
 			}
-			return result, err
 		}
 		result.Representation, result.Reference = child.Clone(), ref.Clone()
 		result.Fresh = child.ExpiresAt > r.now().Unix() && child.Representation.ValidatedEpoch == root.Resource.RevalidateEpoch && root.Resource.PrefixSoftEpoch == epochs.soft
