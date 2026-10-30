@@ -260,6 +260,8 @@ func (m *migratorStorage) Buckets() []storage.Bucket {
 	return buckets
 }
 
+func (m *migratorStorage) RepresentationBuckets() []storage.Bucket { return m.Buckets() }
+
 // PURGE implements [storage.Migrator].
 func (m *migratorStorage) PURGE(storeUrl string, typ storage.PurgeControl) error {
 	return m.representations.purge(context.Background(), m.Buckets(), storeUrl, typ)

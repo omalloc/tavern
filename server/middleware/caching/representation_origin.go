@@ -83,17 +83,17 @@ func (c *Caching) bypassRepresentation(req *http.Request) {
 }
 
 func (c *Caching) proxyRepresentation(req *http.Request) (*http.Response, error) {
-	config := c.opt.representation
+	repo, repoErr := c.resolveRepresentationRepository(req)
 	prior, priorRef := c.md.Clone(), c.variantRef
+	priorBucket := c.bucket
 	c.bypassRepresentation(req)
 	upstream := prepareRepresentationRequest(req)
 	// Client conditions retain their own semantics. HEAD and body-carrying
 	// requests never create body descriptors through this path.
 	if requestBypassesCache(req) || hasClientConditions(req) || req.Method != http.MethodGet ||
-		(req.Body != nil && req.Body != http.NoBody) || config.repository == nil {
+		(req.Body != nil && req.Body != http.NoBody) || repoErr != nil {
 		return c.executeUpstream(upstream)
 	}
-	repo := config.repository
 	state, bucket, err := c.beginRepresentationFill(req)
 	if err != nil {
 		return c.executeUpstream(upstream)
@@ -128,7 +128,7 @@ func (c *Caching) proxyRepresentation(req *http.Request) (*http.Response, error)
 		received := repo.Now()
 		if resp.StatusCode == http.StatusNotModified {
 			if validating && validValidation(prior, resp, upstream) {
-				result, ok := c.validatedRepresentation(req, upstream, resp, prior, priorRef, state, bucket, started, received)
+				result, ok := c.validatedRepresentation(req, upstream, resp, prior, priorRef, state, bucket, priorBucket, started, received)
 				if ok {
 					return result, nil
 				}
@@ -162,7 +162,7 @@ func (c *Caching) beginRepresentationFill(req *http.Request) (*representation.In
 	if err != nil {
 		return nil, nil, err
 	}
-	state, err := c.opt.representation.repository.Capture(req.Context(), key)
+	state, err := c.representationRepo.Capture(req.Context(), key)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -195,7 +195,7 @@ func (c *Caching) admitRepresentation(client, upstream *http.Request, resp *http
 	if err != nil {
 		return resp
 	}
-	repo := c.opt.representation.repository
+	repo := c.representationRepo
 	lease, err := repo.ReserveFor(client.Context(), state, ref, c.opt.VaryLimit)
 	if err != nil {
 		return resp
@@ -215,6 +215,10 @@ func (c *Caching) admitRepresentation(client, upstream *http.Request, resp *http
 			ResourceID: root.ResourceID, Incarnation: root.Incarnation, PurgeEpoch: root.PurgeEpoch, ValidatedEpoch: root.RevalidateEpoch,
 			BodyGeneration: generation, StorageSelectorFingerprint: ref.SelectorFingerprint, State: object.RepresentationFilling, Kind: object.RepresentationOrigin}}
 	logger := c.log
+	if err := repo.BindFill(client.Context(), state, lease, md); err != nil {
+		repo.Release(lease)
+		return resp
+	}
 	resp.Body = newRepresentationWriter(resp.Body, client.Context(), bucket, repo, state, lease, ref, previous, md, span, func(err error) { logger.Warnf("representation fill failed for %s: %v", id.HashStr(), err) })
 	c.id, c.bypass, c.cacheStatus = id.Clone(), false, storage.CacheMiss
 	if previous != nil {
@@ -255,7 +259,7 @@ func validValidation(prior *object.Metadata, resp *http.Response, req *http.Requ
 	return false
 }
 
-func (c *Caching) validatedRepresentation(client, upstream *http.Request, validation *http.Response, prior *object.Metadata, previous *object.VariantRef, state *representation.IndexState, bucket storage.Bucket, started, received time.Time) (*http.Response, bool) {
+func (c *Caching) validatedRepresentation(client, upstream *http.Request, validation *http.Response, prior *object.Metadata, previous *object.VariantRef, state *representation.IndexState, bucket, readBucket storage.Bucket, started, received time.Time) (*http.Response, bool) {
 	md := prior.Clone()
 	updates := validation.Header.Clone()
 	xhttp.RemoveHopByHopHeaders(updates)
@@ -281,7 +285,7 @@ func (c *Caching) validatedRepresentation(client, upstream *http.Request, valida
 	// Open the old body before confirming a 304. Missing files trigger one
 	// unconditional origin request rather than an empty synthetic 200.
 	readerContext := *c
-	readerContext.id, readerContext.md, readerContext.bucket = md.ID, md, bucket
+	readerContext.id, readerContext.md, readerContext.bucket = md.ID, md, readBucket
 	readerContext.resourceMD = state.Resource()
 	response, err := readerContext.lazilyRespond(client, 0, int64(md.Size-1))
 	if err != nil {
@@ -298,7 +302,7 @@ func (c *Caching) validatedRepresentation(client, upstream *http.Request, valida
 	if parseErr == nil && !wildcard && policyErr == nil {
 		ref, err := representation.NewHTTPSelector(fields, representationSelectionHeader(upstream))
 		if err == nil {
-			repo := c.opt.representation.repository
+			repo := c.representationRepo
 			lease, err := repo.ReserveFor(client.Context(), state, ref, c.opt.VaryLimit)
 			if err == nil {
 				date, _ := http.ParseTime(md.Headers.Get("Date"))

@@ -16,6 +16,7 @@ import (
 // path has no YAML/JSON exposure and never uses the legacy body writer.
 type representationLookup struct {
 	repository     *representation.IndexRepository
+	manager        *representation.Manager
 	namespace      string
 	isolationScope string
 	writes         bool // controlled write lifecycle, never exposed to config
@@ -24,18 +25,27 @@ type representationLookup struct {
 func (c *Caching) lookupRepresentation(store storage.Storage) error {
 	c.cacheStatus, c.bypass = storage.BYPASS, true
 	c.representationBuckets = store.Buckets()
+	if provider, ok := store.(storage.RepresentationBucketProvider); ok {
+		c.representationBuckets = provider.RepresentationBuckets()
+	}
 	if requestBypassesCache(c.req) || hasClientConditions(c.req) || (c.req.Body != nil && c.req.Body != http.NoBody) {
 		return nil
 	}
 	config := c.opt.representation
-	if config.repository == nil {
-		return storage.ErrControlUnsupported
+	repo, err := c.resolveRepresentationRepository(c.req)
+	if err != nil {
+		return err
 	}
 	key, err := c.representationKey(c.req)
 	if err != nil {
 		return err
 	}
-	selected, err := config.repository.Lookup(c.req.Context(), key, representationSelectionHeader(c.req))
+	selected, err := repo.LookupRead(c.req.Context(), key, representationSelectionHeader(c.req))
+	defer func() {
+		if selected != nil && selected.Lease != nil && c.representationLease != selected.Lease {
+			selected.Lease.Close()
+		}
+	}()
 	if selected != nil {
 		c.resourceMD = selected.Resource
 	}
@@ -57,6 +67,7 @@ func (c *Caching) lookupRepresentation(store storage.Storage) error {
 	for _, bucket := range c.representationBuckets {
 		if bucket.ID() == selected.Resource.Resource.ActiveLocation {
 			c.bucket = bucket
+			c.representationLease = selected.Lease
 			c.md = selected.Representation
 			ref := selected.Reference.Clone()
 			c.variantRef = &ref
@@ -75,7 +86,7 @@ func (c *Caching) lookupRepresentation(store storage.Storage) error {
 			c.bypass = !c.hit
 			if c.hit {
 				c.cacheStatus = storage.CacheHit
-				now := config.repository.Now().Unix()
+				now := repo.Now().Unix()
 				if c.opt.FuzzyRefresh && c.opt.FuzzyRefreshRate > 0 && c.md.HasComplete() && hasConditionHeader(c.md.Headers) &&
 					shouldTriggerFuzzyRefresh(now, calculateSoftTTL(c.md.RespUnix, c.md.ExpiresAt, c.opt.FuzzyRefreshRate), c.md.ExpiresAt) {
 					background := c.cloneForBackground(c.req)
@@ -90,8 +101,8 @@ func (c *Caching) lookupRepresentation(store storage.Storage) error {
 
 func (c *Caching) decorateRepresentation(resp *http.Response) {
 	now := time.Now().Unix()
-	if c.opt.representation != nil && c.opt.representation.repository != nil {
-		now = c.opt.representation.repository.Now().Unix()
+	if c.representationRepo != nil {
+		now = c.representationRepo.Now().Unix()
 	}
 	resident := max(int64(0), now-c.md.RespUnix)
 	age, err := strconv.ParseInt(c.md.Headers.Get("Age"), 10, 64)
@@ -107,4 +118,28 @@ func (c *Caching) decorateRepresentation(resp *http.Response) {
 		age = max(age, now-date.Unix())
 	}
 	resp.Header.Set("Age", strconv.FormatInt(age, 10))
+}
+
+func (c *Caching) resolveRepresentationRepository(req *http.Request) (*representation.IndexRepository, error) {
+	if c.representationRepo != nil {
+		return c.representationRepo, nil
+	}
+	config := c.opt.representation
+	if config.repository != nil {
+		c.representationRepo = config.repository
+		return c.representationRepo, nil
+	}
+	if config.manager != nil {
+		key, err := c.representationKey(req)
+		if err != nil {
+			return nil, err
+		}
+		repo, err := config.manager.Repository(key)
+		if err != nil {
+			return nil, err
+		}
+		c.representationRepo = repo
+		return repo, nil
+	}
+	return nil, storage.ErrControlUnsupported
 }

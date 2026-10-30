@@ -42,6 +42,9 @@ func (r *IndexRepository) Retire(ctx context.Context, key object.ResourceKey, ex
 			retired = ref.RepresentationID.Clone()
 			continue
 		}
+		if expected.SelectionKind == object.SelectionHTTP && ref.SelectionKind == object.SelectionManaged && sameID(ref.SelectedSourceID, expected.RepresentationID) {
+			continue
+		}
 		retained = append(retained, ref.Clone())
 	}
 	if retired == nil {

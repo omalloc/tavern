@@ -32,8 +32,11 @@ var (
 type LookupFunc func(context.Context, string, *object.ID) (*object.Metadata, error)
 
 type indexShard struct {
-	mu      sync.Mutex
-	pending map[object.IDHash]map[string]*Reservation
+	mu         sync.Mutex
+	pending    map[object.IDHash]map[string]*Reservation
+	readers    map[dataIdentity]int
+	writers    map[dataIdentity]int
+	migrations map[object.IDHash]*migrationState
 }
 
 type IndexRepository struct {
@@ -45,6 +48,8 @@ type IndexRepository struct {
 	durableBuckets  map[string]storage.DurableRepresentationBucket
 	barrierMu       sync.RWMutex // lock order: barrier, then resource shard
 	barrierLimit    int
+	buckets         map[string]storage.Bucket
+	lifecycle       bool
 	now             func() time.Time
 	shards          [256]indexShard
 }
@@ -79,6 +84,15 @@ func NewIndexRepository(controls storage.ControlStore, initialLocation string, l
 	if r.durable {
 		if err := r.checkDurability(); err != nil {
 			return nil, err
+		}
+	}
+	if len(r.dataBuckets) > 0 {
+		r.buckets = make(map[string]storage.Bucket)
+		for _, bucket := range r.dataBuckets {
+			if bucket == nil || r.buckets[bucket.ID()] != nil {
+				return nil, ErrInvalidRecord
+			}
+			r.buckets[bucket.ID()] = bucket
 		}
 	}
 	if err := r.initializeCatalog(context.Background()); err != nil {
@@ -177,7 +191,7 @@ func (r *IndexRepository) updateLocked(ctx context.Context, key object.ResourceK
 	}
 	// Durable references can only be added/replaced through Publish, which
 	// syncs immutable files outside the resource lock before committing them.
-	if r.durable {
+	if r.durable || r.lifecycle {
 		if len(record.Variants) != len(before.Variants) || record.ActiveLocation != before.ActiveLocation {
 			return nil, ErrInvalidRecord
 		}
@@ -218,6 +232,7 @@ type LookupResult struct {
 	Representation *object.Metadata
 	Reference      object.VariantRef
 	Fresh          bool
+	Lease          *ReadLease
 }
 
 // Lookup selects by each reference's own Vary set, then response Date and a
@@ -227,6 +242,10 @@ type LookupResult struct {
 func (r *IndexRepository) Lookup(ctx context.Context, key object.ResourceKey, header http.Header) (*LookupResult, error) {
 	r.barrierMu.RLock()
 	defer r.barrierMu.RUnlock()
+	return r.lookupLocked(ctx, key, header)
+}
+
+func (r *IndexRepository) lookupLocked(ctx context.Context, key object.ResourceKey, header http.Header) (*LookupResult, error) {
 	root, err := r.load(ctx, key)
 	if errors.Is(err, ErrUnsupportedSchema) || errors.Is(err, ErrInvalidRecord) {
 		err = storage.ErrKeyNotFound

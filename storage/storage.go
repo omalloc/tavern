@@ -150,6 +150,8 @@ func (n *nativeStorage) Buckets() []storage.Bucket {
 	return append(buckets, n.hotBucket...)
 }
 
+func (n *nativeStorage) RepresentationBuckets() []storage.Bucket { return n.Buckets() }
+
 // PURGE implements storage.Storage.
 func (n *nativeStorage) PURGE(storeUrl string, typ storage.PurgeControl) error {
 	return n.representations.purge(context.Background(), n.Buckets(), storeUrl, typ)

@@ -14,6 +14,7 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/paulbellamy/ratecounter"
@@ -31,24 +32,30 @@ import (
 var _ storage.Bucket = (*diskBucket)(nil)
 
 type diskBucket struct {
-	opt              *storage.BucketConfig
-	path             string
-	dbPath           string
-	driver           string
-	storeType        string
-	asyncLoad        bool
-	weight           int
-	sharedkv         storage.SharedKV
-	indexdb          storage.IndexDB
-	hasMigration     bool
-	migration        storage.Migration
-	hkPromote        *heavykeeper.HeavyKeeper
-	lastPromoteReset time.Time
-	promMu           sync.Mutex
-	cache            *lru.Cache[object.IDHash, storage.Mark]
-	fileFlag         int
-	fileMode         fs.FileMode
-	stop             chan struct{}
+	opt                   *storage.BucketConfig
+	path                  string
+	dbPath                string
+	driver                string
+	storeType             string
+	asyncLoad             bool
+	weight                int
+	sharedkv              storage.SharedKV
+	indexdb               storage.IndexDB
+	hasMigration          bool
+	migration             storage.Migration
+	hkPromote             *heavykeeper.HeavyKeeper
+	lastPromoteReset      time.Time
+	promMu                sync.Mutex
+	cache                 *lru.Cache[object.IDHash, storage.Mark]
+	fileFlag              int
+	fileMode              fs.FileMode
+	stop                  chan struct{}
+	evictWG               sync.WaitGroup
+	loadWG                sync.WaitGroup
+	closeOnce             sync.Once
+	closeErr              error
+	representationMu      sync.RWMutex
+	representationEvictor func(context.Context, *object.Metadata) error
 }
 
 func New(opt *storage.BucketConfig, sharedkv storage.SharedKV) (storage.Bucket, error) {
@@ -98,7 +105,7 @@ func New(opt *storage.BucketConfig, sharedkv storage.SharedKV) (storage.Bucket, 
 	bucket.indexdb = db
 
 	// evict
-	go bucket.evict()
+	bucket.evict()
 
 	// load lru
 	bucket.loadLRU()
@@ -136,12 +143,24 @@ func (d *diskBucket) evict() {
 		_ = d.DiscardWithHash(context.Background(), evicted.Key)
 	}
 
-	go func() {
+	d.evictWG.Go(func() {
 		for {
 			select {
 			case <-d.stop:
 				return
 			case evicted := <-ch:
+				md, err := d.indexdb.Get(context.Background(), evicted.Key[:])
+				if err == nil && md != nil && md.RecordKind == object.RecordRepresentation {
+					d.representationMu.RLock()
+					handler := d.representationEvictor
+					d.representationMu.RUnlock()
+					if handler != nil {
+						if err := handler(context.Background(), md); err != nil {
+							clog.Warnf("representation eviction: %v", err)
+						}
+					}
+					continue
+				}
 				// expired cachefile Demote to other bucket
 				if d.migration != nil {
 
@@ -158,29 +177,31 @@ func (d *diskBucket) evict() {
 				discard(evicted)
 			}
 		}
-	}()
+	})
 }
 
 func (d *diskBucket) loadLRU() {
 
 	load := func(async bool) {
-		mdCount, chunkCount := 0, 0
+		var mdCount, chunkCount atomic.Int64
 		counter := ratecounter.NewRateCounter(1 * time.Second)
 		blockCounter := ratecounter.NewRateCounter(1 * time.Second)
-		stop := make(chan struct{}, 1)
+		stop := make(chan struct{})
+		done := make(chan struct{})
 		runMode := formatSync(async)
 
 		log.Infof("start %s load metadata from %s", runMode, d.ID())
 		go func() {
+			defer close(done)
 			tick := time.NewTicker(time.Second)
 			for {
 				select {
 				case <-stop:
 					tick.Stop()
-					log.Infof("bucket %s %s load metadata(%d/chunk-%d) done. per-second %d(%d)/s", d.ID(), runMode, mdCount, chunkCount, counter.Rate(), blockCounter.Rate())
+					log.Infof("bucket %s %s load metadata(%d/chunk-%d) done. per-second %d(%d)/s", d.ID(), runMode, mdCount.Load(), chunkCount.Load(), counter.Rate(), blockCounter.Rate())
 					return
 				case <-tick.C:
-					log.Infof("bucket %s %s load metadata(%d/chunk-%d). per-second %d(%d)/s", d.ID(), runMode, mdCount, chunkCount, counter.Rate(), blockCounter.Rate())
+					log.Infof("bucket %s %s load metadata(%d/chunk-%d). per-second %d(%d)/s", d.ID(), runMode, mdCount.Load(), chunkCount.Load(), counter.Rate(), blockCounter.Rate())
 				}
 			}
 		}()
@@ -188,8 +209,8 @@ func (d *diskBucket) loadLRU() {
 		// iterate all keys
 		_ = d.indexdb.Iterate(context.Background(), nil, func(key []byte, meta *object.Metadata) bool {
 			if meta.IsResponse() && meta.ID != nil {
-				mdCount++
-				chunkCount += meta.Chunks.Count()
+				mdCount.Add(1)
+				chunkCount.Add(int64(meta.Chunks.Count()))
 				d.cache.Set(meta.ID.Hash(), storage.NewMark(meta.LastRefUnix, meta.Refs))
 
 				// store service domains
@@ -207,11 +228,12 @@ func (d *diskBucket) loadLRU() {
 			return true
 		})
 
-		stop <- struct{}{}
+		close(stop)
+		<-done
 	}
 
 	if d.asyncLoad {
-		go load(true)
+		d.loadWG.Go(func() { load(true) })
 	} else {
 		load(false)
 	}
@@ -262,6 +284,9 @@ func (d *diskBucket) discard(ctx context.Context, md *object.Metadata) error {
 	}
 	if md.IsControl() || md.ID.IsControl() {
 		return storage.ErrProtectedControl
+	}
+	if md.RecordKind == object.RecordRepresentation {
+		return d.discardRepresentation(ctx, md)
 	}
 
 	clog := log.Context(ctx)
@@ -383,10 +408,6 @@ func (d *diskBucket) Store(ctx context.Context, meta *object.Metadata) error {
 	meta.Headers.Del("X-Protocol-Cache")
 	meta.Headers.Del("X-Protocol-Request-Id")
 
-	if !d.cache.Has(meta.ID.Hash()) {
-		d.cache.Set(meta.ID.Hash(), storage.NewMark(meta.LastRefUnix, meta.Refs))
-	}
-
 	start := time.Now()
 
 	// merge old chunks
@@ -402,6 +423,10 @@ func (d *diskBucket) Store(ctx context.Context, meta *object.Metadata) error {
 		return err
 	}
 	indexdbOperationDuration.With(prometheus.Labels{"op": "set", "bucket": d.ID()}).Observe(time.Since(start).Seconds())
+
+	if !d.cache.Has(meta.ID.Hash()) {
+		d.cache.Set(meta.ID.Hash(), storage.NewMark(meta.LastRefUnix, meta.Refs))
+	}
 
 	cacheObjectsGauge.WithLabelValues(d.ID()).Set(float64(d.cache.Len()))
 
@@ -419,22 +444,28 @@ func (d *diskBucket) Store(ctx context.Context, meta *object.Metadata) error {
 	return nil
 }
 
-func (d *diskBucket) touch(_ context.Context, id *object.ID) {
+func (d *diskBucket) touch(ctx context.Context, id *object.ID) {
 	if id.IsControl() {
 		return
 	}
-	mark := d.cache.Get(id.Hash())
-	if mark == nil {
-		return
-	}
-	if mark.LastAccess() <= 0 {
+	if !d.cache.Update(id.Hash(), func(mark storage.Mark) storage.Mark {
+		if mark.LastAccess() > 0 {
+			mark.SetLastAccess(time.Now().Unix())
+			mark.SetRefs(mark.Refs() + 1)
+		}
+		return mark
+	}) {
+		if id.IsRepresentation() {
+			if md, err := d.indexdb.Get(ctx, id.Bytes()); err == nil && md != nil && md.IsResponse() {
+				d.cache.Set(id.Hash(), storage.NewMark(md.LastRefUnix, md.Refs))
+			}
+		}
 		return
 	}
 
-	mark.SetLastAccess(time.Now().Unix())
-	mark.SetRefs(mark.Refs() + 1)
-
-	d.cache.Set(id.Hash(), *mark)
+	if id.IsRepresentation() {
+		return
+	}
 
 	// 如果迁移开启的，则进行计算窗口期是否满足迁移配置
 	if d.hasMigration {
@@ -513,6 +544,9 @@ func (d *diskBucket) TopK(k int) []string {
 	ret := make([]string, 0, len(arr))
 	for i := range arr {
 		mark := d.cache.Peek(arr[i])
+		if mark == nil {
+			continue
+		}
 		md, _ := d.indexdb.Get(context.Background(), arr[i][:])
 		if md != nil {
 			ret = append(ret, fmt.Sprintf("%s@@%s@@%d", md.ID.Path(), time.Unix(int64(mark.LastAccess()), 0).Format(time.DateTime), mark.Refs()))
@@ -529,7 +563,7 @@ func (d *diskBucket) WriteChunkFile(ctx context.Context, id *object.ID, index ui
 	_ = os.MkdirAll(filepath.Dir(wpath), d.fileMode)
 
 	tmpPath := wpath + time.Now().Format(".tmp20060102150405")
-	f, err := os.OpenFile(tmpPath, os.O_CREATE|os.O_RDWR, d.fileMode)
+	f, err := os.OpenFile(tmpPath, os.O_CREATE|os.O_TRUNC|os.O_RDWR, d.fileMode)
 	if err != nil {
 		return nil, wpath, fmt.Errorf("bucket open-file chunk[%d] failed err %w", index, err)
 	}
@@ -613,7 +647,8 @@ func (d *diskBucket) SetMigration(migration storage.Migration) error {
 
 // Close implements storage.Bucket.
 func (d *diskBucket) Close() error {
-	return d.indexdb.Close()
+	d.closeOnce.Do(func() { d.loadWG.Wait(); close(d.stop); d.evictWG.Wait(); d.closeErr = d.indexdb.Close() })
+	return d.closeErr
 }
 
 func (d *diskBucket) initWorkdir() {

@@ -23,6 +23,7 @@ import (
 	"github.com/omalloc/tavern/pkg/traces"
 	xhttp "github.com/omalloc/tavern/pkg/x/http"
 	"github.com/omalloc/tavern/proxy"
+	"github.com/omalloc/tavern/storage/representation"
 )
 
 var cachingPool = sync.Pool{
@@ -43,6 +44,8 @@ type Caching struct {
 	resourceMD            *object.Metadata // independent v2 control root; never a response
 	variantRef            *object.VariantRef
 	representationBuckets []storage.Bucket
+	representationRepo    *representation.IndexRepository
+	representationLease   *representation.ReadLease
 	bucket                storage.Bucket
 	proxyClient           proxy.Proxy
 	chunkFlight           *ChunkFlightGroup
@@ -116,6 +119,7 @@ func (c *Caching) reset() {
 	c.resourceMD = nil
 	c.variantRef = nil
 	c.representationBuckets = nil
+	c.representationRepo, c.representationLease = nil, nil
 	c.cacheable = false
 	c.bypass = false
 	c.hit = false

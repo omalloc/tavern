@@ -44,6 +44,9 @@ type DurableRepresentationBucket interface {
 	CheckDurability() error
 	SyncRepresentationData(context.Context, *object.Metadata) error
 	StoreRepresentationSync(context.Context, *object.Metadata) error
+	// Persist cleanup ownership before creating chunk bytes, including Parts
+	// and unknown-length filling bodies that are not readable descriptors yet.
+	StoreRepresentationJournalSync(context.Context, *object.Metadata) error
 }
 
 var (
@@ -72,4 +75,27 @@ type LegacyFillLease interface {
 
 type LegacyFillCoordinator interface {
 	BeginLegacyFill(context.Context, string) (LegacyFillLease, error)
+}
+
+// MetadataScanner is a bounded raw scan for recovery and collection. It has no
+// LRU/Touch side effects and includes protected controls. Cursor is exclusive;
+// a nil next cursor means this pass reached the end. Unreadable encodings are errors.
+type MetadataScanner interface {
+	ScanMetadata(context.Context, []byte, int) ([]*object.Metadata, []byte, error)
+}
+
+type IndexScanner interface {
+	Scan(context.Context, []byte, int) ([]*object.Metadata, []byte, error)
+}
+
+// RepresentationEviction routes ordinary bucket pressure through the owning
+// coordinator. Missing handlers must never directly discard v2 metadata/bytes.
+type RepresentationEviction interface {
+	SetRepresentationEvictor(func(context.Context, *object.Metadata) error)
+}
+
+// RepresentationBucketProvider exposes fixed raw buckets through compatibility
+// decorators. Dynamic health selectors cannot choose control ownership.
+type RepresentationBucketProvider interface {
+	RepresentationBuckets() []Bucket
 }

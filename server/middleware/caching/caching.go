@@ -134,9 +134,11 @@ func Middleware(c *configv1.Middleware) (middleware.Middleware, func(), error) {
 				if err != nil {
 					closeBody(resp)
 					caching.finishLegacyLease(nil)
+					caching.finishRepresentationLease(nil)
 					return
 				}
 				caching.finishLegacyLease(resp)
+				caching.finishRepresentationLease(resp)
 			}()
 
 			// TODO: object pool

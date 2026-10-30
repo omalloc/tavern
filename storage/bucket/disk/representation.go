@@ -2,6 +2,7 @@ package disk
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -11,6 +12,62 @@ import (
 )
 
 var _ storage.ControlStore = (*diskBucket)(nil)
+var _ storage.MetadataScanner = (*diskBucket)(nil)
+var _ storage.RepresentationEviction = (*diskBucket)(nil)
+
+func (d *diskBucket) SetRepresentationEvictor(handler func(context.Context, *object.Metadata) error) {
+	d.representationMu.Lock()
+	defer d.representationMu.Unlock()
+	d.representationEvictor = handler
+}
+
+// The coordinator has already cut logical reachability. Keep the unreachable
+// metadata if a file deletion fails so a bounded later pass can retry it.
+func (d *diskBucket) discardRepresentation(ctx context.Context, md *object.Metadata) error {
+	chunks := md.Chunks.Clone(nil)
+	md.Parts.Range(func(index uint32) { chunks.Set(index) })
+	var failure error
+	chunks.Range(func(index uint32) {
+		if failure != nil {
+			return
+		}
+		if failure = ctx.Err(); failure != nil {
+			return
+		}
+		path := md.ID.WPathSlice(d.path, index)
+		if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+			failure = err
+			return
+		}
+		temporary, err := filepath.Glob(path + ".tmp*")
+		if err != nil {
+			failure = err
+			return
+		}
+		for _, name := range temporary {
+			if err := os.Remove(name); err != nil && !errors.Is(err, os.ErrNotExist) {
+				failure = err
+				return
+			}
+		}
+	})
+	if failure != nil {
+		return failure
+	}
+	if err := d.indexdb.Delete(ctx, md.ID.Bytes()); err != nil {
+		return err
+	}
+	d.cache.Remove(md.ID.Hash())
+	return d.sharedkv.Delete(ctx, []byte(fmt.Sprintf("ix/%s/%s", d.ID(), md.ID.Key())))
+}
+
+func (d *diskBucket) ScanMetadata(ctx context.Context, after []byte, limit int) ([]*object.Metadata, []byte, error) {
+	scanner, ok := d.indexdb.(storage.IndexScanner)
+	if !ok {
+		return nil, nil, storage.ErrControlUnsupported
+	}
+	return scanner.Scan(ctx, after, limit)
+}
 
 // LoadControl bypasses ordinary object lookup and its access side effects.
 func (d *diskBucket) LoadControl(ctx context.Context, id *object.ID) (*object.Metadata, error) {
@@ -123,6 +180,22 @@ func (d *diskBucket) StoreRepresentationSync(ctx context.Context, md *object.Met
 
 func (d *diskBucket) syncIndexDirectories() error {
 	return syncDirectories(d.dbPath, filepath.Dir(filepath.Clean(d.dbPath)))
+}
+
+func (d *diskBucket) StoreRepresentationJournalSync(ctx context.Context, md *object.Metadata) error {
+	if err := d.CheckDurability(); err != nil {
+		return err
+	}
+	if md == nil || !md.ID.IsRepresentation() || !md.IsResponse() {
+		return storage.ErrProtectedControl
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if err := d.indexdb.(storage.SyncIndexDB).SetSync(ctx, md.ID.Bytes(), md.Clone()); err != nil {
+		return err
+	}
+	return d.syncIndexDirectories()
 }
 
 func syncDirectories(start, stop string) error {

@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/cockroachdb/pebble/v2/vfs"
@@ -25,21 +26,26 @@ import (
 var _ storage.Bucket = (*memoryBucket)(nil)
 
 type memoryBucket struct {
-	fs        vfs.FS
-	path      string
-	dbPath    string
-	driver    string
-	storeType string
-	weight    int
-	sharedkv  storage.SharedKV
-	indexdb   storage.IndexDB
-	migration storage.Migration
-	cache     *lru.Cache[object.IDHash, storage.Mark]
-	fileFlag  int
-	fileMode  fs.FileMode
-	maxSize   uint64
-	closed    bool
-	stop      chan struct{}
+	fs                    vfs.FS
+	path                  string
+	dbPath                string
+	driver                string
+	storeType             string
+	weight                int
+	sharedkv              storage.SharedKV
+	indexdb               storage.IndexDB
+	migration             storage.Migration
+	cache                 *lru.Cache[object.IDHash, storage.Mark]
+	fileFlag              int
+	fileMode              fs.FileMode
+	maxSize               uint64
+	closed                bool
+	stop                  chan struct{}
+	evictWG               sync.WaitGroup
+	closeOnce             sync.Once
+	closeErr              error
+	representationMu      sync.RWMutex
+	representationEvictor func(context.Context, *object.Metadata) error
 }
 
 func New(opt *storage.BucketConfig, sharedkv storage.SharedKV) (storage.Bucket, error) {
@@ -65,6 +71,7 @@ func New(opt *storage.BucketConfig, sharedkv storage.SharedKV) (storage.Bucket, 
 		return nil, err
 	}
 	mb.indexdb = db
+	mb.evict()
 	return mb, nil
 }
 
@@ -75,12 +82,38 @@ func (m *memoryBucket) Allow() int {
 
 // Close implements [storage.Bucket].
 func (m *memoryBucket) Close() error {
-	if m.closed {
-		return nil
-	}
+	m.closeOnce.Do(func() { close(m.stop); m.evictWG.Wait(); m.closeErr = m.indexdb.Close() })
+	return m.closeErr
+}
 
-	m.closed = true
-	return m.indexdb.Close()
+func (m *memoryBucket) evict() {
+	ch := make(chan lru.Eviction[object.IDHash, storage.Mark], 100)
+	m.cache.EvictionChannel = ch
+	m.evictWG.Go(func() {
+		for {
+			select {
+			case <-m.stop:
+				return
+			case evicted := <-ch:
+				md, err := m.indexdb.Get(context.Background(), evicted.Key[:])
+				if err != nil || md == nil {
+					continue
+				}
+				if md.RecordKind == object.RecordRepresentation {
+					m.representationMu.RLock()
+					handler := m.representationEvictor
+					m.representationMu.RUnlock()
+					if handler != nil {
+						if err := handler(context.Background(), md); err != nil {
+							log.Context(context.Background()).Warnf("representation eviction: %v", err)
+						}
+					}
+					continue
+				}
+				_ = m.discard(context.Background(), md)
+			}
+		}
+	})
 }
 
 // Discard implements [storage.Bucket].
@@ -100,6 +133,9 @@ func (m *memoryBucket) discard(ctx context.Context, md *object.Metadata) error {
 	}
 	if md.IsControl() || md.ID.IsControl() {
 		return storage.ErrProtectedControl
+	}
+	if md.RecordKind == object.RecordRepresentation {
+		return m.discardRepresentation(ctx, md)
 	}
 
 	clog := log.Context(ctx)
@@ -221,18 +257,21 @@ func (m *memoryBucket) Touch(ctx context.Context, id *object.ID) {
 	if id.IsControl() {
 		return
 	}
-	mark := m.cache.Get(id.Hash())
-	if mark == nil {
-		return
-	}
-	if mark.LastAccess() <= 0 {
+	if !m.cache.Update(id.Hash(), func(mark storage.Mark) storage.Mark {
+		if mark.LastAccess() > 0 {
+			mark.SetLastAccess(time.Now().Unix())
+			mark.SetRefs(mark.Refs() + 1)
+		}
+		return mark
+	}) {
+		if id.IsRepresentation() {
+			if md, err := m.indexdb.Get(ctx, id.Bytes()); err == nil && md != nil && md.IsResponse() {
+				m.cache.Set(id.Hash(), storage.NewMark(md.LastRefUnix, md.Refs))
+			}
+		}
 		return
 	}
 
-	mark.SetLastAccess(time.Now().Unix())
-	mark.SetRefs(mark.Refs() + 1)
-
-	m.cache.Set(id.Hash(), *mark)
 }
 
 // Path implements [storage.Bucket].
@@ -246,6 +285,9 @@ func (m *memoryBucket) TopK(k int) []string {
 	ret := make([]string, 0, len(arr))
 	for i := range arr {
 		mark := m.cache.Peek(arr[i])
+		if mark == nil {
+			continue
+		}
 		md, _ := m.indexdb.Get(context.Background(), arr[i][:])
 		if md != nil {
 			ret = append(ret, fmt.Sprintf("%s@@%s@@%d", md.ID.Path(), time.Unix(int64(mark.LastAccess()), 0).Format(time.DateTime), mark.Refs()))
@@ -282,7 +324,6 @@ func (m *memoryBucket) Store(ctx context.Context, meta *object.Metadata) error {
 	if err := m.indexdb.Set(ctx, meta.ID.Bytes(), meta); err != nil {
 		return err
 	}
-
 	// update lru
 	m.cache.Set(meta.ID.Hash(), storage.NewMark(meta.LastRefUnix, meta.Refs))
 

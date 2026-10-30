@@ -62,7 +62,8 @@ func (c *Cache[K, V]) Get(key K) *V {
 	defer c.mu.Unlock()
 	if e, ok := c.values[key]; ok {
 		c.increment(e)
-		return &e.value
+		value := e.value
+		return &value
 	}
 	return nil
 }
@@ -73,9 +74,24 @@ func (c *Cache[K, V]) Peek(key K) *V {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	if e, ok := c.values[key]; ok {
-		return &e.value
+		value := e.value
+		return &value
 	}
 	return nil
+}
+
+// Update changes an existing value atomically and records an access. Returned
+// Get/Peek values are snapshots; mutation must use this method or Set.
+func (c *Cache[K, V]) Update(key K, update func(V) V) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	e, ok := c.values[key]
+	if !ok {
+		return false
+	}
+	e.value = update(e.value)
+	c.increment(e)
+	return true
 }
 
 // Set sets given key-value in the cache.

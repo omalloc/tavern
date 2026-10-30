@@ -244,6 +244,7 @@ func (r *RevalidateProcessor) freshness(c *Caching, resp *http.Response) bool {
 
 // asyncRevalidate performs background revalidation for fuzzy refresh
 func (r *RevalidateProcessor) asyncRevalidate(c *Caching, req *http.Request) {
+	defer c.representationLease.Close()
 	// Create a background context with timeout
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
@@ -325,7 +326,11 @@ func (c *Caching) cloneForBackground(req *http.Request) *Caching {
 	background.md = c.md.Clone()
 	background.rootmd = c.rootmd.Clone()
 	background.resourceMD = c.resourceMD.Clone()
-	if c.variantRef != nil {
+	background.representationLease = c.representationLease.Duplicate()
+	if c.representationLease != nil && background.representationLease == nil {
+		background.md, background.variantRef = nil, nil
+	}
+	if c.variantRef != nil && (c.representationLease == nil || background.representationLease != nil) {
 		ref := c.variantRef.Clone()
 		background.variantRef = &ref
 	}

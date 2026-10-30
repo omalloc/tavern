@@ -1,6 +1,7 @@
 package pebble
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"sync"
@@ -18,6 +19,7 @@ import (
 
 var _ storage.IndexDB = (*PebbleDB)(nil)
 var _ storage.SyncIndexDB = (*PebbleDB)(nil)
+var _ storage.IndexScanner = (*PebbleDB)(nil)
 
 type PebbleDB struct {
 	codec         encoding.Codec
@@ -72,6 +74,49 @@ func (p *PebbleDB) SetSync(ctx context.Context, key []byte, val *object.Metadata
 		return err
 	}
 	return p.db.Set(key, buf, pebble.Sync)
+}
+
+func (p *PebbleDB) Scan(ctx context.Context, after []byte, limit int) ([]*object.Metadata, []byte, error) {
+	if limit <= 0 {
+		return nil, nil, errors.New("metadata scan limit must be positive")
+	}
+	iter, err := p.db.NewIter(&pebble.IterOptions{})
+	if err != nil {
+		return nil, nil, err
+	}
+	defer iter.Close()
+	valid := iter.First()
+	if len(after) > 0 {
+		valid = iter.SeekGE(after)
+		if valid && bytes.Equal(iter.Key(), after) {
+			valid = iter.Next()
+		}
+	}
+	var records []*object.Metadata
+	var cursor []byte
+	for valid && len(records) < limit {
+		if err := ctx.Err(); err != nil {
+			return nil, nil, err
+		}
+		data, err := iter.ValueAndErr()
+		if err != nil {
+			return nil, nil, err
+		}
+		md := &object.Metadata{}
+		if err := p.codec.Unmarshal(data, md); err != nil {
+			return nil, nil, err
+		}
+		records = append(records, md)
+		cursor = append(cursor[:0], iter.Key()...)
+		valid = iter.Next()
+	}
+	if err := iter.Error(); err != nil {
+		return nil, nil, err
+	}
+	if !valid {
+		cursor = nil
+	}
+	return records, cursor, nil
 }
 
 // Iterate implements storage.IndexDB.

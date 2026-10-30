@@ -48,6 +48,13 @@ func (w *wrappedStorage) Buckets() []storagev1.Bucket {
 	return wrapped
 }
 
+func (w *wrappedStorage) RepresentationBuckets() []storagev1.Bucket {
+	if provider, ok := w.base.(storagev1.RepresentationBucketProvider); ok {
+		return provider.RepresentationBuckets()
+	}
+	return w.base.Buckets()
+}
+
 func (w *wrappedStorage) SharedKV() storagev1.SharedKV {
 	return w.base.SharedKV()
 }

@@ -45,6 +45,31 @@ func (k ResourceKey) Valid() bool {
 func (k ResourceKey) CanonicalURL() string { return k.canonicalURL }
 func (k ResourceKey) Namespace() string    { return k.namespace }
 func (k ResourceKey) ResourceID() string   { return k.resourceID }
+
+// ResourceKeyFromRecord restores an opaque key from trusted control metadata;
+// the original isolation scope need not be persisted or disclosed.
+func ResourceKeyFromRecord(record *ResourceRecord) (ResourceKey, error) {
+	if record == nil || !validDigest(record.ResourceID) {
+		return ResourceKey{}, ErrInvalidResourceKey
+	}
+	parsed, err := NewResourceKey(record.CanonicalURL, record.Namespace, "")
+	if err != nil || parsed.CanonicalURL() != record.CanonicalURL {
+		return ResourceKey{}, ErrInvalidResourceKey
+	}
+	parsed.resourceID = record.ResourceID
+	return parsed, nil
+}
+
+func ResourceControlID(canonicalURL, resourceID string) (*ID, error) {
+	if !validDigest(resourceID) {
+		return nil, ErrInvalidResourceKey
+	}
+	parsed, err := NewResourceKey(canonicalURL, "control", "")
+	if err != nil || parsed.CanonicalURL() != canonicalURL {
+		return nil, ErrInvalidResourceKey
+	}
+	return NewVirtualID(canonicalURL, representationKeyPrefix+string(RecordResource)+"/"+resourceID), nil
+}
 func (k ResourceKey) ID() *ID {
 	if !k.Valid() {
 		return nil

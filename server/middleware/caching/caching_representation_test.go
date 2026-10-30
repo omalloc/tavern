@@ -33,15 +33,23 @@ func (s *representationTestStorage) Buckets() []storage.Bucket { return []storag
 // Bind the private read-only integration without creating a public v2 switch.
 func representationTestTransport(store storage.Storage, opt *cachingOption) http.RoundTripper {
 	pc := NewProcessorChain(NewStateProcessor(), NewVaryProcessor(), NewRevalidateProcessor())
-	return middleware.RoundTripperFunc(func(req *http.Request) (*http.Response, error) {
+	return middleware.RoundTripperFunc(func(req *http.Request) (resp *http.Response, err error) {
 		c, err := pc.preCacheProcessor(proxy.GetProxy(), store, opt, req)
+		defer func() {
+			if err != nil {
+				closeBody(resp)
+				c.finishRepresentationLease(nil)
+			} else {
+				c.finishRepresentationLease(resp)
+			}
+		}()
 		if err != nil {
 			return nil, err
 		}
 		if c.hit {
 			return c.respondFromCache(req)
 		}
-		resp, err := c.doProxy(req, false)
+		resp, err = c.doProxy(req, false)
 		if err != nil {
 			return resp, err
 		}

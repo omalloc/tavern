@@ -6,10 +6,11 @@ import "slices"
 // and isolation scope managed by that owner. It is never an HTTP response or an
 // ordinary LRU entry. Prefix records cannot be expired or silently evicted.
 type BarrierCatalog struct {
-	SchemaVersion uint16          `json:"schema_version" yaml:"schema_version"`
-	Incarnation   string          `json:"incarnation" yaml:"incarnation"`
-	Revision      uint64          `json:"revision" yaml:"revision"`
-	Entries       []PrefixBarrier `json:"entries" yaml:"entries"`
+	SchemaVersion       uint16          `json:"schema_version" yaml:"schema_version"`
+	Incarnation         string          `json:"incarnation" yaml:"incarnation"`
+	TopologyFingerprint string          `json:"topology_fingerprint,omitempty" yaml:"topology_fingerprint,omitempty"`
+	Revision            uint64          `json:"revision" yaml:"revision"`
+	Entries             []PrefixBarrier `json:"entries" yaml:"entries"`
 }
 
 type PrefixBarrier struct {

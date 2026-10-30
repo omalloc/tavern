@@ -253,3 +253,27 @@ func TestStructuredKey(t *testing.T) {
 		}
 	}
 }
+
+func TestResourceKeyRestoresOpaqueIsolationWithoutChangingIDs(t *testing.T) {
+	original, err := NewResourceKey("https://example.com/a%2Fb?x=1&x=2", "http-v2", "secret-isolation")
+	if err != nil {
+		t.Fatal(err)
+	}
+	restored, err := ResourceKeyFromRecord(&ResourceRecord{CanonicalURL: original.CanonicalURL(), Namespace: original.Namespace(), ResourceID: original.ResourceID()})
+	if err != nil || restored.ID().Hash() != original.ID().Hash() {
+		t.Fatal(restored, err)
+	}
+	control, err := ResourceControlID(original.CanonicalURL(), original.ResourceID())
+	if err != nil || control.Hash() != original.ID().Hash() {
+		t.Fatal(control, err)
+	}
+	fingerprint := TransformFingerprint([]byte("spec"), "policy", "encoder")
+	a, _ := original.RepresentationID("inc", 3, fingerprint, "body")
+	b, _ := restored.RepresentationID("inc", 3, fingerprint, "body")
+	if a.Hash() != b.Hash() {
+		t.Fatal("restored key changed physical identity")
+	}
+	if _, err = ResourceKeyFromRecord(&ResourceRecord{CanonicalURL: "HTTPS://EXAMPLE.COM/a", Namespace: "http-v2", ResourceID: original.ResourceID()}); err == nil {
+		t.Fatal("accepted noncanonical stored URL")
+	}
+}

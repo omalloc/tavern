@@ -29,6 +29,9 @@ func (r *IndexRepository) Capture(ctx context.Context, key object.ResourceKey) (
 	shard := r.shard(key)
 	shard.mu.Lock()
 	defer shard.mu.Unlock()
+	if r.migratingLocked(key) {
+		return nil, ErrMigrationBusy
+	}
 	root, changed, err := r.rootForFill(ctx, key)
 	if err != nil {
 		return nil, err
@@ -71,6 +74,9 @@ func (r *IndexRepository) ReserveFor(ctx context.Context, state *IndexState, sel
 	shard := r.shard(state.key)
 	shard.mu.Lock()
 	defer shard.mu.Unlock()
+	if r.migratingLocked(state.key) {
+		return nil, ErrMigrationBusy
+	}
 	current, err := r.currentBarriers(ctx, state)
 	if err != nil {
 		return nil, err
@@ -121,6 +127,9 @@ func (r *IndexRepository) Publish(ctx context.Context, state *IndexState, lease 
 	if err := ctx.Err(); err != nil {
 		return false, err
 	}
+	if r.migratingLocked(state.key) {
+		return false, nil
+	}
 	current, err := r.currentBarriers(ctx, state)
 	if err != nil {
 		return false, err
@@ -138,6 +147,9 @@ func (r *IndexRepository) Publish(ctx context.Context, state *IndexState, lease 
 	}
 	if shard.pending[state.key.ID().Hash()][lease.id] != lease {
 		return false, nil
+	}
+	if r.lifecycle && !sameID(lease.boundID, ref.RepresentationID) && (previous == nil || !sameID(previous.RepresentationID, ref.RepresentationID)) {
+		return false, ErrInvalidRecord
 	}
 	candidate := ref.Clone()
 	if md != nil && md.Representation != nil {

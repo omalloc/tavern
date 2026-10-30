@@ -63,6 +63,10 @@ func (r *IndexRepository) LookupDerived(ctx context.Context, key object.Resource
 	}
 	r.barrierMu.RLock()
 	defer r.barrierMu.RUnlock()
+	return r.lookupDerivedLocked(ctx, key, selector)
+}
+
+func (r *IndexRepository) lookupDerivedLocked(ctx context.Context, key object.ResourceKey, selector object.VariantRef) (*LookupResult, error) {
 	root, err := r.load(ctx, key)
 	if err != nil {
 		return nil, err

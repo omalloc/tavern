@@ -19,6 +19,9 @@ type Reservation struct {
 	purgeEpoch      uint64
 	revalidateEpoch uint64
 	routingEpoch    uint64
+	boundID         *object.ID
+	boundLocation   string
+	released        bool
 }
 
 // Reserve counts distinct ready and pending selectors together. Multiple fills
@@ -35,6 +38,9 @@ func (r *IndexRepository) Reserve(ctx context.Context, key object.ResourceKey, s
 	shard := r.shard(key)
 	shard.mu.Lock()
 	defer shard.mu.Unlock()
+	if r.migratingLocked(key) {
+		return nil, ErrMigrationBusy
+	}
 	root, changed, err := r.rootForFill(ctx, key)
 	if err != nil {
 		return nil, err
@@ -127,6 +133,17 @@ func (r *IndexRepository) Release(reservation *Reservation) {
 	shard.mu.Lock()
 	defer shard.mu.Unlock()
 	key := reservation.key.ID().Hash()
+	if reservation.released {
+		return
+	}
+	reservation.released = true
+	if reservation.boundID != nil {
+		identity := dataIdentity{reservation.boundID.Hash(), reservation.boundLocation}
+		shard.writers[identity]--
+		if shard.writers[identity] <= 0 {
+			delete(shard.writers, identity)
+		}
+	}
 	pending := shard.pending[key]
 	delete(pending, reservation.id)
 	if len(pending) == 0 {

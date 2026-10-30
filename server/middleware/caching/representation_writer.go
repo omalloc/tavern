@@ -155,7 +155,7 @@ func (w *representationWriter) flushLocked() error {
 	// Parts describes cleanup ownership of a file being written. Chunks
 	// describes only successfully written and closed files.
 	w.md.Parts.Set(index)
-	if err := w.bucket.Store(w.ctx, w.md); err != nil {
+	if err := w.repo.JournalFill(w.ctx, w.state, w.lease, w.bucket, w.md); err != nil {
 		return err
 	}
 	writer, _, err := w.bucket.WriteChunkFile(w.ctx, w.md.ID, index)
