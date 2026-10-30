@@ -18,6 +18,7 @@ type RepresentationState string
 const (
 	RecordLegacy           RecordKind          = "legacy"
 	RecordResource         RecordKind          = "resource"
+	RecordBarriers         RecordKind          = "barriers"
 	RecordRepresentation   RecordKind          = "representation"
 	SelectionHTTP          SelectionKind       = "http"
 	SelectionManaged       SelectionKind       = "managed"
@@ -31,17 +32,20 @@ const (
 // ResourceRecord is a control record, never an HTTP response. Revision advances
 // on each index update; incarnation changes when a resource is reconstructed.
 type ResourceRecord struct {
-	SchemaVersion   uint16       `json:"schema_version" yaml:"schema_version"`
-	Revision        uint64       `json:"revision" yaml:"revision"`
-	ResourceID      string       `json:"resource_id" yaml:"resource_id"`
-	CanonicalURL    string       `json:"canonical_url" yaml:"canonical_url"`
-	Namespace       string       `json:"namespace" yaml:"namespace"`
-	Incarnation     string       `json:"incarnation" yaml:"incarnation"`
-	PurgeEpoch      uint64       `json:"purge_epoch" yaml:"purge_epoch"`
-	RevalidateEpoch uint64       `json:"revalidate_epoch" yaml:"revalidate_epoch"`
-	ActiveLocation  string       `json:"active_location" yaml:"active_location"`
-	RoutingEpoch    uint64       `json:"routing_epoch" yaml:"routing_epoch"`
-	Variants        []VariantRef `json:"variants" yaml:"variants"`
+	SchemaVersion      uint16       `json:"schema_version" yaml:"schema_version"`
+	Revision           uint64       `json:"revision" yaml:"revision"`
+	ResourceID         string       `json:"resource_id" yaml:"resource_id"`
+	CanonicalURL       string       `json:"canonical_url" yaml:"canonical_url"`
+	Namespace          string       `json:"namespace" yaml:"namespace"`
+	Incarnation        string       `json:"incarnation" yaml:"incarnation"`
+	PurgeEpoch         uint64       `json:"purge_epoch" yaml:"purge_epoch"`
+	RevalidateEpoch    uint64       `json:"revalidate_epoch" yaml:"revalidate_epoch"`
+	ActiveLocation     string       `json:"active_location" yaml:"active_location"`
+	RoutingEpoch       uint64       `json:"routing_epoch" yaml:"routing_epoch"`
+	PrefixHardEpoch    uint64       `json:"prefix_hard_epoch,omitempty" yaml:"prefix_hard_epoch,omitempty"`
+	PrefixSoftEpoch    uint64       `json:"prefix_soft_epoch,omitempty" yaml:"prefix_soft_epoch,omitempty"`
+	BarrierIncarnation string       `json:"barrier_incarnation,omitempty" yaml:"barrier_incarnation,omitempty"`
+	Variants           []VariantRef `json:"variants" yaml:"variants"`
 }
 
 type VariantRef struct {
@@ -115,19 +119,19 @@ func (r *RepresentationInfo) Clone() *RepresentationInfo {
 
 func (m *Metadata) IsLegacy() bool {
 	return m != nil && (m.RecordKind == "" || m.RecordKind == RecordLegacy) &&
-		m.Resource == nil && m.Representation == nil
+		m.Resource == nil && m.Representation == nil && m.Barriers == nil
 }
 
 // IsControl also protects unknown future versions of a resource record.
 func (m *Metadata) IsControl() bool {
-	return m != nil && (m.RecordKind == RecordResource || m.Resource != nil)
+	return m != nil && (m.RecordKind == RecordResource || m.RecordKind == RecordBarriers || m.Resource != nil || m.Barriers != nil)
 }
 
 func (m *Metadata) IsResponse() bool {
 	if m.IsLegacy() {
 		return true
 	}
-	return m != nil && m.RecordKind == RecordRepresentation && m.Resource == nil &&
+	return m != nil && m.RecordKind == RecordRepresentation && m.Resource == nil && m.Barriers == nil &&
 		m.Representation != nil && m.Representation.SchemaVersion == RepresentationSchemaVersion &&
 		(m.Representation.Kind == RepresentationOrigin || m.Representation.Kind == RepresentationDerived)
 }

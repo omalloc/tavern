@@ -38,6 +38,7 @@ type Metadata struct {
 	RecordKind     RecordKind          `json:"record_kind,omitempty" yaml:"record_kind,omitempty"`
 	Resource       *ResourceRecord     `json:"resource,omitempty" yaml:"resource,omitempty"`
 	Representation *RepresentationInfo `json:"representation,omitempty" yaml:"representation,omitempty"`
+	Barriers       *BarrierCatalog     `json:"barriers,omitempty" yaml:"barriers,omitempty"`
 
 	ID          *ID           `json:"id"`             // object ID
 	BlockSize   uint64        `json:"bsize"`          // block size
@@ -115,6 +116,7 @@ func (m *Metadata) Clone() *Metadata {
 		RecordKind:     m.RecordKind,
 		Resource:       m.Resource.Clone(),
 		Representation: m.Representation.Clone(),
+		Barriers:       m.Barriers.Clone(),
 		BlockSize:      m.BlockSize,
 		Chunks:         slices.Clone(m.Chunks),
 		Parts:          slices.Clone(m.Parts),

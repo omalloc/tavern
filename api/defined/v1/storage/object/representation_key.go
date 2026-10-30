@@ -93,13 +93,19 @@ func representationKeyKind(ext string) RecordKind {
 	if !ok || !validDigest(digest) {
 		return ""
 	}
-	if kind != string(RecordResource) && kind != string(RecordRepresentation) {
+	if kind != string(RecordResource) && kind != string(RecordRepresentation) && kind != string(RecordBarriers) {
 		return ""
 	}
 	return RecordKind(kind)
 }
 
-func (id *ID) IsControl() bool { return id != nil && representationKeyKind(id.ext) == RecordResource }
+func (id *ID) IsControl() bool {
+	return id != nil && (representationKeyKind(id.ext) == RecordResource || representationKeyKind(id.ext) == RecordBarriers)
+}
+
+func (id *ID) IsBarrierControl() bool {
+	return id != nil && representationKeyKind(id.ext) == RecordBarriers
+}
 func (id *ID) IsRepresentation() bool {
 	return id != nil && representationKeyKind(id.ext) == RecordRepresentation
 }

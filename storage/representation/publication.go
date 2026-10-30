@@ -2,15 +2,13 @@ package representation
 
 import (
 	"context"
-	"errors"
 	"math"
 
-	"github.com/omalloc/tavern/api/defined/v1/storage"
 	"github.com/omalloc/tavern/api/defined/v1/storage/object"
 )
 
-// IndexState captures resource identity before an origin request. P2 extends
-// this boundary with persistent prefix barriers and storage ownership checks.
+// IndexState is a fill ticket captured before an origin request, including the
+// resource epochs, prefix barrier epochs and fixed storage location.
 type IndexState struct {
 	key  object.ResourceKey
 	root *object.Metadata
@@ -23,15 +21,23 @@ func (r *IndexRepository) Capture(ctx context.Context, key object.ResourceKey) (
 	if !key.Valid() {
 		return nil, ErrInvalidRecord
 	}
+	r.barrierMu.RLock()
+	defer r.barrierMu.RUnlock()
 	shard := r.shard(key)
 	shard.mu.Lock()
 	defer shard.mu.Unlock()
-	root, err := r.load(ctx, key)
-	if errors.Is(err, storage.ErrKeyNotFound) {
-		root, err = r.updateLocked(ctx, key, nil)
-	}
+	root, changed, err := r.rootForFill(ctx, key)
 	if err != nil {
 		return nil, err
+	}
+	if changed {
+		if root.Resource.Revision == math.MaxUint64 {
+			return nil, ErrInvalidRecord
+		}
+		root.Resource.Revision++
+		if err := r.storeControl(ctx, root); err != nil {
+			return nil, err
+		}
 	}
 	return &IndexState{key: key, root: root}, nil
 }
@@ -42,7 +48,8 @@ func currentState(state *IndexState, root *object.Metadata) bool {
 	}
 	a, b := state.root.Resource, root.Resource
 	return a.ResourceID == b.ResourceID && a.Incarnation == b.Incarnation && a.PurgeEpoch == b.PurgeEpoch &&
-		a.RevalidateEpoch == b.RevalidateEpoch && a.RoutingEpoch == b.RoutingEpoch && a.ActiveLocation == b.ActiveLocation
+		a.RevalidateEpoch == b.RevalidateEpoch && a.RoutingEpoch == b.RoutingEpoch && a.ActiveLocation == b.ActiveLocation &&
+		a.PrefixHardEpoch == b.PrefixHardEpoch && a.PrefixSoftEpoch == b.PrefixSoftEpoch && a.BarrierIncarnation == b.BarrierIncarnation
 }
 
 func sameReference(a, b object.VariantRef) bool {
@@ -56,9 +63,18 @@ func (r *IndexRepository) ReserveFor(ctx context.Context, state *IndexState, sel
 	if limit <= 0 {
 		return nil, ErrSelectorLimit
 	}
+	r.barrierMu.RLock()
+	defer r.barrierMu.RUnlock()
 	shard := r.shard(state.key)
 	shard.mu.Lock()
 	defer shard.mu.Unlock()
+	current, err := r.currentBarriers(ctx, state)
+	if err != nil {
+		return nil, err
+	}
+	if !current {
+		return nil, ErrSuperseded
+	}
 	root, err := r.load(ctx, state.key)
 	if err != nil {
 		return nil, err
@@ -73,7 +89,8 @@ func (r *IndexRepository) ReserveFor(ctx context.Context, state *IndexState, sel
 // storeChild runs under the short resource lock, after conflict checks. It is
 // local metadata I/O only; it must not read a body or perform network I/O.
 // storeChild publishes final metadata for both 200 and 304 without allowing a late validator to overwrite
-// another validation of the same ID. Whole-record atomicity/durability is P2.
+// another validation of the same ID. In durable mode the child files and metadata
+// are sealed before the synchronous root update, which is the publication point.
 func (r *IndexRepository) Publish(ctx context.Context, state *IndexState, lease *Reservation, ref object.VariantRef, md *object.Metadata, previous *object.VariantRef, storeChild func() error) (bool, error) {
 	if lease == nil {
 		return false, ErrInvalidRecord
@@ -82,11 +99,26 @@ func (r *IndexRepository) Publish(ctx context.Context, state *IndexState, lease 
 	if state == nil || !state.key.Valid() || lease.key.ResourceID() != state.key.ResourceID() || !sameSelector(lease.selector, ref) || validateReference(ref) != nil {
 		return false, ErrInvalidRecord
 	}
+	if md == nil || !md.HasReadableChunks() {
+		return false, ErrInvalidRecord
+	}
+	if err := r.syncChildData(ctx, state, md); err != nil {
+		return false, err
+	}
+	r.barrierMu.RLock()
+	defer r.barrierMu.RUnlock()
 	shard := r.shard(state.key)
 	shard.mu.Lock()
 	defer shard.mu.Unlock()
 	if err := ctx.Err(); err != nil {
 		return false, err
+	}
+	current, err := r.currentBarriers(ctx, state)
+	if err != nil {
+		return false, err
+	}
+	if !current {
+		return false, nil
 	}
 	root, err := r.load(ctx, state.key)
 	if err != nil {
@@ -134,6 +166,9 @@ func (r *IndexRepository) Publish(ctx context.Context, state *IndexState, lease 
 	if !validChild(state.key, root.Resource, ref, child) {
 		return false, ErrInvalidRecord
 	}
+	if err := r.sealChild(ctx, root.Resource.ActiveLocation, child); err != nil {
+		return false, err
+	}
 	var merged []object.VariantRef
 	for _, existing := range root.Resource.Variants {
 		if sameSelector(existing, ref) || previous != nil && sameReference(existing, *previous) {
@@ -146,7 +181,7 @@ func (r *IndexRepository) Publish(ctx context.Context, state *IndexState, lease 
 	if err := ctx.Err(); err != nil {
 		return false, err
 	}
-	if err := r.controls.StoreControl(ctx, root); err != nil {
+	if err := r.storeControl(ctx, root); err != nil {
 		return false, err
 	}
 	return true, nil

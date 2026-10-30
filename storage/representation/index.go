@@ -1,5 +1,5 @@
-// Package representation coordinates resource indexes independently of HTTP
-// response assembly. The repository is the foundation for the P2 fill store.
+// Package representation coordinates protected indexes, fill tickets,
+// invalidation barriers and publication independently of HTTP response assembly.
 package representation
 
 import (
@@ -14,8 +14,6 @@ import (
 	"strconv"
 	"sync"
 	"time"
-
-	"github.com/google/uuid"
 
 	"github.com/omalloc/tavern/api/defined/v1/storage"
 	"github.com/omalloc/tavern/api/defined/v1/storage/object"
@@ -42,6 +40,11 @@ type IndexRepository struct {
 	controls        storage.ControlStore
 	initialLocation string
 	lookup          LookupFunc
+	durable         bool
+	dataBuckets     []storage.Bucket
+	durableBuckets  map[string]storage.DurableRepresentationBucket
+	barrierMu       sync.RWMutex // lock order: barrier, then resource shard
+	barrierLimit    int
 	now             func() time.Time
 	shards          [256]indexShard
 }
@@ -66,9 +69,20 @@ func NewIndexRepository(controls storage.ControlStore, initialLocation string, l
 	if initialLocation == "" || lookup == nil {
 		return nil, ErrInvalidRecord
 	}
-	r := &IndexRepository{controls: controls, initialLocation: initialLocation, lookup: lookup, now: time.Now}
+	r := &IndexRepository{controls: controls, initialLocation: initialLocation, lookup: lookup, now: time.Now, barrierLimit: maxPrefixBarriers}
 	for _, opt := range opts {
 		opt(r)
+	}
+	if r.barrierLimit <= 0 || r.barrierLimit > maxPrefixBarriers {
+		return nil, ErrInvalidRecord
+	}
+	if r.durable {
+		if err := r.checkDurability(); err != nil {
+			return nil, err
+		}
+	}
+	if err := r.initializeCatalog(context.Background()); err != nil {
+		return nil, err
 	}
 	return r, nil
 }
@@ -82,6 +96,8 @@ func (r *IndexRepository) Now() time.Time { return r.now() }
 // Load returns an owned root. Unknown versions and malformed records are misses;
 // Update distinguishes them so it cannot overwrite unrecognized purge state.
 func (r *IndexRepository) Load(ctx context.Context, key object.ResourceKey) (*object.Metadata, error) {
+	r.barrierMu.RLock()
+	defer r.barrierMu.RUnlock()
 	md, err := r.load(ctx, key)
 	if errors.Is(err, ErrUnsupportedSchema) || errors.Is(err, ErrInvalidRecord) {
 		return nil, storage.ErrKeyNotFound
@@ -106,7 +122,7 @@ func (r *IndexRepository) load(ctx context.Context, key object.ResourceKey) (*ob
 	if md == nil {
 		return nil, storage.ErrKeyNotFound
 	}
-	if md.RecordKind != object.RecordResource || md.Resource == nil || md.Representation != nil {
+	if md.RecordKind != object.RecordResource || md.Resource == nil || md.Representation != nil || md.Barriers != nil {
 		return nil, ErrInvalidRecord
 	}
 	if md.Resource.SchemaVersion != object.RepresentationSchemaVersion {
@@ -116,7 +132,7 @@ func (r *IndexRepository) load(ctx context.Context, key object.ResourceKey) (*ob
 	if !sameID(md.ID, key.ID()) || record.ResourceID != key.ResourceID() ||
 		record.CanonicalURL != key.CanonicalURL() || record.Namespace != key.Namespace() ||
 		record.Incarnation == "" || record.ActiveLocation == "" || len(md.VirtualKey) != 0 ||
-		len(md.Headers) != 0 || md.Size != 0 || md.Chunks.Count() != 0 || md.Parts.Count() != 0 || md.Code != 0 || md.Flags != object.FlagCache {
+		len(md.Headers) != 0 || md.Size != 0 || md.BlockSize != 0 || md.Chunks.Count() != 0 || md.Parts.Count() != 0 || md.Code != 0 || md.Flags != object.FlagCache {
 		return nil, ErrInvalidRecord
 	}
 	return md.Clone(), nil
@@ -129,6 +145,8 @@ func (r *IndexRepository) Update(ctx context.Context, key object.ResourceKey, up
 	if !key.Valid() {
 		return nil, ErrInvalidRecord
 	}
+	r.barrierMu.RLock()
+	defer r.barrierMu.RUnlock()
 	shard := r.shard(key)
 	shard.mu.Lock()
 	defer shard.mu.Unlock()
@@ -136,13 +154,8 @@ func (r *IndexRepository) Update(ctx context.Context, key object.ResourceKey, up
 }
 
 func (r *IndexRepository) updateLocked(ctx context.Context, key object.ResourceKey, update func(*object.ResourceRecord) error) (*object.Metadata, error) {
-	md, err := r.load(ctx, key)
-	if errors.Is(err, storage.ErrKeyNotFound) {
-		md = &object.Metadata{ID: key.ID(), RecordKind: object.RecordResource, Resource: &object.ResourceRecord{
-			SchemaVersion: object.RepresentationSchemaVersion, ResourceID: key.ResourceID(),
-			CanonicalURL: key.CanonicalURL(), Namespace: key.Namespace(), Incarnation: uuid.NewString(), ActiveLocation: r.initialLocation,
-		}}
-	} else if err != nil {
+	md, _, err := r.rootForFill(ctx, key)
+	if err != nil {
 		return nil, err
 	}
 	before := md.Resource.Clone()
@@ -158,6 +171,21 @@ func (r *IndexRepository) updateLocked(ctx context.Context, key object.ResourceK
 		record.RevalidateEpoch < before.RevalidateEpoch || record.RoutingEpoch < before.RoutingEpoch ||
 		(record.ActiveLocation != before.ActiveLocation && record.RoutingEpoch == before.RoutingEpoch) || before.Revision == math.MaxUint64 {
 		return nil, ErrInvalidRecord
+	}
+	if record.PrefixHardEpoch != before.PrefixHardEpoch || record.PrefixSoftEpoch != before.PrefixSoftEpoch || record.BarrierIncarnation != before.BarrierIncarnation {
+		return nil, ErrInvalidRecord
+	}
+	// Durable references can only be added/replaced through Publish, which
+	// syncs immutable files outside the resource lock before committing them.
+	if r.durable {
+		if len(record.Variants) != len(before.Variants) || record.ActiveLocation != before.ActiveLocation {
+			return nil, ErrInvalidRecord
+		}
+		for i := range record.Variants {
+			if !sameReference(record.Variants[i], before.Variants[i]) {
+				return nil, ErrInvalidRecord
+			}
+		}
 	}
 	for _, ref := range record.Variants {
 		if err := validateReference(ref); err != nil {
@@ -176,7 +204,10 @@ func (r *IndexRepository) updateLocked(ctx context.Context, key object.ResourceK
 		return nil, err
 	}
 	// A callback retaining its argument cannot mutate the stored root later.
-	if err := r.controls.StoreControl(ctx, md.Clone()); err != nil {
+	if r.durable && r.durableBuckets[record.ActiveLocation] == nil {
+		return nil, storage.ErrDurabilityUnsupported
+	}
+	if err := r.storeControl(ctx, md); err != nil {
 		return nil, err
 	}
 	return md.Clone(), nil
@@ -194,11 +225,23 @@ type LookupResult struct {
 // an older fresh candidate must not hide a newer expired response.
 // A miss may still return Resource, but never a usable Representation.
 func (r *IndexRepository) Lookup(ctx context.Context, key object.ResourceKey, header http.Header) (*LookupResult, error) {
-	root, err := r.Load(ctx, key)
+	r.barrierMu.RLock()
+	defer r.barrierMu.RUnlock()
+	root, err := r.load(ctx, key)
+	if errors.Is(err, ErrUnsupportedSchema) || errors.Is(err, ErrInvalidRecord) {
+		err = storage.ErrKeyNotFound
+	}
 	if err != nil {
 		return nil, err
 	}
 	result := &LookupResult{Resource: root}
+	epochs, err := r.barriersFor(ctx, key)
+	if err != nil {
+		return result, err
+	}
+	if root.Resource.BarrierIncarnation != epochs.incarnation || root.Resource.PrefixHardEpoch != epochs.hard || root.Resource.PrefixSoftEpoch > epochs.soft {
+		return result, storage.ErrKeyNotFound
+	}
 	var candidates []object.VariantRef
 	groups := make(map[string]varycontrol.Snapshot)
 	for _, ref := range root.Resource.Variants {
@@ -235,8 +278,14 @@ func (r *IndexRepository) Lookup(ctx context.Context, key object.ResourceKey, he
 		if !validChild(key, root.Resource, ref, child) {
 			continue
 		}
+		if err := r.verifyChild(ctx, root.Resource.ActiveLocation, child); err != nil {
+			if errors.Is(err, storage.ErrKeyNotFound) || errors.Is(err, os.ErrNotExist) {
+				continue
+			}
+			return result, err
+		}
 		result.Representation, result.Reference = child.Clone(), ref.Clone()
-		result.Fresh = child.ExpiresAt > r.now().Unix() && child.Representation.ValidatedEpoch == root.Resource.RevalidateEpoch
+		result.Fresh = child.ExpiresAt > r.now().Unix() && child.Representation.ValidatedEpoch == root.Resource.RevalidateEpoch && root.Resource.PrefixSoftEpoch == epochs.soft
 		return result, nil
 	}
 	return result, storage.ErrKeyNotFound

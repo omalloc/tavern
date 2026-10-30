@@ -2,7 +2,7 @@
 
 日期：2026-10-29。
 
-状态：实施中。P1.1—P1.5 已通过受控阶段验收，P2.1 已实现并通过定向验证；下一批为 P2.2。勾选框只标记已经落实的工作，v2 持久化缓存和图片转换尚未开放。
+状态：实施中。P1.1—P1.5 已通过受控阶段验收，P2.1、P2.2 已实现并通过定向验证；下一批为 P2.3。勾选框只标记已经落实的工作，公开 v2 持久化缓存和图片转换尚未开放。
 
 前置分析：[HTTP Vary 与资源转换缓存改造设计](./vary-representation-design.md)。前置文档说明问题和目标架构；本文进一步确定模块边界、实施批次、阶段依赖、兼容方式和验收门槛。若两份文档在实施细节上存在差异，以本文的细化决策为准。
 
@@ -277,6 +277,13 @@ RepresentationStore
   CollectUnreachable(budget)
 ```
 
+本批已实现的对应关系：`Capture/IndexState` 承担 BeginFill/FillTicket，`ReserveFor` 承担 ReserveSelector，P2.1 的固定写入器承担 OpenWriter，`Publish` 承担 Commit；写入器关闭/取消与 `Release` 共同承担 Abort。`Invalidate/InvalidatePrefix` 提供协调器内部的资源及目录失效能力。MigrateResource、CollectUnreachable 及读取租约留在后续生命周期批次；本批不通过文件名把孤儿对象挂回根，也不提前物理删除旧读者可能仍使用的对象。
+
+- [x] 提供可选同步控制记录和表示存储能力；持久化构造校验拒绝内存、当前 NutsDB 及缺失能力的后端。
+- [x] 回源前捕获资源身份、失效 epoch、屏障身份与匹配前缀 epoch，预留及提交均复查。
+- [x] 在资源锁外同步确认块和目录，在提交锁内同步子元数据后同步根；失败不确认发布，不退回普通异步写。
+- [x] 未知/损坏屏障拒绝覆盖，屏障预算不足明确失败；模拟未同步数据丢失、进程退出恢复和缺失块安全 MISS 验证通过。
+
 控制记录需要专用 Bucket 能力 `LoadControl/StoreControl`，不能借用会合并旧块、增加域名计数或进入普通 LRU 的 Store。优先采用新增可选能力接口，disk/memory 明确实现；empty 或缺失能力返回“不支持缓存”，不使用不安全的兼容降级。
 
 提交协议：
@@ -287,9 +294,11 @@ RepresentationStore
 4. 先存可读子对象，再更新根引用；根记录更新是逻辑发布点。并发更新在此处合并。
 5. 提交后释放预留。崩溃留下的无引用对象按 GC 预算回收，不通过文件名猜测并自动挂回根。
 
-持久性必须单独处理：当前 Pebble 可配置 NoSync，NutsDB 初始化使用 `SyncEnable=false`。因此“Set 返回成功”不能直接作为断电恢复保证。v2 控制记录开放前需落实同步写入路径：Pebble 控制写使用同步选项；NutsDB 使用经验证的同步配置/路径。若某后端不能提供控制记录持久性，则启动校验禁止其启用持久化 v2 缓存，不假装支持。
+持久性单独处理：普通 Pebble 仍可配置 NoSync，但可选 `SetSync` 强制使用同步选项，不受普通写配置影响。disk 提供 `StoreControlSync`、`SyncRepresentationData` 和 `StoreRepresentationSync`；数据同步包含块长度检查、文件 Sync/Close 及目录链同步。`WithDurability` 要求控制 owner 和全部固定数据位置均具备经验证的能力，否则构造失败。当前 NutsDB 仍使用 `SyncEnable=false`，本批明确拒绝其持久化 v2 模式；memory 仅支持进程内受控测试。对外启动接通仍在 P2.5，不能用普通 Set 的成功替代持久化校验。
 
 控制记录与子对象跨记录不强求同一事务：允许子先落盘、根后发布，恢复时验证引用和文件存在性；缺失子对象安全 MISS。失效屏障和成功确认的 PURGE 则必须经过持久化后再返回成功。
+
+前缀屏障以受保护的独立 catalog 保存，覆盖同一控制 owner 下的所有 namespace/isolation scope。目录 URL 必须以 `/` 结尾，按规范 scheme/authority 和保留转义的路径比较；不将 `%2F` 当目录分隔符。默认最多 4096 项，单前缀最多 8 KiB，另有 1 MiB 字段及固定开销计费预算；重复失效同一前缀不增加项数。屏障没有普通 TTL/LRU 淘汰。catalog 有独立 incarnation，资源根记录其身份；历史缺失、重建或版本未知时，旧根与旧票据不能自动继承新历史。目录失效先同步屏障，不依赖扫描已有根；Lookup 立即拒绝 hard 屏障之前的引用，soft 屏障之前的表示不能新鲜命中，下一次 Capture 再同步根的 epoch。
 
 ### P2.3 PURGE 与依赖失效
 
@@ -723,4 +732,23 @@ P1.5 已提交为 `42a506f`，由下面的 P2.1 批次接续存储生命周期�
 
 发布边界：本批仍只开放内部受控 v2 生命周期。同步落盘、前缀失效屏障、PURGE/淘汰协调、读取租约、迁移恢复和单写交接仍待 P2 后续批次；部分表示不在不同回源响应之间拼接，已替换旧 ID 等待后续 GC 回收。
 
-下一批为 P2.2：存储提交、失效屏障和持久性。
+P2.1 已提交为 `b010749`，由下面的 P2.2 批次接续持久化提交与失效屏障。
+
+
+### 2026-10-30：P2.2
+
+- 新增受保护的 barrier catalog、独立控制身份及资源根的前缀 epoch/身份字段。JSON/CBOR 和深拷贝覆盖新模型；控制记录不进入普通响应、LRU、对象计数、目录扫描、块读写或迁移。
+- 增加可选 `SyncIndexDB`、`DurableControlStore`、`DurableRepresentationBucket` 能力；Pebble `SetSync` 独立于普通 NoSync 配置。disk 同步确认块、目录链、子元数据及根控制记录。`WithDurability` 在构造时校验固定控制/数据后端，当前 memory/NutsDB 明确拒绝持久化 v2，不使用普通 Store 降级。
+- Publish 在资源锁外完成不可变块与目录同步，再在屏障读锁和资源锁内检查票据、最新根、前缀屏障、所选引用和配对版本；子元数据同步完成后才同步发布根。普通 Update 不能绕过此协议新增或替换持久化引用。数据、子或根同步任一失败均不确认发布并释放预留；304 子更新成功、根更新失败时，配对版本不一致只能 MISS，不能获得未经提交的新 TTL。
+- 增加内部 Invalidate/InvalidatePrefix。单资源失效为冷对象也创建身份；目录失效先保存屏障，立即约束命中、预留及迟到提交，随后按需同步根。hard 切断旧引用，soft 要求重新验证；物理旧字节继续保留。前缀匹配保持主机、scheme、路径边界和转义语义；记录数、前缀长度和总计费预算均有上限，失败不返回成功。
+- catalog 与资源根绑定独立 incarnation，控制历史缺失/重建、未知版本或损坏不能被普通填充覆盖。持久化 Lookup 校验确认块文件存在性与长度，恢复时不依赖孤儿文件重建引用。
+
+验证结果（Go 1.26.0）：
+
+- `go test -race ./storage/representation ./api/defined/v1/storage/object -count=1` 通过（均设置 `GOTOOLCHAIN=go1.26.0`）。协调器后续新增保护后定向复验通过；覆盖资源/目录 soft/hard、冷资源、预留前及提交前失效、并发锁顺序、预算、控制历史身份与版本、同步失败释放和持久化 304 失败保护。
+- `go test -race ./storage/indexdb/pebble ./storage/bucket/disk ./storage/bucket/memory -count=1` 通过。Pebble crashable FS 在普通 NoSync 配置下丢弃全部未同步数据，已确认的 SetSync 屏障仍能恢复；真实磁盘进程直接退出且不执行 Close/Flush 后，已确认的表示、soft/hard 屏障和冷资源失效身份可恢复，缺块安全 MISS。
+- `go test -race ./server/middleware/caching -run 'Test(Representation|VaryAcceptance)' -count=1` 通过；控制记录保护、未知历史不可覆盖与新增模型 JSON/CBOR 回归通过。`git diff --check` 通过，未新增依赖，未运行全仓验证。
+
+发布边界：P2.2 提供内部协调器的持久化和失效基础，公开 v2 配置仍关闭；现有 Storage.PURGE/plugin/purge 尚未路由到新协调器。全版本/命名空间 PURGE 接通、派生依赖、读者租约与物理回收、迁移和跨进程单写交接仍待后续批次。构造时仍要求同一控制 store 只有一个协调器 owner。
+
+下一批为 P2.3：PURGE 与依赖失效。

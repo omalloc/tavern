@@ -24,12 +24,9 @@ func (m *memoryBucket) LoadControl(ctx context.Context, id *object.ID) (*object.
 }
 
 // StoreControl does not merge bitmaps, update LRU, or register an ordinary
-// directory entry. Persistent invalidation durability is not enabled in P1.3.
+// directory entry. This memory bucket never claims persistent durability.
 func (m *memoryBucket) StoreControl(ctx context.Context, md *object.Metadata) error {
-	if md == nil || md.RecordKind != object.RecordResource || !md.ID.IsControl() || md.Resource == nil ||
-		md.Resource.SchemaVersion != object.RepresentationSchemaVersion || md.Representation != nil ||
-		len(md.Headers) != 0 || len(md.VirtualKey) != 0 || md.Code != 0 || md.Size != 0 ||
-		md.Chunks.Count() != 0 || md.Parts.Count() != 0 || md.Flags != object.FlagCache {
+	if !md.ValidControl() {
 		return storage.ErrProtectedControl
 	}
 	if err := ctx.Err(); err != nil {

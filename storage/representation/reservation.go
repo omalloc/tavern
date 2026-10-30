@@ -2,6 +2,7 @@ package representation
 
 import (
 	"context"
+	"math"
 
 	"github.com/google/uuid"
 
@@ -9,7 +10,7 @@ import (
 )
 
 // Reservation is an opaque, process-local selector budget lease. It is not a
-// fill ticket: P2 will capture invalidation state before any origin request.
+// fill ticket: IndexState captures invalidation state before an origin request.
 type Reservation struct {
 	id              string
 	key             object.ResourceKey
@@ -29,12 +30,23 @@ func (r *IndexRepository) Reserve(ctx context.Context, key object.ResourceKey, s
 	if limit <= 0 {
 		return nil, ErrSelectorLimit
 	}
+	r.barrierMu.RLock()
+	defer r.barrierMu.RUnlock()
 	shard := r.shard(key)
 	shard.mu.Lock()
 	defer shard.mu.Unlock()
-	root, err := r.load(ctx, key)
+	root, changed, err := r.rootForFill(ctx, key)
 	if err != nil {
 		return nil, err
+	}
+	if changed {
+		if root.Resource.Revision == math.MaxUint64 {
+			return nil, ErrInvalidRecord
+		}
+		root.Resource.Revision++
+		if err := r.storeControl(ctx, root); err != nil {
+			return nil, err
+		}
 	}
 	return r.reserveLocked(ctx, key, root.Resource, selector, limit)
 }

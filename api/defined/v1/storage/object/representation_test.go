@@ -56,6 +56,12 @@ func TestResourceRecordCodec(t *testing.T) {
 	partial := response.Clone()
 	partial.Size = 150
 	partial.Representation.State = RepresentationFilling
+	barriers := &Metadata{ID: BarrierCatalogID(), RecordKind: RecordBarriers, Barriers: &BarrierCatalog{
+		SchemaVersion: RepresentationSchemaVersion, Incarnation: "catalog", Revision: 3,
+		Entries: []PrefixBarrier{{CanonicalPrefix: "https://example.com/img/", HardEpoch: 2, SoftEpoch: 3}},
+	}}
+	root.Resource.BarrierIncarnation = "catalog"
+	root.Resource.PrefixHardEpoch, root.Resource.PrefixSoftEpoch = 2, 3
 	managed := root.Clone()
 	managed.Resource.Variants[0].SelectionKind = SelectionManaged
 	managed.Resource.Variants[0].SelectedSourceID = response.ID.Clone()
@@ -63,7 +69,7 @@ func TestResourceRecordCodec(t *testing.T) {
 	managed.Resource.Variants[0].TransformFingerprint = strings.Repeat("a", 64)
 	for _, codec := range []encoding.Codec{&jsoncodec.JSONCodec{}, &cobr.CborCodec{}} {
 		t.Run(codec.Name(), func(t *testing.T) {
-			for _, md := range []*Metadata{root, response, managed, derived, partial} {
+			for _, md := range []*Metadata{root, response, managed, derived, partial, barriers} {
 				data, err := codec.Marshal(md)
 				if err != nil {
 					t.Fatal(err)

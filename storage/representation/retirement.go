@@ -23,6 +23,8 @@ func (r *IndexRepository) Retire(ctx context.Context, key object.ResourceKey, ex
 	if !key.Valid() || validateReference(expected) != nil {
 		return nil, ErrInvalidRecord
 	}
+	r.barrierMu.RLock()
+	defer r.barrierMu.RUnlock()
 	shard := r.shard(key)
 	shard.mu.Lock()
 	defer shard.mu.Unlock()
@@ -56,7 +58,7 @@ func (r *IndexRepository) Retire(ctx context.Context, key object.ResourceKey, ex
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	if err := r.controls.StoreControl(ctx, root); err != nil {
+	if err := r.storeControl(ctx, root); err != nil {
 		return nil, err
 	}
 	return &RetiredRepresentation{ID: retired, Location: root.Resource.ActiveLocation}, nil

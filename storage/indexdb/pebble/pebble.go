@@ -17,6 +17,7 @@ import (
 )
 
 var _ storage.IndexDB = (*PebbleDB)(nil)
+var _ storage.SyncIndexDB = (*PebbleDB)(nil)
 
 type PebbleDB struct {
 	codec         encoding.Codec
@@ -24,6 +25,7 @@ type PebbleDB struct {
 	writeMode     *pebble.WriteOptions
 	skipErrRecord bool
 	closed        sync.Once
+	persistent    bool
 }
 
 func init() {
@@ -54,6 +56,22 @@ func (p *PebbleDB) Set(ctx context.Context, key []byte, val *object.Metadata) er
 	}
 
 	return p.db.Set(key, buf, p.writeMode)
+}
+
+func (p *PebbleDB) Persistent() bool { return p.persistent }
+
+func (p *PebbleDB) SetSync(ctx context.Context, key []byte, val *object.Metadata) error {
+	if !p.persistent {
+		return storage.ErrDurabilityUnsupported
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	buf, err := p.codec.Marshal(val)
+	if err != nil {
+		return err
+	}
+	return p.db.Set(key, buf, pebble.Sync)
 }
 
 // Iterate implements storage.IndexDB.
@@ -185,5 +203,6 @@ func New(path string, option storage.Option) (storage.IndexDB, error) {
 		writeMode:     writeMode, // 是否异步写操作
 		skipErrRecord: true,
 		closed:        sync.Once{},
+		persistent:    option.DBPath() != storage.TypeInMemory && path != "",
 	}, nil
 }

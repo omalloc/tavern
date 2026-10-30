@@ -317,7 +317,7 @@ type alteredControls struct {
 
 func (c alteredControls) LoadControl(ctx context.Context, id *object.ID) (*object.Metadata, error) {
 	md, err := c.ControlStore.LoadControl(ctx, id)
-	if err == nil {
+	if err == nil && md.Resource != nil {
 		c.alter(md)
 	}
 	return md, err
