@@ -34,6 +34,7 @@ import (
 	_ "github.com/omalloc/tavern/server/middleware/multirange"
 	_ "github.com/omalloc/tavern/server/middleware/recovery"
 	_ "github.com/omalloc/tavern/server/middleware/rewrite"
+	_ "github.com/omalloc/tavern/server/middleware/transform"
 	"github.com/omalloc/tavern/server/mod"
 	"github.com/omalloc/tavern/storage"
 )
@@ -381,7 +382,7 @@ func (s *HTTPServer) buildMiddlewareChain(tripper http.RoundTripper) (http.Round
 		}
 		next, cleanup, err := middleware.Create(conf)
 		if err != nil {
-			if conf.Required || strings.EqualFold(conf.Name, "caching") {
+			if conf.Required || (strings.EqualFold(conf.Name, "caching") || strings.EqualFold(conf.Name, "transform")) {
 				return nil, err
 			}
 			log.Warnf("failed to create middleware %s: %v", conf.Name, err)
@@ -424,6 +425,7 @@ func wrapUpstreamError(w http.ResponseWriter) {
 // request rewrite nested inside caching would run only on misses, not hits.
 func validateCacheRewriteOrder(configs []*middlewarev1.Middleware) error {
 	cached := false
+	planned, split := false, false
 	for _, config := range configs {
 		if config == nil {
 			continue
@@ -431,9 +433,16 @@ func validateCacheRewriteOrder(configs []*middlewarev1.Middleware) error {
 		switch strings.ToLower(config.Name) {
 		case "caching":
 			cached = true
+		case "multirange":
+			split = true
+		case "transform":
+			if cached || split || planned {
+				return fmt.Errorf("transform plan must precede multirange and caching, and occur once")
+			}
+			planned = true
 		case "rewrite":
-			if cached && config.Options["request_headers_rewrite"] != nil {
-				return fmt.Errorf("request header rewrite must precede caching in the middleware chain")
+			if (cached || planned) && config.Options["request_headers_rewrite"] != nil {
+				return fmt.Errorf("request header rewrite must precede transform planning and caching in the middleware chain")
 			}
 		}
 	}
