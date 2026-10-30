@@ -108,6 +108,8 @@ mode 为 auto 时，没有明确 image 类型偏好的 Accept 保留源图；有
 
 关闭 transform.enabled；需要时同时关闭 caching.representation.enabled。保留 routes、参数名、backend.capabilities、命名空间、storage.representation 和已有目录，重新启动以完成停写交接。关闭后不联系 worker，保留的路由仍负责把 `?format=...` 的 PURGE 映射到对应源集合，因此回滚期间的失效会在重新开启后继续生效。
 
+保留路由下的 GET/HEAD 暂停为 no-store 503，仍带协商 Vary；不会把显式目标请求当普通 URL 直送源站，也不会把任意源 MIME 冒充目标输出。未匹配的普通请求继续透明代理，PURGE 等控制方法继续经过原处理链。若同时启用了 response_sharing，关闭 v2 读取时也要关闭 response_sharing.enabled；转换失败时允许源图回退的策略属于已启用托管路由的 fallback_to_source 配置，暂停路由默认明确返回错误。
+
 不可直接删掉路由历史、改变源参数映射、命名空间或复用控制目录给另一套拓扑。首版不支持热替换这些映射；先完成失效和维护迁移，再调整配置。保留完整路由定义也允许在 worker 暂时不可用时关闭转换并继续执行正确 PURGE。
 
 源和成品内部使用独立命名空间，不会被回滚时的普通 URL 查找当作透明响应。存储进入停写/关闭后，已识别的托管请求返回错误；不会绕过格式约束把目标 URL 直接回源。

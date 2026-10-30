@@ -59,16 +59,18 @@ func TestCacheMethodAllowGETorHEAD(t *testing.T) {
 		defer case1.Close()
 
 		resp, err := case1.Do(func(r *http.Request) {
-			r.Method = http.MethodGet
+			r.Method = http.MethodHead
 		})
 
-		_ = e2e.DiscardBody(resp, 512)
+		size := e2e.DiscardBody(resp, 512)
 
 		assert.NoError(t, err, "response should not error")
 
 		assert.Equal(t, http.StatusOK, resp.StatusCode, "response should be code 200")
 
 		assert.Equal(t, f.MD5, resp.Header.Get("ETag"), "etag should be equal")
+		assert.Zero(t, size, "HEAD has no response body")
+		assert.Equal(t, int64(f.Size), resp.ContentLength, "HEAD retains full representation length")
 
 		assert.Contains(t, resp.Header.Get("X-Cache"), "HIT", "cache should be HIT")
 	})

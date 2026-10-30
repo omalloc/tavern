@@ -1,6 +1,7 @@
 package range_test
 
 import (
+	"fmt"
 	"net/http"
 	"strings"
 	"testing"
@@ -18,9 +19,12 @@ func init() {
 
 func TestRangeOffset(t *testing.T) {
 	f := e2e.GenFile(t, 2<<20) // 5M
+	// Incremental filling requires a real strong HTTP validator, not a bare MD5.
+	strongTag := fmt.Sprintf("%q", f.MD5)
+	source := e2e.RespCallbackFile(f, func(w http.ResponseWriter, _ *http.Request) { w.Header().Set("ETag", strongTag) })
 
 	t.Run("test range offset bytes=0-524287 MISS", func(t *testing.T) {
-		case1 := e2e.New("http://sendya.me.gslb.com/cases/range/normal/1-1", e2e.RespSimpleFile(f))
+		case1 := e2e.New("http://sendya.me.gslb.com/cases/range/normal/1-1", source)
 		defer case1.Close()
 
 		resp, err := case1.Do(func(r *http.Request) {
@@ -33,7 +37,7 @@ func TestRangeOffset(t *testing.T) {
 
 		assert.Equal(t, http.StatusPartialContent, resp.StatusCode, "response should be code 206")
 
-		assert.Equal(t, f.MD5, resp.Header.Get("ETag"), "etag should be equal")
+		assert.Equal(t, strongTag, resp.Header.Get("ETag"), "etag should be equal")
 
 		assert.Equal(t, 524288, size, "size should be 524288")
 
@@ -60,7 +64,7 @@ func TestRangeOffset(t *testing.T) {
 	})
 
 	t.Run("test range offset bytes=524288-1048575 PART_MISS", func(t *testing.T) {
-		case1 := e2e.New("http://sendya.me.gslb.com/cases/range/normal/1-1", e2e.RespSimpleFile(f))
+		case1 := e2e.New("http://sendya.me.gslb.com/cases/range/normal/1-1", source)
 		defer case1.Close()
 
 		resp, err := case1.Do(func(r *http.Request) {
@@ -79,7 +83,7 @@ func TestRangeOffset(t *testing.T) {
 	})
 
 	t.Run("test range offset bytes=524288-1572863 PART_HIT", func(t *testing.T) {
-		case1 := e2e.New("http://sendya.me.gslb.com/cases/range/normal/1-1", e2e.RespSimpleFile(f))
+		case1 := e2e.New("http://sendya.me.gslb.com/cases/range/normal/1-1", source)
 		defer case1.Close()
 
 		resp, err := case1.Do(func(r *http.Request) {

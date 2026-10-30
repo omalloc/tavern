@@ -30,11 +30,21 @@ type writeSession struct {
 	disabled bool
 	mu       sync.Mutex
 	lease    storage.LegacyFillLease
+	finish   func()
 }
 
 func (c *Caching) newWriteSession() *writeSession {
 	s := &writeSession{ctx: c.req.Context(), bucket: c.bucket, md: c.md.Clone(), log: c.log,
 		async: c.opt.AsyncFlushChunk, publish: c.opt.publish}
+	// Queued local bytes already belong to an accepted task. A client that
+	// finishes its advertised range must not cancel those writes before Close
+	// joins them; storage Drain still cancels and waits for this bounded owner.
+	ctx, finish, err := beginCacheTask(c.taskStore, context.WithoutCancel(c.req.Context()), defaultTaskTimeout)
+	if err != nil {
+		s.disabled, s.finish = true, func() {}
+	} else {
+		s.ctx, s.finish = ctx, finish
+	}
 	if bucket, ok := c.bucket.(*leasedBucket); ok {
 		s.bucket, s.lease = bucket.Bucket, bucket.lease
 	}
@@ -109,6 +119,7 @@ func flushbufferSlice(s *writeSession, span xhttp.ContentRange) (iobuf.EventSucc
 		return err
 	}
 	close := func(eof bool) {
+		defer s.finish()
 		s.mu.Lock()
 		defer s.mu.Unlock()
 		if s.failed || s.disabled {

@@ -1,7 +1,9 @@
 package purge
 
 import (
+	"context"
 	"errors"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -10,6 +12,46 @@ import (
 	"github.com/omalloc/tavern/contrib/log"
 	"github.com/omalloc/tavern/storage"
 )
+
+func TestPurgeUnixPeerRequiresListenerIdentityAndExplicitAllowlist(t *testing.T) {
+	previous := storage.Current()
+	t.Cleanup(func() { storage.SetDefault(previous) })
+	for _, tc := range []struct {
+		name    string
+		local   net.Addr
+		allowed bool
+		status  int
+	}{
+		{"unnamed-unix", &net.UnixAddr{Name: "/tmp/test.sock", Net: "unix"}, true, 200},
+		{"unix-not-allowed", &net.UnixAddr{Name: "/tmp/test.sock", Net: "unix"}, false, 403},
+		{"tcp-empty-peer", &net.TCPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 80}, true, 403},
+		{"no-listener", nil, true, 403},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			store := &purgeTestStorage{}
+			storage.SetDefault(store)
+			allow := make(map[string]struct{})
+			if tc.allowed {
+				allow["@"] = struct{}{}
+			}
+			p := &PurgePlugin{opt: &option{HeaderName: "Purge-Type"}, log: log.NewHelper(log.DefaultLogger), allowAddr: allow}
+			req := httptest.NewRequest(Method, "http://example.com/a", nil)
+			req.RemoteAddr = ""
+			req.Header.Set("X-Forwarded-For", "127.0.0.1")
+			if tc.local != nil {
+				req = req.WithContext(context.WithValue(req.Context(), http.LocalAddrContextKey, tc.local))
+			}
+			response := httptest.NewRecorder()
+			p.HandleFunc(func(http.ResponseWriter, *http.Request) { t.Error("PURGE passed downstream") })(response, req)
+			if response.Code != tc.status {
+				t.Fatal(response.Code)
+			}
+			if (store.calls == 1) != (tc.status == 200) {
+				t.Fatal("authorization did not precede storage", store.calls)
+			}
+		})
+	}
+}
 
 type purgeTestStorage struct {
 	storagev1.Storage

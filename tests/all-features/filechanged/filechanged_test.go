@@ -42,9 +42,12 @@ func TestLastModified(t *testing.T) {
 			reader := e2e.SplitFile(f.Path, int(rr.Start), int(rr.Length()))
 
 			w.Header().Set("Content-Length", strconv.Itoa(int(rr.Length())))
-			w.Header().Set("Content-Range", rr.ContentRange(uint64(f.Size)))
-
-			w.WriteHeader(http.StatusPartialContent)
+			if r.Header.Get("Range") != "" {
+				w.Header().Set("Content-Range", rr.ContentRange(uint64(f.Size)))
+				w.WriteHeader(http.StatusPartialContent)
+			} else {
+				w.WriteHeader(http.StatusOK)
+			}
 			n, err := io.Copy(w, reader)
 
 			assert.NoError(t, err, "copy should not error")
@@ -92,8 +95,12 @@ func TestLastModified(t *testing.T) {
 			reader := e2e.SplitFile(f.Path, int(rr.Start), int(rr.Length()))
 
 			w.Header().Set("Content-Length", strconv.Itoa(int(rr.Length())))
-			w.Header().Set("Content-Range", rr.ContentRange(uint64(f.Size)))
-			w.WriteHeader(http.StatusPartialContent)
+			if r.Header.Get("Range") != "" {
+				w.Header().Set("Content-Range", rr.ContentRange(uint64(f.Size)))
+				w.WriteHeader(http.StatusPartialContent)
+			} else {
+				w.WriteHeader(http.StatusOK)
+			}
 
 			n, err := io.Copy(w, reader)
 
@@ -120,11 +127,11 @@ func TestLastModified(t *testing.T) {
 
 		assert.Equal(t, rr.ContentRange(uint64(f.Size)), resp.Header.Get("Content-Range"), "response should be Content-Range")
 
-		assert.Equal(t, "old-file", resp.Header.Get("X-Case"), "response should be X-Case old-file")
+		assert.Equal(t, "new-file", resp.Header.Get("X-Case"), "headers must describe the new representation")
 
 		assert.Equal(t, f.MD5, resp.Header.Get("ETag"), "response should be ETag")
 
-		assert.Equal(t, oldlm, resp.Header.Get("Last-Modified"), "response should be Last-Modified")
+		assert.Equal(t, newlm, resp.Header.Get("Last-Modified"), "Last-Modified must describe the new representation")
 
 		assert.Equal(t, hashBody, hashFile, "response body should be equal to file MD5")
 	})
@@ -145,8 +152,12 @@ func TestLastModified(t *testing.T) {
 			reader := e2e.SplitFile(f.Path, int(rr.Start), int(rr.Length()))
 
 			w.Header().Set("Content-Length", strconv.Itoa(int(rr.Length())))
-			w.Header().Set("Content-Range", rr.ContentRange(uint64(f.Size)))
-			w.WriteHeader(http.StatusPartialContent)
+			if r.Header.Get("Range") != "" {
+				w.Header().Set("Content-Range", rr.ContentRange(uint64(f.Size)))
+				w.WriteHeader(http.StatusPartialContent)
+			} else {
+				w.WriteHeader(http.StatusOK)
+			}
 
 			n, err := io.Copy(w, reader)
 			if err != nil {

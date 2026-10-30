@@ -299,6 +299,16 @@ func (c *Caching) respondFromCache(req *http.Request) (*http.Response, error) {
 	}
 
 	c.markCacheStatus(rng.Start, rng.End)
+	if c.resourceMD == nil && req.Method == http.MethodGet && !iobuf.FullHit(uint32(rng.Start/int64(c.md.BlockSize)), uint32(rng.End/int64(c.md.BlockSize)), c.md.Chunks) {
+		// A missing range must establish its version and response headers before
+		// any old headers or bytes are sent. Do not defer that decision to a
+		// cloned asynchronous chunk reader after the frontend response exists.
+		resp, err := c.fetchLegacyMissingRange(req)
+		if err != nil {
+			return resp, err
+		}
+		return c.processor.postCacheProcessor(c, req, resp)
+	}
 
 	resp, err := c.lazilyRespond(req, rng.Start, rng.End)
 	if err != nil {

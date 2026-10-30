@@ -2,7 +2,7 @@
 
 This file provides guidance to Codex (Codex.ai/code) when working with code in this repository.
 
-Go module: `github.com/omalloc/tavern` (Go 1.25, CGO-disabled static binary).
+Go module: `github.com/omalloc/tavern` (Go 1.26.0, CGO-disabled static binary).
 
 ## Build & Test Commands
 
@@ -68,7 +68,7 @@ Key interface: `storage.Storage` (at `api/defined/v1/storage/storage.go`) — `S
 Upstream reverse proxy with:
 - Per-upstream-address `http.Client` pools (TCP or Unix socket)
 - Node selection via `omalloc/proxy` selector (configured via `Upstream.Balancing`)
-- Custom `singleflight` for request coalescing on cache misses — uses `io.TeeReader` to fan out response bodies
+- The legacy proxy collapse arguments no longer share responses. Optional verified cold-GET sharing lives in `server/middleware/caching/response_sharing.go`, under the captured v2 resource identity.
 
 ### Plugin System (`plugin/`)
 

@@ -11,8 +11,8 @@ import (
 
 func init() { middleware.Register("transform", Middleware) }
 
-// The standalone factory supports pass-through. Enabled execution is assembled
-// by the server with the caching owner and a successfully verified runtime.
+// The standalone factory preserves paused route contracts. Enabled execution
+// is assembled by the server with the caching owner and a verified runtime.
 func Middleware(config *configv1.Middleware) (middleware.Middleware, func(), error) {
 	var opt option
 	if err := config.Unmarshal(&opt); err != nil {
@@ -20,6 +20,14 @@ func Middleware(config *configv1.Middleware) (middleware.Middleware, func(), err
 	}
 	if opt.Enabled {
 		return nil, middleware.EmptyCleanup, fmt.Errorf("transform execution requires a validated server caching/provider binding")
+	}
+	if len(opt.Routes) != 0 {
+		router, err := prepareRouter(opt)
+		if err != nil {
+			return nil, middleware.EmptyCleanup, err
+		}
+		mw, err := WithRuntime(&planning.Runtime{Router: router})
+		return mw, middleware.EmptyCleanup, err
 	}
 	return middleware.EmptyMiddleware, middleware.EmptyCleanup, nil
 }
@@ -51,7 +59,23 @@ func Planner(resolve Resolver) middleware.Middleware {
 
 func WithRuntime(runtime *planning.Runtime) (middleware.Middleware, error) {
 	if runtime != nil && !runtime.Enabled {
-		return middleware.EmptyMiddleware, nil
+		return func(next http.RoundTripper) http.RoundTripper {
+			return middleware.RoundTripperFunc(func(req *http.Request) (*http.Response, error) {
+				if runtime.Router != nil && (req.Method == http.MethodGet || req.Method == http.MethodHead) {
+					_, matched, err := runtime.Router.Resolve(req)
+					if err != nil {
+						return planning.ErrorResponse(req, planning.HTTPStatus(err)), nil
+					}
+					if matched {
+						// Retained routes still define an output contract while paused.
+						// Do not turn an explicit target into an unverified raw origin
+						// request merely because the worker/read gate is disabled.
+						return planning.ErrorResponse(req, http.StatusServiceUnavailable), nil
+					}
+				}
+				return next.RoundTrip(req.WithContext(planning.WithoutPlan(req.Context())))
+			})
+		}, nil
 	}
 	if runtime == nil || runtime.Router == nil || runtime.Worker == nil || !runtime.Worker.Verified() {
 		return nil, fmt.Errorf("transform runtime has no verified backend")

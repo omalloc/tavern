@@ -59,7 +59,6 @@ type Caching struct {
 	noContentLen          bool // noContentLen indicates whether the content length is omitted in the HTTP response.
 	migration             bool // cache migration
 	legacyLease           storage.LegacyFillLease
-	legacyLeaseStop       func() bool
 }
 
 func (c *Caching) markCacheStatus(start, end int64) {
@@ -128,7 +127,7 @@ func (c *Caching) reset() {
 	c.fileChanged = false
 	c.noContentLen = false
 	c.migration = false
-	c.legacyLease, c.legacyLeaseStop = nil, nil
+	c.legacyLease = nil
 }
 
 func (c *Caching) getAvailableChunks() (available []uint32) {

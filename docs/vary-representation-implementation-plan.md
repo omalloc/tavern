@@ -2,7 +2,7 @@
 
 日期：2026-10-29。
 
-状态：实施中。P1.1—P1.5 已通过受控阶段验收，P2.1—P2.6 已实现并通过定向验证；P3.1—P3.4 协商、源/成品缓存、HTTP worker 与成品 HTTP 语义已实现并通过阶段验收；P4.1—P4.3 指标、维护、故障演练及可选安全合并已完成。接下来按第 10.3 节逐项核验最终完成定义及 CI。透明 v2、托管图片及响应合并均默认关闭。勾选框只标记已经落实的工作。
+状态：本方案 P1.1—P4.3 已实现，并完成第 10.3 节逐项核验。本地执行 CI 同等构建与全量测试通过；实际 WebP 编码器矩阵及公开图片路径另行通过显式检查。透明 v2、托管图片及响应合并均默认关闭。证据、发布边界和最终核验修复见 [验收记录](vary-representation-acceptance.md)。
 
 前置分析：[HTTP Vary 与资源转换缓存改造设计](./vary-representation-design.md)。前置文档说明问题和目标架构；本文进一步确定模块边界、实施批次、阶段依赖、兼容方式和验收门槛。若两份文档在实施细节上存在差异，以本文的细化决策为准。
 
@@ -556,13 +556,13 @@ server:
 | P1.3 索引、预留和控制记录 | `go test -race ./storage/representation -count=1` |
 | P1.3 元数据/键 | `go test ./api/defined/v1/storage/object -run 'Test(Representation|ResourceRecord|StructuredKey)' -count=1` |
 | P1.1/P1.4 缓存行为 | `go test ./server/middleware/caching -run 'TestVary|TestCacheAdmission' -count=1` |
-| 请求合并改动 | `go test -race ./server/middleware/caching ./proxy ./proxy/singleflight -run 'Test.*(Flight|Vary|Collapse)' -count=1` |
+| 请求合并改动 | `go test -race ./server/middleware/caching ./proxy -run 'Test.*(Sharing|CanReuseResponse|Vary|Collapse)' -count=1` |
 | P2 协调层 | `go test -race ./storage/representation -run 'Test.*(Commit|Purge|Reservation|Generation|Recovery|Migration)' -count=1` |
 | P2 受影响存储契约 | `go test ./storage/bucket/disk ./storage/bucket/memory ./storage/bucket/empty ./storage/indexdb/pebble ./storage/indexdb/nutsdb` |
 | P2 PURGE 接入 | `go test ./storage ./plugin/purge -run 'Test.*(Purge|Representation)' -count=1` |
-| P3 Accept | `go test ./pkg/x/http/acceptcontrol -count=1` |
-| P3 转换服务 | `go test -race ./transform/... -run 'Test.*(Transform|Source|Derived|Flight|Backend)' -count=1` |
-| P3 HTTP 集成 | `go test ./server/middleware/transform ./server/middleware/caching -run 'TestImage|TestDerived|TestTransform' -count=1` |
+| P3 Accept | `go test ./transform -run '^TestAccept' -count=1` |
+| P3 转换服务 | `go test -race ./transform -count=1` |
+| P3 HTTP 集成 | `go test ./server/middleware/transform ./server/middleware/caching ./server -run 'Test(Managed|CachingReadsTrustedManagedPlan|PublicManaged|Transform)' -count=1` |
 
 执行规则：
 
@@ -595,12 +595,12 @@ server:
 
 ### 10.3 最终完成定义
 
-- [ ] 阶段一和二的透明 Vary 行为、并发、失效、重启、迁移验收全部通过。
-- [ ] JPEG→WebP、JPEG→PNG、PNG→JPEG 的真实后端契约通过，质量/透明度/动画策略有确定行为。
-- [ ] 同源同规格复用成品，同源不同规格复用源资源，实测调用计数符合预期。
-- [ ] 每种表示的 304、HEAD、Range、验证器和内容编码正确，不发生跨表示字节混合。
-- [ ] 文件/目录 PURGE 成功后，新请求不能命中新鲜的旧表示；在途旧写入不能复活缓存。
-- [ ] 配置、支持矩阵、弃用说明、指标及回滚流程与实现一致，必要 CI 通过。
+- [x] 阶段一和二的透明 Vary 行为、并发、失效、重启、迁移验收全部通过。
+- [x] JPEG→WebP、JPEG→PNG、PNG→JPEG 的真实后端契约通过，质量/透明度/动画策略有确定行为。
+- [x] 同源同规格复用成品，同源不同规格复用源资源，实测调用计数符合预期。
+- [x] 每种表示的 304、HEAD、Range、验证器和内容编码正确，不发生跨表示字节混合。
+- [x] 文件/目录 PURGE 成功后，新请求不能命中新鲜的旧表示；在途旧写入不能复活缓存。
+- [x] 配置、支持矩阵、弃用说明、指标及回滚流程与实现一致，必要 CI 通过。
 
 ## 11. 实施时需要核实的外部条件
 

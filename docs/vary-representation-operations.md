@@ -45,6 +45,8 @@ server:
 
 文件/目录 PURGE 先同步逻辑屏障，再清理旧格式数据。v2 字节按读取/写入租约延迟回收，不能用磁盘文件仍存在判断 PURGE 失败。迁移以整个资源集合切换位置，不能调用旧格式单对象迁移来移动 v2 物理对象。
 
+集合迁移通过协调器 MigrateResource 执行；既有自动 Promote/Demote 单对象策略用于旧普通对象，不承诺自动提升/降低 v2 集合。旧普通对象缺块时也须先建立强 If-Range 证明，再发送对应的响应头；没有可靠证明则获取完整替换并按客户端范围裁剪，不把新字节拼入旧响应头。
+
 旧 Vary 文件可通过默认关闭的 `legacy_vary_gc_budget` 定时限速回收。目录屏障自动保守压缩，不按年龄删除；预算、重启续跑、故障演练及本地基准见 [表示缓存维护说明](representation-maintenance.md)。
 
 保留固定 bucket 成员、路径、类型及 state directory。健康变化不转移控制 home；home 失败时旁路。增删成员或替换整个拓扑需要明确的离线迁移/重建流程，当前启动会拒绝静默重分片。
@@ -53,7 +55,7 @@ SIGUSR2 会停止新缓存任务，取消并等待活跃填充/读取及异步�
 
 ## 回滚
 
-1. 将 `server.middleware[].options.representation.enabled` 改为 `false`，通过正常停写/重启交接部署。
+1. 先关闭依赖 v2 的 transform.enabled 和 response_sharing.enabled（若已开启），再将 `server.middleware[].options.representation.enabled` 改为 `false`，通过正常停写/重启交接部署；保留托管路由映射，暂停的托管 GET/HEAD 明确返回 no-store 503，普通 URI 继续透明代理。
 2. 保留 `storage.representation`、state directory、全部 bucket 和控制记录。此时不读取 v2，普通旧缓存可继续使用，旧 Vary 仍旁路；PURGE 仍覆盖 v2，重新启用不会忽略回滚期间的失效。
 3. 不删除根、失效目录或拓扑 manifest 来“降级”。已有控制记录却移除存储绑定会使启动失败。
 4. 回滚到不理解 v2 的旧二进制时使用独立缓存目录；复用原目录之前必须完成停写及明确的清理/失效迁移。

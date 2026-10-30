@@ -1,6 +1,7 @@
 package transform
 
 import (
+	"io"
 	"net/http"
 	"testing"
 
@@ -9,6 +10,51 @@ import (
 	"github.com/omalloc/tavern/server/middleware"
 	planning "github.com/omalloc/tavern/transform"
 )
+
+func TestPausedManagedRoutesPreserveOutputContractAndOrdinaryProxy(t *testing.T) {
+	caps := transformv1.BackendCapabilities{SchemaVersion: 1, Inputs: []string{"image/jpeg"}, Outputs: []transformv1.Codec{{MIME: "image/png", Lossless: true, CompressionMax: 9}}, Conversions: []transformv1.Conversion{{InputMIME: "image/jpeg", OutputMIME: "image/png"}}, PolicyVersion: "worker-p1", EncoderVersion: "worker-e1"}
+	router, err := planning.NewRouter([]planning.Route{{PathPrefix: "/images/", Policy: transformv1.Policy{Formats: []string{"image/png"}, PolicyVersion: "route-p1"}}}, caps)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mw, err := WithRuntime(&planning.Runtime{Router: router})
+	if err != nil {
+		t.Fatal(err)
+	}
+	calls := 0
+	rt := mw(middleware.RoundTripperFunc(func(req *http.Request) (*http.Response, error) {
+		calls++
+		if _, planned := planning.PlanFromContext(req.Context()); planned {
+			t.Error("paused pass-through retained a plan")
+		}
+		return &http.Response{StatusCode: 204, Header: make(http.Header), Body: http.NoBody}, nil
+	}))
+	for _, method := range []string{"GET", "HEAD"} {
+		req, _ := http.NewRequestWithContext(t.Context(), method, "https://example.com/images/a?format=png", nil)
+		req.Header.Set("Accept", "image/png")
+		resp, err := rt.RoundTrip(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		body, err := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if err != nil || resp.StatusCode != 503 || resp.Header.Get("Cache-Control") != "no-store" || resp.Header.Get("Vary") == "" || calls != 0 || (method == "HEAD" && len(body) != 0) {
+			t.Fatal("paused route relaxed its output contract", resp, err)
+		}
+	}
+	for _, item := range []struct{ method, path string }{{"GET", "/ordinary"}, {"PURGE", "/images/a?format=png"}} {
+		req, _ := http.NewRequestWithContext(t.Context(), item.method, "https://example.com"+item.path, nil)
+		req = req.WithContext(planning.WithPlan(req.Context(), planning.Plan{SourceURL: "stale"}))
+		resp, err := rt.RoundTrip(req)
+		if err != nil || resp.StatusCode != 204 {
+			t.Fatal(resp, err)
+		}
+		resp.Body.Close()
+	}
+	if calls != 2 {
+		t.Fatal("ordinary or PURGE path stopped", calls)
+	}
+}
 
 func TestPlannerUsesResolverAndClearsUnmatchedPlans(t *testing.T) {
 	req, _ := http.NewRequestWithContext(t.Context(), "GET", "https://example.com/images/a", nil)
@@ -108,4 +154,19 @@ func TestPrepareValidatesFlattenedRoutePolicyAndRetainsRollbackMapping(t *testin
 	if _, err = WithRuntime(rollback); err != nil {
 		t.Fatal(err)
 	}
+	mw, cleanup, err := Middleware(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cleanup()
+	rt := mw(middleware.RoundTripperFunc(func(*http.Request) (*http.Response, error) {
+		t.Fatal("standalone paused route reached raw origin")
+		return nil, nil
+	}))
+	req, _ = http.NewRequestWithContext(t.Context(), "GET", "https://example.com/images/a?format=png", nil)
+	response, err := rt.RoundTrip(req)
+	if err != nil || response.StatusCode != 503 {
+		t.Fatal(response, err)
+	}
+	response.Body.Close()
 }

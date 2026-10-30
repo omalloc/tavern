@@ -104,6 +104,14 @@ func (s *savepartAsyncReader) Close() error {
 		s.readMu.Lock()
 		defer s.readMu.Unlock()
 		s.closed = true
+		// A range limiter may stop exactly at a confirmed block boundary
+		// without asking the origin for EOF. Keep that full block, while an
+		// incomplete tail still requires a genuine EOF.
+		if !s.eof && s.blockSize > 0 && uint64(s.buf.Len()) == s.blockSize {
+			if err := s.enqueueWrite(false); err != nil {
+				s.onError(err)
+			}
+		}
 		close(s.writeCh)
 		s.writeWg.Wait()
 		if s.onClose != nil {

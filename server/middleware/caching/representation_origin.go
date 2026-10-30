@@ -116,10 +116,10 @@ func (c *Caching) proxyRepresentation(req *http.Request) (*http.Response, error)
 	}
 	validating := false
 	if prior != nil && prior.HasComplete() && req.Header.Get("Range") == "" && priorRef != nil && prior.Representation != nil && prior.Representation.Incarnation == root.Resource.Incarnation && prior.Representation.PurgeEpoch == root.Resource.PurgeEpoch {
-		if _, valid := opaqueETag(prior.Headers.Get("ETag")); valid {
+		if _, valid := opaqueETag(prior.Headers.Get("ETag")); valid && len(prior.Headers.Values("ETag")) == 1 {
 			upstream.Header.Set("If-None-Match", prior.Headers.Get("ETag"))
 			validating = true
-		} else if _, err := http.ParseTime(prior.Headers.Get("Last-Modified")); err == nil {
+		} else if _, err := http.ParseTime(prior.Headers.Get("Last-Modified")); err == nil && len(prior.Headers.Values("Last-Modified")) == 1 {
 			upstream.Header.Set("If-Modified-Since", prior.Headers.Get("Last-Modified"))
 			validating = true
 		}
@@ -290,6 +290,9 @@ func validValidation(prior *object.Metadata, resp *http.Response, req *http.Requ
 		}
 	}
 	if value := req.Header.Get("If-None-Match"); value != "" {
+		if len(req.Header.Values("If-None-Match")) != 1 || len(resp.Header.Values("ETag")) > 1 {
+			return false
+		}
 		old, valid := opaqueETag(value)
 		if !valid {
 			return false
@@ -301,6 +304,9 @@ func validValidation(prior *object.Metadata, resp *http.Response, req *http.Requ
 		return true
 	}
 	if value := req.Header.Get("If-Modified-Since"); value != "" {
+		if len(req.Header.Values("If-Modified-Since")) != 1 || len(resp.Header.Values("Last-Modified")) > 1 {
+			return false
+		}
 		if current := resp.Header.Get("Last-Modified"); current != "" {
 			old, e1 := http.ParseTime(value)
 			fresh, e2 := http.ParseTime(current)

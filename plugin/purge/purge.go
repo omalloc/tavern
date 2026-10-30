@@ -91,6 +91,12 @@ func (r *PurgePlugin) HandleFunc(next http.HandlerFunc) http.HandlerFunc {
 		if err != nil {
 			host = req.RemoteAddr
 		}
+		// Darwin may report an unnamed Unix peer as empty rather than "@".
+		// Normalize only a listener identity supplied by net/http, never a
+		// forwarded header; the explicit "@" allowlist entry is still required.
+		if local, ok := req.Context().Value(http.LocalAddrContextKey).(net.Addr); ok && local.Network() == "unix" {
+			host = "@"
+		}
 		fail := func(status int) {
 			w.Header().Set("Content-Length", "0")
 			w.WriteHeader(status)

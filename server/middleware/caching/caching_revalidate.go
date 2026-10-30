@@ -263,9 +263,6 @@ func (r *RevalidateProcessor) asyncRevalidate(c *Caching, req *http.Request) {
 		}
 		c.attachLegacyLease(lease)
 		defer func() {
-			if c.legacyLeaseStop != nil {
-				c.legacyLeaseStop()
-			}
 			lease.Close()
 		}()
 		if !usable {

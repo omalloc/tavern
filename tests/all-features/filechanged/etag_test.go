@@ -44,7 +44,7 @@ func TestETagChange(t *testing.T) {
 		assert.Equal(t, hashBody, hashFile, "response body should be equal to file MD5")
 	})
 
-	// TODO: 拼接 body 分段无法解决 etag 变更头部信息重写
+	// A changed validator must describe the bytes actually returned to the client.
 	t.Run("test etag get new file", func(t *testing.T) {
 		case1 := e2e.New("http://sendya.me.gslb.com/cases/etag/file1", e2e.RespCallbackFile(f2, func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("X-Case", "new-file")
@@ -59,9 +59,12 @@ func TestETagChange(t *testing.T) {
 
 		assert.Equal(t, http.StatusPartialContent, resp.StatusCode, "response should be code 206")
 
-		assert.Equal(t, "old-file", resp.Header.Get("X-Case"), "response should be X-Case old-file")
+		assert.Equal(t, "new-file", resp.Header.Get("X-Case"), "headers must describe the new bytes")
 
-		assert.Equal(t, f.MD5, resp.Header.Get("ETag"), "response should be ETag") // check is old file
+		assert.Equal(t, f2.MD5, resp.Header.Get("ETag"), "validator must describe the new bytes")
+		got := e2e.HashBody(resp)
+		resp.Body.Close()
+		assert.Equal(t, e2e.HashFile(f2.Path, 600000, f2.Size-600000), got, "body must contain only new bytes")
 	})
 
 	// 上一个请求已经将 old-file discard; 所以这里理应当是 new-file

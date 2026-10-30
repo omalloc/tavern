@@ -52,7 +52,7 @@ Tavern 是一个基于 Go 语言实现的高性能 HTTP 缓存代理服务器。
 
 | 特性 | Tavern | Squid | ATS |
 |---|---|---|---|
-| **回源防击穿** | 旧共享路径暂停，独立回源 | `collapsed_forwarding` 特性 | 读写锁与 `open_write_fail_action` 返回过期版本 |
+| **回源防击穿** | 默认独立回源；v2 可选等价完整冷 GET 验证合并 | `collapsed_forwarding` 特性 | 读写锁与 `open_write_fail_action` 返回过期版本 |
 | **缓存清理与控制** | 支持异步模糊刷新、支持 URL及目录 (Dir) Purge | ICP/HTCP 协议同步刷新，支持 PURGE 指令 | 严格依赖 Cache-Control，利用 `traffic_ctl` 强制清理 |
 | **规则路由与重写** | `rewrite` 中间件 YAML 配置，相对直观简单 | 结合复杂的 ACL 和 `refresh_pattern` 正则 | 极其强大的 `remap.config` 结合插件重写 |
 

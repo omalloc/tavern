@@ -175,9 +175,11 @@ func DumpResp(resp *http.Response) {
 }
 
 func PurgeMethod(t *testing.T, url string, dir bool) {
-	resp, err := New(url, func(w http.ResponseWriter, r *http.Request) {
+	endpoint := New(url, func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusBadGateway)
-	}).Do(func(r *http.Request) {
+	})
+	defer endpoint.Close()
+	resp, err := endpoint.Do(func(r *http.Request) {
 		r.Method = "PURGE"
 		r.Header.Set("Purge-Type", "file,hard")
 		if dir {

@@ -253,9 +253,35 @@ func TestPublicManagedPipelineConfigurationAndReuse(t *testing.T) {
 	transformConfig.Options["enabled"] = false
 	cacheConfig.Options["representation"] = map[string]any{"enabled": false, "namespace": "public-image-test"}
 	rollback := &HTTPServer{config: config}
-	if _, err = rollback.buildMiddlewareChain(origin); err != nil {
+	rollbackRT, err := rollback.buildMiddlewareChain(origin)
+	if err != nil {
 		t.Fatalf("rollback contacted missing worker or required reads: %v", err)
 	}
+	beforePaused := origins.Load()
+	for _, method := range []string{"GET", "HEAD"} {
+		req, _ := http.NewRequestWithContext(t.Context(), method, "https://example.com/images/source.jpg?format=png", nil)
+		req.Header.Set("Accept", "image/png")
+		response, err := rollbackRT.RoundTrip(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		body, err := io.ReadAll(response.Body)
+		response.Body.Close()
+		if err != nil || response.StatusCode != 503 || response.Header.Get("Cache-Control") != "no-store" || origins.Load() != beforePaused || (method == "HEAD" && len(body) != 0) {
+			t.Fatal("paused mapped route escaped to raw origin", response, err)
+		}
+	}
+	ordinary, _ := http.NewRequestWithContext(t.Context(), "GET", "https://example.com/ordinary.jpg", nil)
+	response, err := rollbackRT.RoundTrip(ordinary)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := io.ReadAll(response.Body)
+	response.Body.Close()
+	if err != nil || response.StatusCode != 200 || !bytes.Equal(data, imageBytes) || origins.Load() != beforePaused+1 {
+		t.Fatal("rollback stopped ordinary transparent proxy", err)
+	}
+	originAfterRollback := origins.Load()
 	for _, cleanup := range rollback.cleanups {
 		if cleanup != nil {
 			cleanup()
@@ -293,7 +319,7 @@ func TestPublicManagedPipelineConfigurationAndReuse(t *testing.T) {
 	if _, _, err = request("GET", "format=png", nil); err != nil {
 		t.Fatal(err)
 	}
-	if origins.Load() != 3 || rpc.Load() != afterProbe+1 {
+	if origins.Load() != originAfterRollback+1 || rpc.Load() != afterProbe+1 {
 		t.Fatal("rollback PURGE allowed stale derived hit after reenable")
 	}
 }

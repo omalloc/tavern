@@ -77,6 +77,11 @@ func (s *savepartReader) Close() error {
 		s.readMu.Lock()
 		defer s.readMu.Unlock()
 		s.closed = true
+		if !s.eof && s.blockSize > 0 && uint64(s.buf.Len()) == s.blockSize {
+			if err := s.writeBlock(false); err != nil {
+				s.onError(err)
+			}
+		}
 
 		if s.onClose != nil {
 			s.onClose(s.eof)

@@ -16,7 +16,7 @@ server:
   idle_timeout: 90s
   read_header_timeout: 30s
   max_header_bytes: 1048576 # 1MB=1048576
-  server_via_tokens: true`
+  server_via_tokens: true
   pprof:
     username: "admin"
     password: "password"
@@ -42,7 +42,7 @@ server:
         merge: false
     - name: caching
       options:
-        fuzzy_refresh: true
+        fuzzy_refresh: false # deterministic TTL/revalidation tests; fuzzy policy has unit coverage
         fuzzy_refresh_rate: 0.1
         collapsed_request: true
         collapsed_request_wait_timeout: 100ms
@@ -74,11 +74,6 @@ plugin:
         - "localhost"
         - "@"
       log_path: ./logs/purge.log
-  - name: verifier
-    options:
-      endpoint: https://crc-svc.omalloc.com/receive
-      timeout: 5
-      report_ratio: 100
 storage:
   driver: native # native, custom-driver
   db_type: pebble # boltdb, badgerdb, pebble, nustdb

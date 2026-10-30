@@ -42,33 +42,44 @@ func (c *Caching) attachLegacyLease(lease storage.LegacyFillLease) {
 	}
 	c.legacyLease = lease
 	c.bucket = &leasedBucket{Bucket: c.bucket, lease: lease}
-	c.legacyLeaseStop = context.AfterFunc(c.req.Context(), func() { lease.Close() })
 }
 
 func (c *Caching) finishLegacyLease(resp *http.Response) {
 	if c.legacyLease == nil {
 		return
 	}
-	lease, stop := c.legacyLease, c.legacyLeaseStop
-	close := func() {
-		if stop != nil {
-			stop()
-		}
-		lease.Close()
-	}
+	lease := c.legacyLease
 	if resp == nil || resp.Body == nil || resp.Body == http.NoBody {
-		close()
+		lease.Close()
 		return
 	}
-	resp.Body = &leaseBody{ReadCloser: resp.Body, finish: close}
+	body := &leaseBody{ReadCloser: resp.Body, finish: func() { lease.Close() }}
+	body.ready.Lock()
+	body.stop = context.AfterFunc(c.req.Context(), func() { body.Close() })
+	body.ready.Unlock()
+	resp.Body = body
 }
 
 type leaseBody struct {
 	io.ReadCloser
 	once   sync.Once
 	finish func()
+	ready  sync.Mutex
+	stop   func() bool
+	err    error
 }
 
 var _ io.ReadCloser = (*leaseBody)(nil)
 
-func (b *leaseBody) Close() error { err := b.ReadCloser.Close(); b.once.Do(b.finish); return err }
+func (b *leaseBody) Close() error {
+	b.once.Do(func() {
+		b.err = b.ReadCloser.Close()
+		b.ready.Lock()
+		if b.stop != nil {
+			b.stop()
+		}
+		b.ready.Unlock()
+		b.finish()
+	})
+	return b.err
+}

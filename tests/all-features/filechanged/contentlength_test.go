@@ -60,17 +60,17 @@ func TestContengLenChanged(t *testing.T) {
 
 		hashBody := e2e.HashBody(resp)
 
-		hashFile := e2e.HashFile(f2.Path, int(rr.Start), int(f.Size-int(rr.Start)))
+		hashFile := e2e.HashFile(f2.Path, int(rr.Start), f2.Size-int(rr.Start))
 
 		assert.NoError(t, err, "response should not error")
 
 		assert.Equal(t, http.StatusPartialContent, resp.StatusCode, "response should be code 206")
 
-		assert.Equal(t, rr.ContentRange(uint64(f.Size)), resp.Header.Get("Content-Range"), "response should be Content-Range")
+		assert.Equal(t, rr.ContentRange(uint64(f2.Size)), resp.Header.Get("Content-Range"), "range must use the new representation size")
 
-		assert.Equal(t, "old-file", resp.Header.Get("X-Case"), "response should be X-Case old-file")
+		assert.Equal(t, "new-file", resp.Header.Get("X-Case"), "headers must describe the new bytes")
 
-		assert.Equal(t, f.MD5, resp.Header.Get("ETag"), "response should be ETag")
+		assert.Equal(t, f2.MD5, resp.Header.Get("ETag"), "validator must describe the new bytes")
 
 		assert.Equal(t, hashBody, hashFile, "response body should be equal to file MD5")
 	})
@@ -158,11 +158,9 @@ func TestContentLenShorter(t *testing.T) {
 
 		assert.Equal(t, http.StatusPartialContent, resp.StatusCode, "response should be code 206")
 
-		// Content-Range: bytes 600000-1048569/1048570
-		// Content-Range: bytes 600000-1048575/1048576
-		assert.Equal(t, rr.ContentRange(uint64(f.Size)), resp.Header.Get("Content-Range"), "response should be Content-Range")
+		assert.Equal(t, rr.ContentRange(uint64(f2.Size)), resp.Header.Get("Content-Range"), "range must describe the shorter replacement")
 
-		assert.Equal(t, "old-file", resp.Header.Get("X-Case"), "response should be X-Case old-file")
+		assert.Equal(t, "new-file", resp.Header.Get("X-Case"), "headers must describe the shorter replacement")
 
 		assert.Equal(t, n, int(rr.RangeLength(int64(f2.Size))), "response should be Content-Length")
 	})
@@ -191,7 +189,7 @@ func TestContentLenShorter(t *testing.T) {
 
 		assert.Equal(t, "new-file", resp.Header.Get("X-Case"), "response should be X-Case new-file")
 
-		assert.Contains(t, resp.Header.Get("X-Cache"), "PART_MISS", "response should be X-Cache PART_MISS")
+		assert.Contains(t, resp.Header.Get("X-Cache"), "HIT", "complete replacement should now be cached")
 
 		assert.Equal(t, hashBody, hashFile, "response body should be Conflict MD5")
 	})

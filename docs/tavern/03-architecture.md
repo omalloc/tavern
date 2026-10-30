@@ -209,16 +209,16 @@ sequenceDiagram
 
 | 步骤 / Step | 文件 / File | 函数 / Function |
 |:---|:---|:---|
-| 请求填充 / Request Filling | `server/mod/wrap.go` | `RequestFiller` |
-| 追踪注入 / Trace Injection | `server/mod/wrap.go` | `InjectTrace` |
-| 响应记录 / Response Recording | `server/mod/wrap.go` | `ResponseRecorder` |
+| 请求填充 / Request Filling | `server/mod/wrap.go` | `fillRequest` |
+| 追踪注入 / Trace Injection | `server/mod/wrap.go` | `traces.WithTrace` |
+| 响应记录 / Response Recording | `server/mod/wrap.go` | `xhttp.NewResponseRecorder` |
 | 中间件链执行 / Middleware Chain | `server/middleware/middleware.go` | `Chain()` |
-| 缓存 Key 计算 / Cache Key | `server/middleware/caching/caching.go` | `cacheKey()` |
-| 缓存查找 / Cache Lookup | `server/middleware/caching/caching.go` | `lookup()` |
-| 请求合并 / Request Collapsing | `server/middleware/caching/locker.go` | `collapsedRequest()` |
-| 回源 / Origin Fetch | `proxy/proxy.go` | `RoundTrip()` |
-| 上游选择 / Upstream Select | `proxy/proxy.go` | `selectNode()` |
-| 缓存写入 / Cache Store | `server/middleware/caching/processor.go` | `store()` |
+| 缓存 Key 计算 / Cache Key | `server/middleware/caching/internal.go` | `newObjectIDFromRequest`；v2 另用 `representationKey` |
+| 缓存查找 / Cache Lookup | `server/middleware/caching/caching_representation.go` | `lookupRepresentation`；旧普通对象由 `preCacheProcessor` 查找 |
+| 请求合并 / Request Collapsing | `server/middleware/caching/response_sharing.go` | 可选的完整冷 GET 响应验证合并；旧共享保持关闭 |
+| 回源 / Origin Fetch | `proxy/transport.go` | `Transport.RoundTrip` |
+| 上游选择 / Upstream Select | `proxy/proxy.go` | `ReverseProxy.Do` 中的 `selector.Select` |
+| 缓存写入 / Cache Store | `server/middleware/caching/write_session.go`、`representation_writer.go` | 旧固定会话；v2 确认块后 `IndexRepository.Publish` |
 | 响应返回 / Response | `server/middleware/caching/caching.go` | `RoundTrip()` |
 
 ---
