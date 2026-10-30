@@ -87,44 +87,29 @@ func (c *Caching) proxyRepresentation(req *http.Request) (*http.Response, error)
 	prior, priorRef := c.md.Clone(), c.variantRef
 	c.bypassRepresentation(req)
 	upstream := prepareRepresentationRequest(req)
-	fetch := func(request *http.Request) (*http.Response, error) {
-		return c.proxyClient.Do(request, false, c.opt.CollapsedRequestWaitTimeout.AsDuration())
-	}
-	// Client conditions retain their own 304 semantics. HEAD, Range and body-
-	// carrying requests do not create complete descriptors through this path.
-	if requestBypassesCache(req) || hasClientConditions(req) || req.Method != http.MethodGet || req.Header.Get("Range") != "" ||
+	// Client conditions retain their own semantics. HEAD and body-carrying
+	// requests never create body descriptors through this path.
+	if requestBypassesCache(req) || hasClientConditions(req) || req.Method != http.MethodGet ||
 		(req.Body != nil && req.Body != http.NoBody) || config.repository == nil {
-		return fetch(upstream)
-	}
-	key, err := c.representationKey(req)
-	if err != nil {
-		return fetch(upstream)
+		return c.executeUpstream(upstream)
 	}
 	repo := config.repository
-	state, err := repo.Capture(req.Context(), key)
+	state, bucket, err := c.beginRepresentationFill(req)
 	if err != nil {
-		return fetch(upstream)
+		return c.executeUpstream(upstream)
 	}
 	root := state.Resource()
 	c.resourceMD = root
-	var bucket storage.Bucket
-	// The lookup already resolved an existing selected location. For cold
-	// roots use the fixed initial bucket, never a new dynamic selection.
-	if c.bucket != nil && c.bucket.ID() == root.Resource.ActiveLocation {
-		bucket = c.bucket
-	}
-	for _, candidate := range c.representationBuckets {
-		if candidate.ID() == root.Resource.ActiveLocation {
-			bucket = candidate
-			break
-		}
-	}
-	if bucket == nil {
-		return fetch(upstream)
-	}
 	c.bucket = bucket
+	// A missing range in an existing generation has no reusable version
+	// proof. Rebuild a full object under a fresh ID, then crop only the client
+	// response. We never resume writes into a published partial generation.
+	rebuildRange := prior != nil && upstream.Header.Get("Range") != "" && !strings.Contains(upstream.Header.Get("Range"), ",")
+	if rebuildRange {
+		upstream.Header.Del("Range")
+	}
 	validating := false
-	if prior != nil && priorRef != nil && prior.Representation != nil && prior.Representation.Incarnation == root.Resource.Incarnation && prior.Representation.PurgeEpoch == root.Resource.PurgeEpoch {
+	if prior != nil && prior.HasComplete() && req.Header.Get("Range") == "" && priorRef != nil && prior.Representation != nil && prior.Representation.Incarnation == root.Resource.Incarnation && prior.Representation.PurgeEpoch == root.Resource.PurgeEpoch {
 		if _, valid := opaqueETag(prior.Headers.Get("ETag")); valid {
 			upstream.Header.Set("If-None-Match", prior.Headers.Get("ETag"))
 			validating = true
@@ -135,7 +120,7 @@ func (c *Caching) proxyRepresentation(req *http.Request) (*http.Response, error)
 	}
 	for attempt := 0; attempt < 2; attempt++ {
 		started := repo.Now()
-		resp, err := fetch(upstream)
+		resp, err := c.executeUpstream(upstream)
 		if err != nil {
 			closeBody(resp)
 			return nil, err
@@ -157,19 +142,45 @@ func (c *Caching) proxyRepresentation(req *http.Request) (*http.Response, error)
 			validating, prior, priorRef = false, nil, nil
 			continue
 		}
-		return c.admitRepresentation(req, upstream, resp, priorRef, state, bucket, started, received), nil
+		resp = c.admitRepresentation(req, upstream, resp, priorRef, state, bucket, started, received)
+		if rebuildRange {
+			return applyRepresentationRange(req, resp)
+		}
+		return resp, nil
 	}
 	return nil, errors.New("representation validation retry exhausted")
 }
 
-func (c *Caching) admitRepresentation(client, upstream *http.Request, resp *http.Response, previous *object.VariantRef, state *representation.IndexState, bucket storage.Bucket, started, received time.Time) *http.Response {
-	if resp.StatusCode != http.StatusOK || resp.ContentLength <= 0 || resp.Body == nil || resp.Header.Get("Content-Range") != "" || c.opt.SliceSize == 0 {
-		return resp
+func (c *Caching) executeUpstream(req *http.Request) (*http.Response, error) {
+	return c.proxyClient.Do(req, false, c.opt.CollapsedRequestWaitTimeout.AsDuration())
+}
+
+// Capture before network I/O and resolve the recorded bucket once. Neither
+// admission nor body callbacks may select a replacement location on failure.
+func (c *Caching) beginRepresentationFill(req *http.Request) (*representation.IndexState, storage.Bucket, error) {
+	key, err := c.representationKey(req)
+	if err != nil {
+		return nil, nil, err
 	}
-	headers := resp.Header.Clone()
-	xhttp.RemoveHopByHopHeaders(headers)
-	length, err := strconv.ParseInt(headers.Get("Content-Length"), 10, 64)
-	if err != nil || length != resp.ContentLength || len(headers.Values("Content-Length")) != 1 {
+	state, err := c.opt.representation.repository.Capture(req.Context(), key)
+	if err != nil {
+		return nil, nil, err
+	}
+	location := state.Resource().Resource.ActiveLocation
+	if c.bucket != nil && c.bucket.ID() == location {
+		return state, c.bucket, nil
+	}
+	for _, candidate := range c.representationBuckets {
+		if candidate.ID() == location {
+			return state, candidate, nil
+		}
+	}
+	return nil, nil, storage.ErrKeyNotFound
+}
+
+func (c *Caching) admitRepresentation(client, upstream *http.Request, resp *http.Response, previous *object.VariantRef, state *representation.IndexState, bucket storage.Bucket, started, received time.Time) *http.Response {
+	headers, size, span, admitted := analyzeRepresentationResponse(upstream, resp, c.opt.SliceSize)
+	if !admitted {
 		return resp
 	}
 	fields, wildcard, err := varycontrol.Parse(headers.Values("Vary")...)
@@ -199,11 +210,12 @@ func (c *Caching) admitRepresentation(client, upstream *http.Request, resp *http
 	date, _ := http.ParseTime(headers.Get("Date"))
 	ref.RepresentationID, ref.ResponseDate = id, date.Unix()
 	md := &object.Metadata{ID: id, RecordKind: object.RecordRepresentation, BlockSize: c.opt.SliceSize, Code: http.StatusOK,
-		Size: uint64(length), RespUnix: received.Unix(), LastRefUnix: received.Unix(), ExpiresAt: expires, Headers: headers,
+		Size: size, RespUnix: received.Unix(), LastRefUnix: received.Unix(), ExpiresAt: expires, Headers: headers,
 		Representation: &object.RepresentationInfo{SchemaVersion: object.RepresentationSchemaVersion,
 			ResourceID: root.ResourceID, Incarnation: root.Incarnation, PurgeEpoch: root.PurgeEpoch, ValidatedEpoch: root.RevalidateEpoch,
 			BodyGeneration: generation, StorageSelectorFingerprint: ref.SelectorFingerprint, State: object.RepresentationFilling, Kind: object.RepresentationOrigin}}
-	resp.Body = newRepresentationWriter(resp.Body, client.Context(), bucket, repo, state, lease, ref, previous, md, func(err error) { c.log.Warnf("representation fill failed for %s: %v", id.HashStr(), err) })
+	logger := c.log
+	resp.Body = newRepresentationWriter(resp.Body, client.Context(), bucket, repo, state, lease, ref, previous, md, span, func(err error) { logger.Warnf("representation fill failed for %s: %v", id.HashStr(), err) })
 	c.id, c.bypass, c.cacheStatus = id.Clone(), false, storage.CacheMiss
 	if previous != nil {
 		c.cacheStatus = storage.CacheRevalidateMiss

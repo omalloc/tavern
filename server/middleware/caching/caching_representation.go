@@ -5,6 +5,7 @@ import (
 	"math"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/omalloc/tavern/api/defined/v1/storage"
@@ -17,7 +18,7 @@ type representationLookup struct {
 	repository     *representation.IndexRepository
 	namespace      string
 	isolationScope string
-	writes         bool // internal P1.4 admission path, never exposed to config
+	writes         bool // controlled write lifecycle, never exposed to config
 }
 
 func (c *Caching) lookupRepresentation(store storage.Storage) error {
@@ -60,9 +61,26 @@ func (c *Caching) lookupRepresentation(store storage.Storage) error {
 			ref := selected.Reference.Clone()
 			c.variantRef = &ref
 			c.id = c.md.ID.Clone()
-			c.hit, c.bypass = selected.Fresh, !selected.Fresh
+			rng, rangeErr := representationRequestRange(c.req.Header.Get("Range"), c.md.Size)
+			readable := rangeErr == nil && c.md.HasReadableRange(uint64(rng.Start), uint64(rng.End))
+			// HEAD needs no bytes. Multi-range/invalid requests stay with the
+			// origin rather than silently selecting only their first range.
+			if c.req.Method == http.MethodHead {
+				readable = c.md.HasComplete()
+			}
+			if strings.Contains(c.req.Header.Get("Range"), ",") {
+				readable = false
+			}
+			c.hit = selected.Fresh && readable
+			c.bypass = !c.hit
 			if c.hit {
 				c.cacheStatus = storage.CacheHit
+				now := config.repository.Now().Unix()
+				if c.opt.FuzzyRefresh && c.opt.FuzzyRefreshRate > 0 && c.md.HasComplete() && hasConditionHeader(c.md.Headers) &&
+					shouldTriggerFuzzyRefresh(now, calculateSoftTTL(c.md.RespUnix, c.md.ExpiresAt, c.opt.FuzzyRefreshRate), c.md.ExpiresAt) {
+					background := c.cloneForBackground(c.req)
+					go (&RevalidateProcessor{}).asyncRevalidate(background, background.req)
+				}
 			}
 			return nil
 		}

@@ -173,7 +173,7 @@ func TestRepresentationOriginBudgetBypassesOnlyNewSelector(t *testing.T) {
 }
 
 func TestRepresentationOriginAdmissionBypass(t *testing.T) {
-	for _, kind := range []string{"star", "invalid", "fields", "snapshot", "no-store", "private", "unknown-length", "partial"} {
+	for _, kind := range []string{"star", "invalid", "fields", "snapshot", "no-store", "private", "partial"} {
 		t.Run(kind, func(t *testing.T) {
 			var calls atomic.Int32
 			f := newOriginFixture(t, func(w http.ResponseWriter, _ *http.Request) {
@@ -196,9 +196,6 @@ func TestRepresentationOriginAdmissionBypass(t *testing.T) {
 				case "no-store", "private":
 					w.Header().Set("Cache-Control", "max-age=600,"+kind)
 					w.Header().Set(protocol.ProtocolCacheTime, "600")
-				case "unknown-length":
-					w.Header().Del("Content-Length")
-					w.(http.Flusher).Flush()
 				case "partial":
 					w.Header().Set("Content-Range", "bytes 0-4/10")
 					w.WriteHeader(206)
@@ -657,7 +654,7 @@ func TestRepresentationWriteFailurePreservesResponseAndReleasesBudget(t *testing
 	}
 }
 
-func TestRepresentationColdHeadAndRangeDoNotPublishBodies(t *testing.T) {
+func TestRepresentationColdHeadAndUnalignedRangeDoNotPublishBodies(t *testing.T) {
 	var calls atomic.Int32
 	f := newOriginFixture(t, func(w http.ResponseWriter, r *http.Request) {
 		calls.Add(1)
@@ -680,8 +677,8 @@ func TestRepresentationColdHeadAndRangeDoNotPublishBodies(t *testing.T) {
 	if resp.StatusCode != 206 || body != "ma" {
 		t.Fatal(resp, body)
 	}
-	if _, err := f.repo.Load(t.Context(), f.key); !errors.Is(err, storage.ErrKeyNotFound) {
-		t.Fatal("HEAD or Range created a body descriptor", err)
+	if len(f.root(t).Resource.Variants) != 0 {
+		t.Fatal("HEAD or an unaligned fragment published a body descriptor")
 	}
 	f.get(t, http.Header{"Accept": {"image/jpeg"}})
 	req = varyRequest(t, f.target, http.Header{"Accept": {"image/jpeg"}})

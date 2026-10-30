@@ -7,7 +7,6 @@ import (
 	"io"
 	"math"
 	"net/http"
-	"net/url"
 	"os"
 	"slices"
 	"sort"
@@ -15,8 +14,6 @@ import (
 	"strings"
 	"sync"
 	"syscall"
-
-	"github.com/omalloc/proxy/selector"
 
 	"github.com/omalloc/tavern/api/defined/v1/storage"
 	"github.com/omalloc/tavern/api/defined/v1/storage/object"
@@ -302,33 +299,7 @@ func isTooManyFiles(err error) bool {
 }
 
 func cloneRequest(req *http.Request) *http.Request {
-	proxyURL, _ := url.Parse(req.URL.String())
-	if proxyURL.Host == "" {
-		proxyURL.Host = req.Host
-	}
-	if proxyURL.Scheme == "" {
-		proxyURL.Scheme = xhttp.Scheme(req)
-	}
-	proxyReq := &http.Request{
-		ProtoMajor: req.ProtoMajor,
-		ProtoMinor: req.ProtoMinor,
-		Proto:      req.Proto,
-		Host:       req.Host,
-		Method:     req.Method,
-		URL:        proxyURL,
-		Header:     make(http.Header),
-	}
-	xhttp.CopyHeader(proxyReq.Header, req.Header)
-	xhttp.RemoveHopByHopHeaders(proxyReq.Header)
-
-	// custom upstream addr
-	if upsAddr := req.Header.Get(protocol.InternalUpstreamAddr); upsAddr != "" {
-		proxyReq = proxyReq.WithContext(
-			selector.NewPeerContext(context.Background(), selector.NewPeer(selector.NewNode("http", upsAddr, map[string]string{}))),
-		)
-	}
-
-	return proxyReq
+	return prepareRepresentationRequest(req)
 }
 
 func newObjectIDFromRequest(req *http.Request, vd string, includeQuery bool) (*object.ID, error) {

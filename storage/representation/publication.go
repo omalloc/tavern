@@ -112,7 +112,8 @@ func (r *IndexRepository) Publish(ctx context.Context, state *IndexState, lease 
 			previousFound = true
 		}
 		if sameSelector(existing, ref) && (existing.ResponseDate > ref.ResponseDate ||
-			(existing.ResponseDate == ref.ResponseDate && !sameID(existing.RepresentationID, ref.RepresentationID) && existing.RepresentationID.HashStr() < ref.RepresentationID.HashStr())) {
+			(existing.ResponseDate == ref.ResponseDate && (previous == nil || !sameReference(existing, *previous)) &&
+				!sameID(existing.RepresentationID, ref.RepresentationID) && existing.RepresentationID.HashStr() < ref.RepresentationID.HashStr())) {
 			return false, nil
 		}
 	}

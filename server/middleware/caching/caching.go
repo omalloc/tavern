@@ -8,11 +8,9 @@ import (
 	"net/http"
 	"net/http/httputil"
 	"os"
-	"path/filepath"
 	"time"
 
 	"github.com/kelindar/bitmap"
-	"github.com/prometheus/client_golang/prometheus"
 
 	"github.com/omalloc/tavern/api/defined/v1/event"
 	configv1 "github.com/omalloc/tavern/api/defined/v1/middleware"
@@ -193,6 +191,9 @@ func (c *Caching) respondFromCache(req *http.Request) (*http.Response, error) {
 	c.cacheStatus = storage.CacheHit
 
 	rng, err := xhttp.SingleRange(req.Header.Get("Range"), c.md.Size)
+	if c.resourceMD != nil {
+		rng, err = representationRequestRange(req.Header.Get("Range"), c.md.Size)
+	}
 	if err != nil {
 		headers := make(http.Header)
 		xhttp.CopyHeader(c.md.Headers, headers)
@@ -206,7 +207,9 @@ func (c *Caching) respondFromCache(req *http.Request) (*http.Response, error) {
 	if err != nil {
 		closeBody(resp)
 		if c.resourceMD != nil && errors.Is(err, os.ErrNotExist) {
-			c.md, c.variantRef = nil, nil
+			if c.opt.representation == nil || !c.opt.representation.writes {
+				c.md, c.variantRef = nil, nil
+			}
 			c.hit, c.cacheable, c.bypass = false, false, true
 			c.cacheStatus = storage.BYPASS
 			resp, err = c.doProxy(req, false)
@@ -348,7 +351,7 @@ func (c *Caching) doProxy(req *http.Request, subRequest bool) (*http.Response, e
 
 	c.log.Debugf("doProxy begin with %s", proxyReq.URL.String())
 
-	resp, err := c.proxyClient.Do(proxyReq, false, c.opt.CollapsedRequestWaitTimeout.AsDuration())
+	resp, err := c.executeUpstream(proxyReq)
 	if err != nil {
 		return resp, err
 	}
@@ -485,15 +488,14 @@ func (c *Caching) doProxy(req *http.Request, subRequest bool) (*http.Response, e
 			}
 		}
 
-		// `cacheable` means can write to cache storage
-		if c.cacheable {
-			// flushbuffer 文件从这里写出到 bucket / disk
-			flushBuffer, cleanup := c.flushbufferSlice(respRange)
+	}
 
-			// save body stream to bucket(disk).
-			resp.Body = iobuf.SavepartAsyncReader(resp.Body, c.md.BlockSize, uint(respRange.Start), flushBuffer, c.flushFailed, cleanup, 8)
-		}
-
+	// Keep the origin stream inside any client-side Range wrapper. Install a
+	// writer only after processors have finalized the stored metadata.
+	originHeaders := resp.Header.Clone()
+	originBody := &struct{ io.ReadCloser }{resp.Body}
+	if !notModified {
+		resp.Body = originBody
 	}
 
 	resp, err = c.processor.PostRequest(c, proxyReq, resp)
@@ -507,8 +509,12 @@ func (c *Caching) doProxy(req *http.Request, subRequest bool) (*http.Response, e
 	}
 
 	// update indexdb headers
-	if c.fileChanged || !subRequest {
-		xhttp.CopyHeader(c.md.Headers, resp.Header)
+	if !notModified && (c.fileChanged || !subRequest) {
+		c.md.Headers = originHeaders
+		c.md.Headers.Del("Content-Range")
+		if !c.noContentLen {
+			c.md.Headers.Set("Content-Length", fmt.Sprint(c.md.Size))
+		}
 	}
 
 	// drop internal header
@@ -516,104 +522,12 @@ func (c *Caching) doProxy(req *http.Request, subRequest bool) (*http.Response, e
 	c.md.Headers.Del("X-Protocol-Cache")
 	c.md.Headers.Del("X-Protocol-Request-Id")
 
+	if !notModified && c.cacheable && req.Method != http.MethodHead {
+		session := c.newWriteSession()
+		flush, cleanup := flushbufferSlice(session, respRange)
+		originBody.ReadCloser = iobuf.SavepartAsyncReader(originBody.ReadCloser, session.md.BlockSize, uint(respRange.Start), flush, session.fail, cleanup, 8)
+	}
+
 	c.log.Debugf("doProxy end %s %q code: %d %s", proxyReq.Method, proxyReq.URL.String(), resp.StatusCode, respRange.String())
 	return resp, proxyErr
-}
-
-func (c *Caching) flushbufferSlice(respRange xhttp.ContentRange) (iobuf.EventSuccess, iobuf.EventClose) {
-	// is chunked encoding
-	// chunked encoding when object size unknown, waiting for Read io.EOF
-	chunked := respRange.ObjSize <= 0
-
-	// auto calculate end part with block-size.
-	endPart := func() uint32 {
-		epart := uint32(respRange.ObjSize / c.md.BlockSize)
-		if respRange.ObjSize%c.md.BlockSize > 0 {
-			epart++
-		}
-		return epart
-	}()
-
-	writerBuffer := func(buf []byte, index uint32, current uint64, eof bool) error {
-		f, wpath, err := c.bucket.WriteChunkFile(c.req.Context(), c.id, index)
-		if err != nil {
-			cacheChunkWriteTotal.With(prometheus.Labels{"result": "failed", "store_type": c.bucket.StoreType()}).Inc()
-			return err
-		}
-		defer func() {
-			if err := f.Close(); err != nil {
-				_ = err
-			}
-
-			// push verifier
-			if eof && endPart == uint32(c.md.Chunks.Count()) {
-				c.log.Debug("file all chunk complete")
-
-				// trigger file crc check
-				// has InMemory store type skip crc check
-				if c.bucket.Type() == storage.TypeInMemory {
-					return
-				}
-
-				c.opt.publish(context.Background(), &cacheCompleted{
-					ratio:         0, // 0 = use verifier plugin ratio, 0 > = percent sampling, -1 = disable
-					storeUrl:      c.id.Key(),
-					storeKey:      c.id.HashStr(),
-					storePath:     filepath.Dir(wpath),
-					lastModified:  c.md.Headers.Get("Last-Modified"),
-					contentLength: int64(c.md.Size),
-					chunkCount:    c.md.Chunks.Count(),
-					chunkSize:     c.md.BlockSize,
-				})
-			}
-		}()
-
-		if chunked {
-			c.md.Size = current
-			c.md.Headers.Set("Content-Length", fmt.Sprintf("%d", current))
-		} else if uint64(len(buf)) != c.md.BlockSize && current != respRange.ObjSize {
-			c.log.Debugf("writeBuffer chunk[%d] is not complete, want end chunk [%d] ", index+1, endPart)
-			return nil
-		}
-
-		c.log.Debugf("flushBuffer wpath=%s isChunked=%t fileChunk=%d/%d", wpath, chunked, index+1, endPart)
-
-		if nn, err1 := f.Write(buf); err1 != nil || nn != len(buf) {
-			cacheChunkWriteTotal.With(prometheus.Labels{"result": "failed", "store_type": c.bucket.StoreType()}).Inc()
-			return fmt.Errorf("writeBuffer wpath[%s] chunk[%d] failed nn[%d] want[%d] err %v", wpath, index+1, nn, len(buf), err1)
-		}
-
-		// save slice chunk
-		c.md.Chunks.Set(index)
-
-		if !c.opt.AsyncFlushChunk {
-			// store chunk now.
-			_ = c.bucket.Store(c.req.Context(), c.md)
-		}
-
-		cacheChunkWriteTotal.With(prometheus.Labels{"result": "success", "store_type": c.bucket.StoreType()}).Inc()
-		return nil
-	}
-
-	writerCloser := func(eof bool) {
-		if !eof && chunked {
-			_ = c.bucket.DiscardWithMessage(c.req.Context(), c.id, "incomplete chunked file discard")
-			return
-		}
-
-		if c.opt.AsyncFlushChunk {
-			// store chunk with last eof event.
-			_ = c.bucket.Store(c.req.Context(), c.md)
-		}
-
-	}
-
-	return writerBuffer, writerCloser
-}
-
-// flushFailed flush cache file to bucket failed callback
-func (c *Caching) flushFailed(err error) {
-	c.log.Errorf("flush body to disk failed: %v", err)
-	cacheFlushFailedTotal.WithLabelValues(c.bucket.StoreType()).Inc()
-	_ = c.bucket.DiscardWithMetadata(c.req.Context(), c.md)
 }

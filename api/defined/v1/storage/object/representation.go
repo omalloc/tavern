@@ -2,6 +2,7 @@ package object
 
 import (
 	"encoding/json"
+	"math"
 	"slices"
 
 	"github.com/omalloc/tavern/pkg/x/http/varycontrol"
@@ -129,4 +130,45 @@ func (m *Metadata) IsResponse() bool {
 	return m != nil && m.RecordKind == RecordRepresentation && m.Resource == nil &&
 		m.Representation != nil && m.Representation.SchemaVersion == RepresentationSchemaVersion &&
 		(m.Representation.Kind == RepresentationOrigin || m.Representation.Kind == RepresentationDerived)
+}
+
+// HasReadableChunks accepts either a complete representation or an immutable
+// partial generation published after its response reached EOF. Filling objects
+// without confirmed chunks, or with outstanding file ownership, are unreadable.
+func (m *Metadata) HasReadableChunks() bool {
+	if m == nil || m.RecordKind != RecordRepresentation || !m.IsResponse() || m.Size == 0 ||
+		m.Size > math.MaxInt64 || m.BlockSize == 0 || m.BlockSize > math.MaxInt64 || m.Parts.Count() != 0 {
+		return false
+	}
+	blocks := (m.Size-1)/m.BlockSize + 1
+	last, ok := m.Chunks.Max()
+	if !ok || uint64(last) >= blocks || blocks > uint64(math.MaxUint32)+1 {
+		return false
+	}
+	switch m.Representation.State {
+	case RepresentationComplete:
+		return m.HasComplete()
+	case RepresentationFilling:
+		return uint64(m.Chunks.Count()) < blocks
+	default:
+		return false
+	}
+}
+
+// HasReadableRange never treats a missing block as permission to splice bytes
+// fetched later into this generation.
+func (m *Metadata) HasReadableRange(start, end uint64) bool {
+	if !m.HasReadableChunks() || start > end || end >= m.Size {
+		return false
+	}
+	first, last := start/m.BlockSize, end/m.BlockSize
+	if last-first+1 > uint64(m.Chunks.Count()) {
+		return false
+	}
+	for index := first; index <= last; index++ {
+		if !m.Chunks.Contains(uint32(index)) {
+			return false
+		}
+	}
+	return true
 }

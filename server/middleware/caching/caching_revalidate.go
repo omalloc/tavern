@@ -92,7 +92,10 @@ func (r *RevalidateProcessor) Lookup(c *Caching, req *http.Request) (bool, error
 						time.Unix(hardTTL, 0).Format(time.DateTime))
 
 					// Trigger async revalidation in background
-					go r.asyncRevalidate(c, req)
+					// Snapshot synchronously, before the foreground response starts
+					// touching metadata and assembling its own headers/readers.
+					background := c.cloneForBackground(req)
+					go r.asyncRevalidate(background, background.req)
 				}
 			}
 
@@ -247,13 +250,17 @@ func (r *RevalidateProcessor) asyncRevalidate(c *Caching, req *http.Request) {
 
 	// Clone the request for background processing
 	bgReq := req.Clone(ctx)
+	c.ctx, c.req = ctx, bgReq
+	c.hit, c.prefetch, c.revalidate = false, false, true
 
 	// Set conditional headers for revalidation
-	if c.md.Headers.Get("ETag") != "" {
-		bgReq.Header.Set("If-None-Match", c.md.Headers.Get("ETag"))
-	}
-	if c.md.Headers.Get("Last-Modified") != "" {
-		bgReq.Header.Set("If-Modified-Since", c.md.Headers.Get("Last-Modified"))
+	if c.opt.representation == nil {
+		if c.md.Headers.Get("ETag") != "" {
+			bgReq.Header.Set("If-None-Match", c.md.Headers.Get("ETag"))
+		}
+		if c.md.Headers.Get("Last-Modified") != "" {
+			bgReq.Header.Set("If-Modified-Since", c.md.Headers.Get("Last-Modified"))
+		}
 	}
 
 	// Remove Range header for full object revalidation
@@ -293,6 +300,20 @@ func (r *RevalidateProcessor) asyncRevalidate(c *Caching, req *http.Request) {
 	}
 
 	c.log.Debugf("async fuzzy refresh completed (%d) for object: %s", resp.StatusCode, c.id.Key())
+}
+
+func (c *Caching) cloneForBackground(req *http.Request) *Caching {
+	background := *c
+	background.id = c.id.Clone()
+	background.md = c.md.Clone()
+	background.rootmd = c.rootmd.Clone()
+	background.resourceMD = c.resourceMD.Clone()
+	if c.variantRef != nil {
+		ref := c.variantRef.Clone()
+		background.variantRef = &ref
+	}
+	background.req = req.Clone(req.Context())
+	return &background
 }
 
 func NewRevalidateProcessor(opts ...RefreshOption) Processor {

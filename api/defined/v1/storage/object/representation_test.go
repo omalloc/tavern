@@ -53,6 +53,9 @@ func TestResourceRecordCodec(t *testing.T) {
 	derived.Representation.TransformSpec = []byte(`{"schema_version":1,"quality":82}`)
 	derived.Representation.PolicyVersion = "images-v1"
 	derived.Representation.EncoderVersion = "encoder-v1"
+	partial := response.Clone()
+	partial.Size = 150
+	partial.Representation.State = RepresentationFilling
 	managed := root.Clone()
 	managed.Resource.Variants[0].SelectionKind = SelectionManaged
 	managed.Resource.Variants[0].SelectedSourceID = response.ID.Clone()
@@ -60,7 +63,7 @@ func TestResourceRecordCodec(t *testing.T) {
 	managed.Resource.Variants[0].TransformFingerprint = strings.Repeat("a", 64)
 	for _, codec := range []encoding.Codec{&jsoncodec.JSONCodec{}, &cobr.CborCodec{}} {
 		t.Run(codec.Name(), func(t *testing.T) {
-			for _, md := range []*Metadata{root, response, managed, derived} {
+			for _, md := range []*Metadata{root, response, managed, derived, partial} {
 				data, err := codec.Marshal(md)
 				if err != nil {
 					t.Fatal(err)

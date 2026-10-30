@@ -291,14 +291,14 @@ func validateReference(ref object.VariantRef) error {
 }
 
 func validChild(key object.ResourceKey, root *object.ResourceRecord, ref object.VariantRef, md *object.Metadata) bool {
-	if md == nil || !md.IsResponse() || md.RecordKind != object.RecordRepresentation || !sameID(md.ID, ref.RepresentationID) || !md.HasComplete() || md.Code != http.StatusOK {
+	if md == nil || !md.IsResponse() || md.RecordKind != object.RecordRepresentation || !sameID(md.ID, ref.RepresentationID) || !md.HasReadableChunks() || md.Code != http.StatusOK {
 		return false
 	}
 	if md.Size > math.MaxInt64 || md.BlockSize > math.MaxInt64 {
 		return false
 	}
-	// P1.3 admits complete, known-length 200 responses only. A converted
-	// partial descriptor or the legacy chunked flag cannot establish that.
+	// Stored headers always describe the full representation. A partial origin
+	// response publishes only confirmed chunks, with a known complete size.
 	length, err := strconv.ParseUint(md.Headers.Get("Content-Length"), 10, 64)
 	if err != nil || length != md.Size || len(md.Headers.Values("Content-Length")) != 1 ||
 		md.Headers.Get("Content-Range") != "" || md.Flags != object.FlagCache {
