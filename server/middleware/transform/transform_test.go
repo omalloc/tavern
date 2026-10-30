@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	configv1 "github.com/omalloc/tavern/api/defined/v1/middleware"
+	transformv1 "github.com/omalloc/tavern/api/defined/v1/transform"
 	"github.com/omalloc/tavern/server/middleware"
 	planning "github.com/omalloc/tavern/transform"
 )
@@ -66,4 +67,45 @@ func TestPlannerRejectsUnsatisfiableOutputWith406(t *testing.T) {
 		t.Fatal(resp, err)
 	}
 	resp.Body.Close()
+}
+
+func TestPrepareValidatesFlattenedRoutePolicyAndRetainsRollbackMapping(t *testing.T) {
+	caps := transformv1.BackendCapabilities{SchemaVersion: 1, Inputs: []string{"image/jpeg"}, Outputs: []transformv1.Codec{{MIME: "image/png", Lossless: true, CompressionMax: 9}}, Conversions: []transformv1.Conversion{{InputMIME: "image/jpeg", OutputMIME: "image/png"}}, PolicyVersion: "worker-p1", EncoderVersion: "worker-e1"}
+	makeConfig := func() *configv1.Middleware {
+		return &configv1.Middleware{Options: map[string]any{"enabled": true, "routes": []map[string]any{{"path_prefix": "/images/", "mode": "auto", "formats": []string{"image/png"}, "policy_version": "route-p1", "quality": 91, "fallback_to_source": true}}, "backend": map[string]any{"name": "http", "endpoint": "http://127.0.0.1:1/v1/transform", "capabilities": caps}, "limits": map[string]any{"max_input_bytes": 1024, "max_output_bytes": 2048, "max_pixels": 256, "concurrency": 1, "queue_size": 1, "timeout": "1s"}}}
+	}
+	config := makeConfig()
+	runtime, err := Prepare(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer runtime.Close()
+	req, _ := http.NewRequestWithContext(t.Context(), "GET", "https://example.com/images/a?format=png", nil)
+	plan, matched, err := runtime.Router.Resolve(req)
+	if err != nil || !matched || plan.Policy.Quality != 91 || plan.Policy.PolicyVersion != "route-p1" || !plan.FallbackToSource {
+		t.Fatal("flat policy lost", plan, err)
+	}
+	if _, err = WithRuntime(runtime); err == nil {
+		t.Fatal("unverified runtime accepted")
+	}
+	config = makeConfig()
+	config.Options["routes"].([]map[string]any)[0]["formats"] = []string{"image/webp"}
+	if invalid, err := Prepare(config); err == nil {
+		invalid.Close()
+		t.Fatal("undeclared route output accepted")
+	}
+	config = makeConfig()
+	config.Options["enabled"] = false
+	config.Options["backend"].(map[string]any)["endpoint"] = "unavailable://worker"
+	rollback, err := Prepare(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rollback.Close()
+	if rollback.Enabled || rollback.Worker != nil || rollback.Router == nil {
+		t.Fatal("rollback did not retain pure mapping")
+	}
+	if _, err = WithRuntime(rollback); err != nil {
+		t.Fatal(err)
+	}
 }

@@ -100,6 +100,7 @@ type ImageInfo struct {
 	Height           int    `json:"height" yaml:"height"`
 	HasAlpha         bool   `json:"has_alpha" yaml:"has_alpha"`
 	Animated         bool   `json:"animated" yaml:"animated"`
+	HasMetadata      bool   `json:"has_metadata" yaml:"has_metadata"`
 }
 
 func (r *ResourceRecord) Clone() *ResourceRecord {

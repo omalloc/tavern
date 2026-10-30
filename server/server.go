@@ -30,13 +30,14 @@ import (
 	"github.com/omalloc/tavern/pkg/x/runtime"
 	"github.com/omalloc/tavern/proxy"
 	"github.com/omalloc/tavern/server/middleware"
-	_ "github.com/omalloc/tavern/server/middleware/caching"
+	"github.com/omalloc/tavern/server/middleware/caching"
 	_ "github.com/omalloc/tavern/server/middleware/multirange"
 	_ "github.com/omalloc/tavern/server/middleware/recovery"
 	_ "github.com/omalloc/tavern/server/middleware/rewrite"
-	_ "github.com/omalloc/tavern/server/middleware/transform"
+	transformmiddleware "github.com/omalloc/tavern/server/middleware/transform"
 	"github.com/omalloc/tavern/server/mod"
 	"github.com/omalloc/tavern/storage"
+	planning "github.com/omalloc/tavern/transform"
 )
 
 var localMatcher = map[string]struct{}{
@@ -362,25 +363,61 @@ func (s *HTTPServer) buildMiddlewareChain(tripper http.RoundTripper) (http.Round
 		tripper = proxy.Transport{Proxy: proxy.GetProxy()}
 	}
 	middlewares := s.config.Server.Middleware
+	for i, config := range middlewares {
+		if config == nil || config.Name == "" {
+			return nil, fmt.Errorf("middleware %d must have a name", i)
+		}
+	}
 	if err := validateCacheRewriteOrder(middlewares); err != nil {
 		return nil, err
 	}
 
+	var managed *planning.Runtime
+	caches := 0
+	for _, config := range middlewares {
+		if strings.EqualFold(config.Name, "caching") {
+			caches++
+		}
+		if strings.EqualFold(config.Name, "transform") {
+			var err error
+			managed, err = transformmiddleware.Prepare(config)
+			if err != nil {
+				return nil, err
+			}
+		}
+	}
+	if managed != nil && caches != 1 {
+		managed.Close()
+		return nil, fmt.Errorf("transform requires exactly one caching middleware")
+	}
+	success := false
+	defer func() {
+		if !success {
+			managed.Close()
+		}
+	}()
 	// merge global options to each middleware options
 	global := s.globalOptions(make(map[string]any))
 
 	for i := len(middlewares) - 1; i >= 0; i-- {
-		if middlewares[i].Name == "" {
-			panic("middlewares name is empty, config file array index " + strconv.Itoa(i))
-		}
-
 		conf := middlewares[i]
 		if conf != nil && len(conf.Options) > 0 {
 			if err := mergo.Map(&conf.Options, global, mergo.WithOverride); err != nil {
 				log.Warnf("failed to merge global options to middleware %s: %v", conf.Name, err)
 			}
 		}
-		next, cleanup, err := middleware.Create(conf)
+
+		var next middleware.Middleware
+		cleanup := middleware.EmptyCleanup
+		var err error
+		switch {
+		case managed != nil && strings.EqualFold(conf.Name, "caching"):
+			next, cleanup, err = caching.MiddlewareWithManaged(conf, managed)
+		case managed != nil && strings.EqualFold(conf.Name, "transform"):
+			next, err = transformmiddleware.WithRuntime(managed)
+		default:
+			next, cleanup, err = middleware.Create(conf)
+		}
 		if err != nil {
 			if conf.Required || (strings.EqualFold(conf.Name, "caching") || strings.EqualFold(conf.Name, "transform")) {
 				return nil, err
@@ -393,6 +430,10 @@ func (s *HTTPServer) buildMiddlewareChain(tripper http.RoundTripper) (http.Round
 
 		tripper = next(tripper)
 	}
+	if managed != nil {
+		s.cleanups = append(s.cleanups, managed.Close)
+	}
+	success = true
 	return tripper, nil
 }
 

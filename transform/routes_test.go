@@ -2,6 +2,7 @@ package transform
 
 import (
 	"errors"
+	transformv1 "github.com/omalloc/tavern/api/defined/v1/transform"
 	"net/http"
 	"testing"
 )
@@ -76,5 +77,26 @@ func TestManagedRouterUsesLongestPrefixAndOwnsPolicy(t *testing.T) {
 		if _, err = NewRouter([]Route{{PathPrefix: prefix, Policy: policy()}}, capabilities()); err == nil {
 			t.Fatal("invalid route accepted", prefix)
 		}
+	}
+}
+
+func TestManagedRouteDefaultsFitDeclaredBackendBounds(t *testing.T) {
+	caps := capabilities()
+	caps.Outputs[0].QualityMax = 50
+	caps.Outputs[1].CompressionMax = 5
+	caps.FlattenAlpha = false
+	route := Route{PathPrefix: "/images/", Policy: transformv1.Policy{Formats: []string{"image/jpeg", "image/png"}, PolicyVersion: "p1"}}
+	if _, err := NewRouter([]Route{route}, caps); err == nil {
+		t.Fatal("unusable quality/compression defaults accepted")
+	}
+	route.Policy.Quality = 50
+	level := 5
+	route.Policy.PNGCompression = &level
+	if _, err := NewRouter([]Route{route}, caps); err != nil {
+		t.Fatal(err)
+	}
+	route.Policy.AlphaPolicy, route.Policy.Background = "flatten", "#ffffff"
+	if _, err := NewRouter([]Route{route}, caps); err == nil {
+		t.Fatal("unsupported JPEG flatten configured")
 	}
 }

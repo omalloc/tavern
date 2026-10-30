@@ -280,7 +280,7 @@ func TestResourceKeyRestoresOpaqueIsolationWithoutChangingIDs(t *testing.T) {
 
 func TestInspectedImageMetadataRoundTripAndClone(t *testing.T) {
 	_, md := representationFixture(t)
-	md.Representation.Image = &ImageInfo{SchemaVersion: 1, InspectorVersion: "inspector-v1", DecodedDigest: strings.Repeat("a", 64), MIME: "image/png", DecodedSize: 4096, Width: 12, Height: 20, HasAlpha: true, Animated: true}
+	md.Representation.Image = &ImageInfo{SchemaVersion: 1, InspectorVersion: "inspector-v1", DecodedDigest: strings.Repeat("a", 64), MIME: "image/png", DecodedSize: 4096, Width: 12, Height: 20, HasAlpha: true, Animated: true, HasMetadata: true}
 	md.Representation.SourceBoundTTL = true
 	for _, codec := range []encoding.Codec{&jsoncodec.JSONCodec{}, &cobr.CborCodec{}} {
 		data, err := codec.Marshal(md)

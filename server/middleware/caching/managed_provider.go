@@ -13,8 +13,10 @@ import (
 	"github.com/omalloc/tavern/api/defined/v1/storage"
 	"github.com/omalloc/tavern/api/defined/v1/storage/object"
 	transformv1 "github.com/omalloc/tavern/api/defined/v1/transform"
+	"github.com/omalloc/tavern/pkg/x/http/cachecontrol"
 	"github.com/omalloc/tavern/storage/representation"
 	planning "github.com/omalloc/tavern/transform"
+	"strings"
 )
 
 type managedLimits struct {
@@ -39,6 +41,7 @@ type managedProvider struct {
 type managedResult struct {
 	Metadata      *object.Metadata
 	Info          transformv1.SourceInfo
+	Fallback      bool
 	Cached        bool
 	SourceHeaders http.Header
 	open          func(context.Context) (io.ReadCloser, error)
@@ -58,23 +61,28 @@ func (r *managedResult) Close() error {
 }
 
 type managedSource struct {
-	repo     *representation.IndexRepository
-	key      object.ResourceKey
-	request  *http.Request
-	selected *representation.LookupResult
-	blob     *planning.FileBlob
-	headers  http.Header
-	info     transformv1.SourceInfo
+	repo         *representation.IndexRepository
+	key          object.ResourceKey
+	request      *http.Request
+	selected     *representation.LookupResult
+	raw          *managedRaw
+	blob         *planning.FileBlob
+	headers      http.Header
+	info         transformv1.SourceInfo
+	preserveOnly bool
 }
 
 func (s *managedSource) close() {
+	if s.raw != nil {
+		s.raw.Close()
+	}
 	if s.blob != nil {
 		s.blob.Close()
 	}
 }
 
 func newManagedProvider(store storage.Storage, origin http.RoundTripper, opt cachingOption, backend transformv1.Transformer, inspector planning.Inspector, limits managedLimits) (*managedProvider, error) {
-	if store == nil || origin == nil || backend == nil || inspector == nil || limits.InputBytes <= 0 || limits.OutputBytes <= 0 || limits.Pixels <= 0 || limits.Timeout <= 0 || opt.SliceSize == 0 || opt.VaryLimit <= 0 || opt.representation == nil {
+	if store == nil || origin == nil || backend == nil || inspector == nil || limits.InputBytes <= 0 || limits.InputBytes > planning.MaxEncodedImageBytes || limits.OutputBytes <= 0 || limits.OutputBytes > planning.MaxEncodedImageBytes || limits.Pixels <= 0 || limits.Timeout <= 0 || opt.SliceSize == 0 || opt.VaryLimit <= 0 || opt.representation == nil {
 		return nil, planning.ErrInvalidParameter
 	}
 	owner, ok := store.(representation.Provider)
@@ -181,6 +189,22 @@ func (p *managedProvider) resolveSource(req *http.Request, plan planning.Plan, s
 	if err != nil {
 		return nil, err
 	}
+
+	if plan.Options.Format == "source" {
+		if plan.Options.Quality != nil || plan.Options.CompressionLevel != nil || plan.Options.Lossless != nil {
+			return nil, planning.ErrInvalidParameter
+		}
+		if accept.Quality(source.headers.Get("Content-Type")) == 0 {
+			return nil, planning.ErrNotAcceptable
+		}
+		return p.sourceResult(req.Context(), source)
+	}
+	if preserveManagedSource(req, source.headers) {
+		if accept.Quality(source.headers.Get("Content-Type")) == 0 || plan.Options.Format != "" && plan.Options.Format != "source" && plan.Options.Format != source.info.MIME || plan.Options.Quality != nil || plan.Options.CompressionLevel != nil || plan.Options.Lossless != nil {
+			return nil, planning.ErrNotAcceptable
+		}
+		return p.sourceResult(req.Context(), source)
+	}
 	decision, err := planning.Resolve(accept, source.info, plan.Policy, plan.Options, p.caps)
 	if err != nil {
 		return nil, err
@@ -188,8 +212,14 @@ func (p *managedProvider) resolveSource(req *http.Request, plan planning.Plan, s
 	if decision.PreserveSource {
 		return p.sourceResult(req.Context(), source)
 	}
+	if source.info.HasMetadata {
+		if plan.FallbackToSource && accept.Quality(source.headers.Get("Content-Type")) > 0 {
+			return p.fallbackSource(req.Context(), source)
+		}
+		return nil, planning.ErrUnsupportedSource
+	}
 	if source.selected == nil {
-		return p.convert(req.Context(), source, *decision.Spec, nil, nil)
+		return p.convertWithFallback(req.Context(), source, *decision.Spec, nil, nil, plan, accept)
 	}
 	ref, err := representation.NewManagedSelector(source.selected, decision.Spec.Fingerprint())
 	if err != nil {
@@ -219,5 +249,31 @@ func (p *managedProvider) resolveSource(req *http.Request, plan planning.Plan, s
 		return nil, fmt.Errorf("reserve product: %w", err)
 	}
 	defer source.repo.Release(lease)
-	return p.convert(req.Context(), source, *decision.Spec, state, lease)
+	return p.convertWithFallback(req.Context(), source, *decision.Spec, state, lease, plan, accept)
+}
+
+func (p *managedProvider) convertWithFallback(ctx context.Context, source *managedSource, spec planning.NormalizedSpec, state *representation.IndexState, lease *representation.Reservation, plan planning.Plan, accept planning.Accept) (*managedResult, error) {
+	result, err := p.convert(ctx, source, spec, state, lease)
+	if err != nil && plan.FallbackToSource && ctx.Err() == nil && !errors.Is(err, representation.ErrSuperseded) && accept.Quality(source.headers.Get("Content-Type")) > 0 {
+		return p.fallbackSource(ctx, source)
+	}
+	return result, err
+}
+
+func (p *managedProvider) withOrigin(origin http.RoundTripper) *managedProvider {
+	return &managedProvider{store: p.store, origin: origin, opt: p.opt, backend: p.backend, caps: p.caps, inspector: p.inspector, limits: p.limits, manager: p.manager, budget: p.budget}
+}
+
+func (p *managedProvider) fallbackSource(ctx context.Context, source *managedSource) (*managedResult, error) {
+	fallback, err := p.sourceResult(ctx, source)
+	if fallback != nil {
+		fallback.Fallback = true
+		fallback.Metadata.Headers.Set("Cache-Control", "no-store")
+		fallback.Metadata.Headers.Del("Expires")
+	}
+	return fallback, err
+}
+
+func preserveManagedSource(req *http.Request, headers http.Header) bool {
+	return cachecontrol.Parse(strings.Join(req.Header.Values("Cache-Control"), ",")).NoTransform() || cachecontrol.Parse(strings.Join(headers.Values("Cache-Control"), ",")).NoTransform()
 }

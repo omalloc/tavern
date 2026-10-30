@@ -14,6 +14,7 @@ import (
 )
 
 type Route struct {
+	FallbackToSource bool               `json:"fallback_to_source" yaml:"fallback_to_source"`
 	PathPrefix       string             `json:"path_prefix" yaml:"path_prefix"`
 	Mode             string             `json:"mode" yaml:"mode"`
 	FormatParameter  string             `json:"format_parameter" yaml:"format_parameter"`
@@ -53,6 +54,19 @@ func NewRouter(routes []Route, caps transformv1.BackendCapabilities) (*Router, e
 		route.Policy, err = normalizePolicy(route.Policy, caps)
 		if err != nil {
 			return nil, err
+		}
+		for _, format := range route.Policy.Formats {
+			codec, _ := codecFor(caps, format)
+			if format == "image/png" {
+				if *route.Policy.PNGCompression < codec.CompressionMin || *route.Policy.PNGCompression > codec.CompressionMax {
+					return nil, fmt.Errorf("route PNG compression exceeds backend bounds: %w", ErrInvalidParameter)
+				}
+			} else if route.Policy.Quality < codec.QualityMin || route.Policy.Quality > codec.QualityMax {
+				return nil, fmt.Errorf("route quality exceeds backend bounds: %w", ErrInvalidParameter)
+			}
+			if format == "image/jpeg" && route.Policy.AlphaPolicy == "flatten" && !caps.FlattenAlpha {
+				return nil, ErrAlphaLoss
+			}
 		}
 		owned[i] = route
 	}
@@ -105,7 +119,7 @@ func (r *Router) Resolve(req *http.Request) (Plan, bool, error) {
 		if _, err = ParseAccept(ClientHeaders(req)); err != nil {
 			return Plan{}, true, err
 		}
-		return clonePlan(Plan{SourceURL: key.CanonicalURL(), Policy: route.Policy, Options: options, AcceptHeader: ClientHeaders(req)}), true, nil
+		return clonePlan(Plan{SourceURL: key.CanonicalURL(), FallbackToSource: route.FallbackToSource, Policy: route.Policy, Options: options, AcceptHeader: ClientHeaders(req)}), true, nil
 	}
 	return Plan{}, false, nil
 }

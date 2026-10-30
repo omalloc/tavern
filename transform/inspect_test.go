@@ -171,3 +171,36 @@ func TestImageInspectorFileAndCancellation(t *testing.T) {
 		t.Fatal("accepted bad PNG CRC")
 	}
 }
+
+func TestImageInspectorRecognizesUnverifiedOrientationAndColorMetadata(t *testing.T) {
+	fixtures, _ := workerProbeImages(false)
+	jpeg := fixtures["image/jpeg"]
+	segment := []byte{0xff, 0xe1, 0, 10, 'E', 'x', 'i', 'f', 0, 0, 'I', 'I'}
+	jpeg = append(append(append([]byte{}, jpeg[:2]...), segment...), jpeg[2:]...)
+	chunks, err := pngChunks(fixtures["image/png"])
+	if err != nil {
+		t.Fatal(err)
+	}
+	var png bytes.Buffer
+	png.WriteString("\x89PNG\r\n\x1a\n")
+	for _, chunk := range chunks {
+		appendPNGChunk(&png, chunk.kind, chunk.data)
+		if chunk.kind == "IHDR" {
+			appendPNGChunk(&png, "sRGB", []byte{0})
+		}
+	}
+	var webp bytes.Buffer
+	appendRIFFChunk(&webp, "VP8X", []byte{8, 0, 0, 0, 15, 0, 0, 15, 0, 0})
+	webp.Write(fixtures["image/webp"][12:])
+	appendRIFFChunk(&webp, "EXIF", []byte("II"))
+	for _, data := range [][]byte{jpeg, png.Bytes(), frameWebP(webp.Bytes(), 16, 16, false)} {
+		blob, err := SpoolDecoded(context.Background(), bytes.NewReader(data), "identity", t.TempDir(), 1<<20, 1024, ImageInspector{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !blob.Info().HasMetadata {
+			t.Fatal("orientation/color metadata treated as verified for conversion")
+		}
+		blob.Close()
+	}
+}

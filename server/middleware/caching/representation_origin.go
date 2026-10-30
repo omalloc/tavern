@@ -238,6 +238,15 @@ func validValidation(prior *object.Metadata, resp *http.Response, req *http.Requ
 	if prior == nil || !prior.HasComplete() {
 		return false
 	}
+	// A 304 cannot relabel existing wire bytes with a different coding/type.
+	for _, name := range []string{"Content-Encoding", "Content-Type"} {
+		if len(resp.Header.Values(name)) > 1 {
+			return false
+		}
+		if value := resp.Header.Get(name); value != "" && !strings.EqualFold(strings.TrimSpace(value), strings.TrimSpace(prior.Headers.Get(name))) {
+			return false
+		}
+	}
 	if length := resp.Header.Get("Content-Length"); length != "" {
 		n, err := strconv.ParseUint(length, 10, 64)
 		if err != nil || n != prior.Size {

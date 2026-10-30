@@ -119,7 +119,7 @@ func (w *HTTPWorker) Transform(parent context.Context, source transformv1.Comple
 		return nil, ErrUnsupportedSource
 	}
 	info := source.Info()
-	if info.Size <= 0 || info.Size > w.config.Limits.MaxInputBytes || !pixelFit(info.Width, info.Height, w.config.Limits.MaxPixels) || info.Animated {
+	if info.Size <= 0 || info.Size > w.config.Limits.MaxInputBytes || !pixelFit(info.Width, info.Height, w.config.Limits.MaxPixels) || info.Animated || info.HasMetadata {
 		return nil, ErrUnsupportedSource
 	}
 	if err = validateWorkerSpec(info, spec, w.config.Capabilities); err != nil {
@@ -177,7 +177,7 @@ func (w *HTTPWorker) Transform(parent context.Context, source transformv1.Comple
 		}
 	}()
 	output := blob.Info()
-	if output.MIME != spec.OutputMIME || output.Width != info.Width || output.Height != info.Height || output.Animated || response.ContentLength >= 0 && response.ContentLength != output.Size {
+	if output.MIME != spec.OutputMIME || output.Width != info.Width || output.Height != info.Height || output.Animated || output.HasMetadata || response.ContentLength >= 0 && response.ContentLength != output.Size {
 		return nil, ErrWorker
 	}
 	if spec.OutputMIME == "image/jpeg" && output.HasAlpha || source.Info().HasAlpha && spec.AlphaPolicy == "preserve" && !output.HasAlpha {
@@ -259,3 +259,7 @@ func validateWorkerSpec(source transformv1.SourceInfo, spec transformv1.Transfor
 }
 
 var _ io.Closer = (*workerOutput)(nil)
+
+func (w *HTTPWorker) Close() error { w.client.CloseIdleConnections(); return nil }
+
+var _ io.Closer = (*HTTPWorker)(nil)

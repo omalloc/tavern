@@ -475,3 +475,33 @@ func TestHTTPWorkerRejectsDuplicateContractFields(t *testing.T) {
 		})
 	}
 }
+
+func TestHTTPWorkerRejectsUnverifiedMetadata(t *testing.T) {
+	fixtures, _ := workerProbeImages(false)
+	data := fixtures["image/jpeg"]
+	segment := []byte{0xff, 0xe1, 0, 10, 'E', 'x', 'i', 'f', 0, 0, 'I', 'I'}
+	data = append(append(append([]byte{}, data[:2]...), segment...), data[2:]...)
+	var calls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		w.Header().Set("Content-Type", "image/jpeg")
+		w.Header().Set(EncoderHeader, "test-worker-e1")
+		w.Write(data)
+	}))
+	defer server.Close()
+	worker, err := NewHTTPWorker(testWorkerConfig(server.URL+"/v1/transform", t.TempDir()), server.Client())
+	if err != nil {
+		t.Fatal(err)
+	}
+	source, err := SpoolDecoded(context.Background(), bytes.NewReader(data), "identity", t.TempDir(), 1<<20, 1024, ImageInspector{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer source.Close()
+	if _, err = worker.Transform(context.Background(), source, testJPEGSpec()); !errors.Is(err, ErrUnsupportedSource) || calls.Load() != 0 {
+		t.Fatal("metadata source sent to unverified preservation backend", err)
+	}
+	if _, err = worker.Transform(context.Background(), testWorkerInput(t), testJPEGSpec()); !errors.Is(err, ErrWorker) || calls.Load() != 1 {
+		t.Fatal("worker introduced unverified metadata", err)
+	}
+}

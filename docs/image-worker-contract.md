@@ -1,6 +1,6 @@
 # 图片 worker 契约与部署前检查
 
-P3.3 已提供 HTTP worker 适配器、完整图片检查器和独立检查命令。公开转换路由仍保持关闭，HTTP 条件请求、Range、失败回退及公开配置由 P3.4 接入。仓库没有假定已部署的 worker 地址。
+P3.3 已提供 HTTP worker 适配器、完整图片检查器和独立检查命令。P3.4 已接通默认关闭的公开路由，配置和 HTTP 行为见 [托管图片操作说明](managed-image-operations.md)。仓库没有假定已部署的 worker 地址。
 
 ## HTTP 协议 v1
 
@@ -20,7 +20,7 @@ JSON 字段顺序及可选字段与 `api/defined/v1/transform.TransformSpec` 的
 {"schema_version":1,"output_mime":"image/jpeg","quality":82,"lossless":false,"alpha_policy":"reject","animation_policy":"reject","orientation_policy":"preserve","color_policy":"preserve"}
 ```
 
-JPEG/WebP 有损模式使用 quality；PNG 必须为 lossless，使用 compression_level，不能把 quality 当作 PNG 压缩级别。WebP 无损规格不包含 quality。JPEG 遇到透明源默认拒绝；显式 flatten 必须带规范 `#rrggbb` 背景且后端声明支持。版本 1 无缩放或裁剪，输出宽高必须等于源宽高；朝向与色彩策略只接受 preserve。worker 必须遵守这些策略，不能默默旋转、改变色彩或提取动画首帧。
+JPEG/WebP 有损模式使用 quality；PNG 必须为 lossless，使用 compression_level，不能把 quality 当作 PNG 压缩级别。WebP 无损规格不包含 quality。JPEG 遇到透明源默认拒绝；显式 flatten 必须带规范 `#rrggbb` 背景且后端声明支持。版本 1 无缩放或裁剪，输出宽高必须等于源宽高；朝向与色彩策略只接受 preserve。worker 必须遵守这些策略，不能默默旋转、改变色彩或提取动画首帧。首版跨格式转换拒绝带 EXIF/XMP、ICC 或 PNG 朝向/色彩元数据的图片及带此类输出的 worker，避免未经验证的元数据丢失；原样路径可以保留它们。
 
 成功响应必须为 200，Content-Type 必须与规格一致，并具有单一 `X-Tavern-Encoder-Version`，精确匹配配置。响应图片应为 identity 编码、完整静态图片。适配器拒绝重定向、非 200、错误 MIME、重复协议头、版本不符、错误页、截断、尺寸变化、预算超限及透明通道丢失。后端版本发生变化时应修改 encoder_version，避免复用旧成品。
 

@@ -36,6 +36,9 @@ server:
             X-XSS-Protection: "1; mode=block"
           remove:
             - "Server"
+    - name: transform
+      options:
+        enabled: false # 按 docs/managed-image-operations.md 配置后端与路由后再灰度开启
     - name: multirange
       options:
         merge: false

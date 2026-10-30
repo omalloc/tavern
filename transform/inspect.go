@@ -23,7 +23,7 @@ type ImageInspector struct{}
 
 var _ Inspector = ImageInspector{}
 
-func (ImageInspector) Version() string { return "complete-image-v1-ximage-0.47" }
+func (ImageInspector) Version() string { return "complete-image-v2-ximage-0.47" }
 
 // Inspect checks the complete container, then every decoded frame within the
 // cumulative pixel budget. Animated files are described, never silently reduced
@@ -65,10 +65,11 @@ func (ImageInspector) Inspect(ctx context.Context, path string, size, maxPixels 
 		return transformv1.SourceInfo{}, ErrBudget
 	}
 	var chunks []imageChunk
+	metadata := false
 	if format == "png" {
 		chunks, err = pngChunks(data)
 	} else {
-		err = completeJPEG(data)
+		metadata, err = completeJPEG(data)
 	}
 	if err != nil {
 		return transformv1.SourceInfo{}, err
@@ -78,7 +79,15 @@ func (ImageInspector) Inspect(ctx context.Context, path string, size, maxPixels 
 		return transformv1.SourceInfo{}, ErrUnsupportedSource
 	}
 	info := transformv1.SourceInfo{MIME: "image/" + format, Size: int64(len(data)), Width: config.Width, Height: config.Height, HasAlpha: hasAlpha(decoded)}
+	info.HasMetadata = metadata
 	if format == "png" {
+		info.HasMetadata = false
+		for _, chunk := range chunks {
+			switch chunk.kind {
+			case "eXIf", "iCCP", "gAMA", "cHRM", "sRGB", "cICP", "mDCV", "cLLI":
+				info.HasMetadata = true
+			}
+		}
 		animated, alpha, err := inspectAPNG(ctx, chunks, config.Width, config.Height, maxPixels)
 		if err != nil {
 			return transformv1.SourceInfo{}, err
@@ -147,48 +156,52 @@ func appendPNGChunk(dst *bytes.Buffer, kind string, data []byte) {
 	dst.Write(length[:])
 }
 
-func completeJPEG(data []byte) error {
+func completeJPEG(data []byte) (bool, error) {
+	metadata := false
 	if len(data) < 4 || data[0] != 0xff || data[1] != 0xd8 {
-		return ErrUnsupportedSource
+		return false, ErrUnsupportedSource
 	}
 	offset := 2
 	for steps := 0; offset < len(data) && steps < maxImageChunks; steps++ {
 		if data[offset] != 0xff {
-			return ErrUnsupportedSource
+			return false, ErrUnsupportedSource
 		}
 		for offset < len(data) && data[offset] == 0xff {
 			offset++
 		}
 		if offset >= len(data) {
-			return ErrUnsupportedSource
+			return false, ErrUnsupportedSource
 		}
 		marker := data[offset]
+		if marker == 0xe1 || marker == 0xe2 {
+			metadata = true
+		}
 		offset++
 		if marker == 0xd9 {
 			if offset == len(data) {
-				return nil
+				return metadata, nil
 			}
-			return ErrUnsupportedSource
+			return false, ErrUnsupportedSource
 		}
 		if marker == 0x00 || marker == 0xd8 || marker >= 0xd0 && marker <= 0xd7 {
-			return ErrUnsupportedSource
+			return false, ErrUnsupportedSource
 		}
 		if marker == 0x01 {
 			continue
 		}
 		if len(data)-offset < 2 {
-			return ErrUnsupportedSource
+			return false, ErrUnsupportedSource
 		}
 		length := int(binary.BigEndian.Uint16(data[offset : offset+2]))
 		if length < 2 || length > len(data)-offset {
-			return ErrUnsupportedSource
+			return false, ErrUnsupportedSource
 		}
 		offset += length
 		if marker == 0xda {
 			for offset < len(data) {
 				next := bytes.IndexByte(data[offset:], 0xff)
 				if next < 0 {
-					return ErrUnsupportedSource
+					return false, ErrUnsupportedSource
 				}
 				start := offset + next
 				offset = start + 1
@@ -196,7 +209,7 @@ func completeJPEG(data []byte) error {
 					offset++
 				}
 				if offset >= len(data) {
-					return ErrUnsupportedSource
+					return false, ErrUnsupportedSource
 				}
 				m := data[offset]
 				if m == 0 || m >= 0xd0 && m <= 0xd7 {
@@ -208,7 +221,7 @@ func completeJPEG(data []byte) error {
 			}
 		}
 	}
-	return ErrUnsupportedSource
+	return false, ErrUnsupportedSource
 }
 
 // inspectAPNG reconstructs each fdAT frame as a bounded standalone PNG and
@@ -404,6 +417,8 @@ func inspectWebP(ctx context.Context, data []byte, budget int64) (transformv1.So
 			return info, err
 		}
 		switch chunk.kind {
+		case "ICCP", "EXIF", "XMP ":
+			info.HasMetadata = true
 		case "VP8X":
 			if i != 0 || extended || len(chunk.data) != 10 || chunk.data[0]&0xc1 != 0 || chunk.data[1] != 0 || chunk.data[2] != 0 || chunk.data[3] != 0 {
 				return info, ErrUnsupportedSource

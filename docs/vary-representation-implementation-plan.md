@@ -2,7 +2,7 @@
 
 日期：2026-10-29。
 
-状态：实施中。P1.1—P1.5 已通过受控阶段验收，P2.1—P2.6 已实现并通过定向验证；P3.1—P3.3 协商、受控源/成品路径与 HTTP worker 契约已实现；下一批为 P3.4。透明 v2 持久化缓存已接通默认关闭的公开配置；图片转换尚未开放。勾选框只标记已经落实的工作。
+状态：实施中。P1.1—P1.5 已通过受控阶段验收，P2.1—P2.6 已实现并通过定向验证；P3.1—P3.4 协商、源/成品缓存、HTTP worker 与成品 HTTP 语义已实现并通过阶段验收；下一批为 P4.1。透明 v2 持久化缓存和托管图片均接通默认关闭的公开配置。勾选框只标记已经落实的工作。
 
 前置分析：[HTTP Vary 与资源转换缓存改造设计](./vary-representation-design.md)。前置文档说明问题和目标架构；本文进一步确定模块边界、实施批次、阶段依赖、兼容方式和验收门槛。若两份文档在实施细节上存在差异，以本文的细化决策为准。
 
@@ -451,14 +451,14 @@ Transformer
 
 补充约束：
 
-- [ ] 图片 MIME 变化使用独立表示头；更新 http.Response.ContentLength，移除源 Content-Range，重新生成成品强 ETag，清理不再成立的摘要/编码字段。
-- [ ] 自动协商响应带 `Vary: Accept`，与已有相关选择字段合并。若请求 Cache-Control 中 no-transform 影响返回原图/成品，则该托管路由统一增加 `Vary: Cache-Control`；所有分支一致，避免仅给旁路响应加头而留下下游旧命中。
-- [ ] gzip/br 若由另外的受控层处理，其版本维度仍包含 Accept-Encoding；已经压缩的表示不能仅更换 MIME 就当成图片转换结果。
-- [ ] 源新鲜度决定依赖是否有效；延长源有效期后可继续用相同成品，不因每次请求重设成品 TTL。源验证器与成品验证器分别维护。
-- [ ] ETag 作为不透明大小写敏感值比较，修复既有 FileChangedProcessor 对 ETag 转小写/EqualFold 的相关路径。
-- [ ] 冷 HEAD、Range 和普通 GET 选择同一 DerivedID，不因方法/范围重复转换；对外响应拼装在共享转换结束后分别执行。
+- [x] 图片 MIME 变化使用独立表示头；更新 http.Response.ContentLength，移除源 Content-Range，重新生成成品强 ETag，清理不再成立的摘要/编码字段。
+- [x] 自动协商响应带 `Vary: Accept`，与已有相关选择字段合并。若请求 Cache-Control 中 no-transform 影响返回原图/成品，则该托管路由统一增加 `Vary: Cache-Control`；所有分支一致，避免仅给旁路响应加头而留下下游旧命中。
+- [x] gzip/br 若由另外的受控层处理，其版本维度仍包含 Accept-Encoding；已经压缩的表示不能仅更换 MIME 就当成图片转换结果。
+- [x] 源新鲜度决定依赖是否有效；延长源有效期后可继续用相同成品，不因每次请求重设成品 TTL。源验证器与成品验证器分别维护。
+- [x] ETag 作为不透明大小写敏感值比较，修复既有 FileChangedProcessor 对 ETag 转小写/EqualFold 的相关路径。
+- [x] 冷 HEAD、Range 和普通 GET 选择同一 DerivedID，不因方法/范围重复转换；对外响应拼装在共享转换结束后分别执行。
 
-图片相关配置仍为拟议；下例的 representation 读取开关已由 P2.6 接通，启用前须配置 storage.representation，见 [操作说明](vary-representation-operations.md)：
+图片公开配置已由 P3.4 接通。完整路由、backend.capabilities 矩阵、预算、灰度和回滚要求见 [托管图片操作说明](managed-image-operations.md)。下例只展示默认关闭的入口与中间件顺序；启用前必须补充完整配置并绑定 storage.representation，见 [透明 v2 操作说明](vary-representation-operations.md)：
 
 ```yaml
 server:
@@ -466,27 +466,6 @@ server:
     - name: transform
       options:
         enabled: false
-        routes:
-          - path_prefix: /images/
-            mode: auto
-            formats: [image/webp, image/jpeg, image/png]
-            default_format: source
-            quality: 82
-            alpha_policy: reject
-            animation_policy: preserve_source
-            fallback_to_source: false
-            policy_version: images-v1
-        backend:
-          name: http
-          endpoint: http://127.0.0.1:9000/v1/transform
-          encoder_version: worker-v1
-        limits:
-          max_input_bytes: 33554432
-          max_output_bytes: 67108864
-          max_pixels: 40000000
-          concurrency: 2
-          queue_size: 32
-          timeout: 5s
     - name: multirange
     - name: caching
       options:
@@ -505,15 +484,15 @@ server:
 
 使用小尺寸但真实可解码、内容可区分的 JPEG、PNG、带透明度 PNG 和可识别动画样本。对每一输出至少验证 MIME、文件格式特征和解码后的尺寸/像素语义，不能只检查 Content-Type。
 
-- [ ] JPEG→WebP、JPEG→PNG、PNG→JPEG 正常转换；透明度和动画策略分别测试。
-- [ ] 同源 20 个相同规格并发请求：源请求一次，转换一次，全部响应字节一致。
-- [ ] 同源两个目标格式并发：源请求一次，每个 DerivedID 转换一次。
-- [ ] 不同原始 Accept 最终规格相同复用成品；q/参数改变最终规格时隔离。
-- [ ] 内容版本、quality、背景色、policy_version 或 encoder_version 变化均不会误命中旧成品。
-- [ ] 源图 304 不重复转换；源内容变化、soft/hard/目录 PURGE 后不新鲜命中旧依赖。
-- [ ] 成品 304/HEAD/Range/If-Range 与普通 GET 一致，冷 Range 不把目标偏移传给源图。
-- [ ] no-transform 与回退路径不会污染目标键或下游协商缓存。
-- [ ] worker 超时、错误 MIME、超预算、断流和取消均不发布成品，不泄露任务预留。
+- [x] JPEG→WebP、JPEG→PNG、PNG→JPEG 正常转换；透明度和动画策略分别测试。
+- [x] 同源 20 个相同规格并发请求：源请求一次，转换一次，全部响应字节一致。
+- [x] 同源两个目标格式并发：源请求一次，每个 DerivedID 转换一次。
+- [x] 不同原始 Accept 最终规格相同复用成品；q/参数改变最终规格时隔离。
+- [x] 内容版本、quality、背景色、policy_version 或 encoder_version 变化均不会误命中旧成品。
+- [x] 源图 304 不重复转换；源内容变化、soft/hard/目录 PURGE 后不新鲜命中旧依赖。
+- [x] 成品 304/HEAD/Range/If-Range 与普通 GET 一致，冷 Range 不把目标偏移传给源图。
+- [x] no-transform 与回退路径不会污染目标键或下游协商缓存。
+- [x] worker 超时、错误 MIME、超预算、断流和取消均不发布成品，不泄露任务预留。
 
 ## 8. 阶段四：观测、维护和优化
 
@@ -852,3 +831,18 @@ P2.2 已提交为 `1ea5f5f`，由下面的 P2.3 批次接续 PURGE 与依赖失�
 - 测试服务执行真实 JPEG/PNG 编码，验证错误页、错误 MIME/版本、重复协议头、压缩输出、断流、超字节、超时、取消、排队、重定向及清理；缓存集成确认经实际 HTTP worker 生成后可完整发布并复用。显式本机 cwebp 1.6.0 完成 JPEG/PNG/WebP 全 9 组合、24 个质量/无损/透明策略案例。
 
 验证：受影响 transform、caching、cmd/timagecheck package 的 race 测试通过；CGO_ENABLED=0 定向测试和主程序静态构建通过。未运行全仓测试，未假定部署 worker 已可用，公开转换仍关闭。协议、独立配置和检查命令见 [图片 worker 契约](./image-worker-contract.md)。下一批为 P3.4。
+
+
+## P3.4 实施记录（2026-10-30）
+
+- 托管结果固定完整表示与读取位置后，使用标准 HTTP ServeContent 在最终编码字节上处理 ETag/If-Match/304、HEAD、单/多 Range、If-Range 与 416。冷 HEAD/Range 共用同一成品身份；托管多范围跳过旧的源预取路径。块读取提供直接 Seek/ReadAt，读取位置不会按源图偏移解释。
+- 成品头使用实际 MIME、ContentLength 与 SHA-256 强 ETag，清除源验证器、编码、范围、旧摘要和来源下载名称；原样响应保留原始验证器和编码。Age 累计源/成品驻留时间，源 304 延续相同依赖时不重设内容版本或错误延长下游 TTL。304 不允许把已有 wire bytes 重新标注为不同 Content-Type/Content-Encoding；FileChangedProcessor 的 ETag 改为大小写敏感比较。
+- 所有托管分支统一合并 Vary: Accept、Cache-Control、Accept-Encoding，包含 HEAD、304、原样路径和回退；最终实际 MIME 及媒体参数、实际 Content-Encoding 再确认满足请求。默认转换错误为 no-store 502，超时 504，队列满 503。回退需明确配置且源类型被接受，使用真实源身份并 no-store，不污染成品键。
+- 请求/响应 no-transform 和显式 format=source 走完整但不解码的原样路径。源 wire bytes 与转换局部解码文件分开保留，私有 gzip/br 源也不会被冒充成 identity 或沿用解码后的长度。与显式目标冲突返回 406。
+- 新增 HasMetadata 检查记录并更新 InspectorVersion。首版跨格式保留 EXIF/XMP、ICC、PNG 朝向/色彩元数据尚未经过契约验收，转换拒绝这些输入/输出；原样返回或显式允许的回退可以完整保留，避免静默丢失信息。
+- server 装配可信 runtime，先校验 caching.representation、查询键、唯一缓存层、顺序及路由默认质量/压缩能力，再对实际 worker 做全部矩阵检查；失败不允许静默降级。配置默认关闭。关闭转换后保留路由参数映射，不联系 worker；即使同时关闭 representation 读取，也可正确执行映射 PURGE。存储停写时托管请求不会绕过格式约束直接回源。
+- 客户端 Body.Close 等待实际响应生产者关闭局部读句柄和读取 pin 后，再结束外层存储任务；阻塞关闭故障测试确认 Drain 不会提前返回。命中的成品 HEAD/304 不打开源 Body。
+
+验证：受影响 server、caching、transform 中间件、multirange、协商/worker 与对象元数据 package 的定向 race 检查通过；CGO_ENABLED=0 受影响包检查与主程序构建通过。公开配置下 20 个同规格并发只回源/转换各一次；disk/Pebble 重开后成品直接命中；回滚关闭期间的参数映射 PURGE 在重新开启后仍有效。显式 cwebp 1.6.0 通过公开 JPEG→WebP、JPEG→PNG、PNG→JPEG 路径，同源 20 个混合目标请求只回源一次、每种成品各转换一次，worker 完整 9 组合矩阵也通过。未运行全仓测试；部署服务仍需按实际版本独立验收。
+
+阶段三达到本方案的受控验收门槛。下一批为 P4.1 指标与运行文档校正。

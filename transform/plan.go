@@ -12,10 +12,11 @@ import (
 // Plan is filled only by a managed route resolver. No header is a trusted plan.
 // SourceURL/query mapping is supplied by the P3.2 route contract.
 type Plan struct {
-	SourceURL    string
-	Policy       transformv1.Policy
-	Options      transformv1.RequestOptions
-	AcceptHeader http.Header
+	FallbackToSource bool
+	SourceURL        string
+	Policy           transformv1.Policy
+	Options          transformv1.RequestOptions
+	AcceptHeader     http.Header
 }
 
 func (p Plan) Clone() Plan { return clonePlan(p) }

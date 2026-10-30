@@ -15,6 +15,7 @@ import (
 	xhttp "github.com/omalloc/tavern/pkg/x/http"
 	"github.com/omalloc/tavern/pkg/x/http/rangecontrol"
 	"github.com/omalloc/tavern/server/middleware"
+	planning "github.com/omalloc/tavern/transform"
 )
 
 type middlewareOption struct{}
@@ -33,6 +34,10 @@ func Middleware(c *configv1.Middleware) (middleware.Middleware, func(), error) {
 
 	return func(origin http.RoundTripper) http.RoundTripper {
 		return middleware.RoundTripperFunc(func(req *http.Request) (resp *http.Response, err error) {
+			// Managed ranges are assembled against one pinned complete product.
+			if _, planned := planning.PlanFromContext(req.Context()); planned {
+				return origin.RoundTrip(req)
+			}
 			// parse Range header
 			rawRange := req.Header.Get("Range")
 			if rawRange == "" {

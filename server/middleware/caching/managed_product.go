@@ -31,6 +31,21 @@ func (p *managedProvider) sourceResult(ctx context.Context, source *managedSourc
 		}
 		return p.cachedResult(source, selected, true)
 	}
+
+	if source.raw != nil {
+		raw := source.raw
+		source.raw = nil
+		headers := source.headers.Clone()
+		headers.Del("Content-Range")
+		headers.Set("Content-Length", strconv.FormatInt(raw.size, 10))
+		headers.Set("Cache-Control", "no-store")
+		headers.Del("Expires")
+		if headers.Get("ETag") == "" {
+			headers.Set("ETag", fmt.Sprintf(`"sha256-%x"`, raw.hash.Sum(nil)))
+		}
+		md := &object.Metadata{Code: 200, Headers: headers, Size: uint64(raw.size)}
+		return &managedResult{Metadata: md, Info: source.info, SourceHeaders: source.headers.Clone(), open: raw.open, finish: raw.Close}, nil
+	}
 	blob := source.blob
 	source.blob = nil
 	md := &object.Metadata{Code: 200, Headers: outputHeaders(source.headers, blob.Info(), blob.Digest(), true), Size: uint64(blob.Info().Size)}
@@ -40,7 +55,7 @@ func (p *managedProvider) cachedResult(source *managedSource, selected *represen
 	md := selected.Representation.Clone()
 	info := source.info
 	if image := md.Representation.Image; image != nil {
-		info = transformv1.SourceInfo{MIME: image.MIME, Size: image.DecodedSize, Width: image.Width, Height: image.Height, HasAlpha: image.HasAlpha, Animated: image.Animated}
+		info = transformv1.SourceInfo{MIME: image.MIME, Size: image.DecodedSize, Width: image.Width, Height: image.Height, HasAlpha: image.HasAlpha, Animated: image.Animated, HasMetadata: image.HasMetadata}
 	}
 	open := func(ctx context.Context) (io.ReadCloser, error) {
 		lease := selected.Lease.Duplicate()
@@ -156,7 +171,7 @@ func (p *managedProvider) convert(ctx context.Context, source *managedSource, sp
 		}
 	}()
 	actual := verified.Info()
-	if actual.MIME != info.MIME || actual.Size != info.Size || actual.Width != source.info.Width || actual.Height != source.info.Height || actual.Animated || actual.MIME == "image/jpeg" && actual.HasAlpha || verified.Digest() != strings.ToLower(output.Digest()) {
+	if actual.MIME != info.MIME || actual.Size != info.Size || actual.Width != source.info.Width || actual.Height != source.info.Height || actual.Animated || actual.HasMetadata || actual.MIME == "image/jpeg" && actual.HasAlpha || verified.Digest() != strings.ToLower(output.Digest()) {
 		return nil, planning.ErrUnsupportedSource
 	}
 	headers := outputHeaders(source.headers, actual, verified.Digest(), source.selected == nil)
@@ -165,7 +180,7 @@ func (p *managedProvider) convert(ctx context.Context, source *managedSource, sp
 		return &managedResult{Metadata: &object.Metadata{Code: 200, Headers: headers, Size: uint64(actual.Size)}, Info: actual, SourceHeaders: source.headers.Clone(), open: verified.Open, finish: verified.Close}, nil
 	}
 	md.Size, md.Headers = uint64(actual.Size), headers
-	md.Representation.Image = &object.ImageInfo{SchemaVersion: 1, InspectorVersion: p.inspector.Version(), DecodedDigest: verified.Digest(), MIME: actual.MIME, DecodedSize: actual.Size, Width: actual.Width, Height: actual.Height, HasAlpha: actual.HasAlpha, Animated: actual.Animated}
+	md.Representation.Image = &object.ImageInfo{SchemaVersion: 1, InspectorVersion: p.inspector.Version(), DecodedDigest: verified.Digest(), MIME: actual.MIME, DecodedSize: actual.Size, Width: actual.Width, Height: actual.Height, HasAlpha: actual.HasAlpha, Animated: actual.Animated, HasMetadata: actual.HasMetadata}
 	if err = p.writeProduct(ctx, source, state, lease, bucket, md, verified); err != nil {
 		return nil, err
 	}
@@ -240,7 +255,7 @@ func (p *managedProvider) writeProduct(ctx context.Context, source *managedSourc
 }
 func outputHeaders(source http.Header, info transformv1.SourceInfo, digest string, private bool) http.Header {
 	headers := source.Clone()
-	for _, name := range []string{"Content-Encoding", "Content-Range", "Content-Length", "Content-Type", "ETag", "Last-Modified", "Content-Md5", "Digest", "Content-Digest", "Repr-Digest", "Accept-Ranges"} {
+	for _, name := range []string{"Content-Location", "Content-Disposition", "Content-Encoding", "Content-Range", "Content-Length", "Content-Type", "ETag", "Last-Modified", "Content-Md5", "Digest", "Content-Digest", "Repr-Digest", "Accept-Ranges"} {
 		headers.Del(name)
 	}
 	headers.Set("Content-Type", info.MIME)
@@ -251,4 +266,11 @@ func outputHeaders(source http.Header, info transformv1.SourceInfo, digest strin
 		headers.Del("Expires")
 	}
 	return headers
+}
+
+func (r *managedPinnedReader) Seek(offset int64, whence int) (int64, error) {
+	if seeker, ok := r.ReadCloser.(io.Seeker); ok {
+		return seeker.Seek(offset, whence)
+	}
+	return 0, errors.New("managed reader does not support seeking")
 }

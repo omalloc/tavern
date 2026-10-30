@@ -7,10 +7,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"hash"
 	"io"
 	"mime"
 	"net/http"
 	"net/url"
+	"os"
 	"sort"
 	"strings"
 	"sync"
@@ -71,7 +73,7 @@ func (p *managedProvider) source(req *http.Request, plan planning.Plan) (*manage
 	if err != nil {
 		return nil, err
 	}
-	source := &managedSource{repo: repo, key: key, request: request}
+	source := &managedSource{repo: repo, key: key, request: request, preserveOnly: plan.Options.Format == "source"}
 	encoded, _ := json.Marshal(request.Header)
 	digest := sha256.Sum256(encoded)
 	unlock, err := p.sources.lock(req.Context(), fmt.Sprintf("%s/%x", key.ResourceID(), digest))
@@ -84,6 +86,13 @@ func (p *managedProvider) source(req *http.Request, plan planning.Plan) (*manage
 		if err == nil && selected.Fresh && selected.Representation.HasComplete() {
 			source.selected = selected
 			source.headers = selected.Representation.Headers.Clone()
+			if source.preserveOnly || preserveManagedSource(request, source.headers) {
+				source.info, err = originalSourceInfo(source.headers, int64(selected.Representation.Size))
+				if err != nil {
+					return nil, err
+				}
+				return source, nil
+			}
 			if info, ok := p.imageInfo(selected.Representation); ok {
 				source.info = info
 				return source, nil
@@ -114,7 +123,7 @@ func (p *managedProvider) imageInfo(md *object.Metadata) (transformv1.SourceInfo
 	if _, err := hex.DecodeString(info.DecodedDigest); err != nil {
 		return transformv1.SourceInfo{}, false
 	}
-	return transformv1.SourceInfo{MIME: info.MIME, Size: info.DecodedSize, Width: info.Width, Height: info.Height, HasAlpha: info.HasAlpha, Animated: info.Animated}, true
+	return transformv1.SourceInfo{MIME: info.MIME, Size: info.DecodedSize, Width: info.Width, Height: info.Height, HasAlpha: info.HasAlpha, Animated: info.Animated, HasMetadata: info.HasMetadata}, true
 }
 func (p *managedProvider) fetchSource(source *managedSource) (*managedSource, error) {
 	request := source.request
@@ -142,7 +151,31 @@ func (p *managedProvider) fetchSource(source *managedSource) (*managedSource, er
 			}
 		}
 	}
-	blob, err := planning.SpoolDecoded(request.Context(), response.Body, strings.ToLower(strings.TrimSpace(response.Header.Get("Content-Encoding"))), p.limits.Directory, p.limits.InputBytes, p.limits.Pixels, p.inspector)
+
+	raw, err := newManagedRaw(p.limits.Directory)
+	if err != nil {
+		return nil, err
+	}
+	retained := false
+	defer func() {
+		if !retained {
+			raw.Close()
+		}
+	}()
+
+	var blob *planning.FileBlob
+	if source.preserveOnly || preserveManagedSource(request, response.Header) {
+		var n int64
+		n, err = io.Copy(raw.writer(), io.LimitReader(&managedWireReader{request.Context(), response.Body}, p.limits.InputBytes+1))
+		if err == nil && n > p.limits.InputBytes {
+			err = planning.ErrBudget
+		}
+		if err == nil && n == 0 {
+			err = planning.ErrUnsupportedSource
+		}
+	} else {
+		blob, err = planning.SpoolDecoded(request.Context(), io.TeeReader(response.Body, raw.writer()), strings.ToLower(strings.TrimSpace(response.Header.Get("Content-Encoding"))), p.limits.Directory, p.limits.InputBytes, p.limits.Pixels, p.inspector)
+	}
 	if err != nil {
 		if c.id != nil && c.id.IsRepresentation() {
 			if rejected, lookupErr := source.repo.LookupOriginMetadata(request.Context(), source.key, representationSelectionHeader(request)); lookupErr == nil && rejected.Representation.ID.Hash() == c.id.Hash() {
@@ -151,23 +184,49 @@ func (p *managedProvider) fetchSource(source *managedSource) (*managedSource, er
 		}
 		return nil, err
 	}
-	source.blob, source.info, source.headers = blob, blob.Info(), response.Header.Clone()
+
+	if err = raw.complete(); err != nil {
+		if blob != nil {
+			blob.Close()
+		}
+		return nil, err
+	}
+	if response.ContentLength >= 0 && response.ContentLength != raw.size {
+		if blob != nil {
+			blob.Close()
+		}
+		return nil, io.ErrUnexpectedEOF
+	}
+	source.raw = raw
+	retained = true
+	source.blob, source.headers = blob, response.Header.Clone()
+	if blob != nil {
+		source.info = blob.Info()
+	} else {
+		source.info, err = originalSourceInfo(source.headers, raw.size)
+	}
 	success := false
 	defer func() {
 		if !success {
 			source.close()
 		}
 	}()
-	declared, _, err := mime.ParseMediaType(response.Header.Get("Content-Type"))
-	if err != nil || declared != source.info.MIME {
+
+	if err != nil {
+		return nil, err
+	}
+	declared, _, parseErr := mime.ParseMediaType(response.Header.Get("Content-Type"))
+	if parseErr != nil || declared != source.info.MIME {
 		return nil, planning.ErrUnsupportedSource
 	}
 	if !requestBypassesCache(request) && c.id != nil && c.id.IsRepresentation() {
 		selected, err := source.repo.LookupOriginMetadata(request.Context(), source.key, representationSelectionHeader(request))
 		if err == nil && selected.Fresh && selected.Representation.HasComplete() && selected.Representation.ID.Hash() == c.id.Hash() {
 			source.selected = selected
-			if err = p.annotateSource(request.Context(), source); err != nil {
-				return nil, err
+			if blob != nil {
+				if err = p.annotateSource(request.Context(), source); err != nil {
+					return nil, err
+				}
 			}
 		} else if err != nil && !errors.Is(err, storage.ErrKeyNotFound) {
 			return nil, err
@@ -188,7 +247,7 @@ func (p *managedProvider) annotateSource(ctx context.Context, source *managedSou
 	}
 	md := source.selected.Representation.Clone()
 	info := source.info
-	md.Representation.Image = &object.ImageInfo{SchemaVersion: 1, InspectorVersion: p.inspector.Version(), DecodedDigest: source.blob.Digest(), MIME: info.MIME, DecodedSize: info.Size, Width: info.Width, Height: info.Height, HasAlpha: info.HasAlpha, Animated: info.Animated}
+	md.Representation.Image = &object.ImageInfo{SchemaVersion: 1, InspectorVersion: p.inspector.Version(), DecodedDigest: source.blob.Digest(), MIME: info.MIME, DecodedSize: info.Size, Width: info.Width, Height: info.Height, HasAlpha: info.HasAlpha, Animated: info.Animated, HasMetadata: info.HasMetadata}
 	bucket := p.bucket(state.Resource().Resource.ActiveLocation)
 	if bucket == nil {
 		source.repo.Release(lease)
@@ -310,7 +369,7 @@ func (r *managedChunkReader) Read(p []byte) (int, error) {
 		r.file = file
 	}
 	take := min(uint64(len(p)), r.blockSize-offset, r.size-r.position)
-	n, err := r.file.Read(p[:take])
+	n, err := r.file.ReadAt(p[:take], int64(offset))
 	r.position += uint64(n)
 	if err == io.EOF && uint64(n) != take {
 		return n, io.ErrUnexpectedEOF
@@ -338,4 +397,88 @@ func (r *managedChunkReader) Close() error {
 		return r.file.Close()
 	}
 	return nil
+}
+
+func (r *managedChunkReader) Seek(offset int64, whence int) (int64, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.closed {
+		return 0, io.ErrClosedPipe
+	}
+	next, err := managedSeekPosition(int64(r.position), int64(r.size), offset, whence)
+	if err != nil {
+		return 0, err
+	}
+	if r.file != nil {
+		if err = r.file.Close(); err != nil {
+			return 0, err
+		}
+		r.file = nil
+	}
+	r.position = uint64(next)
+	return next, nil
+}
+
+// Original wire bytes are retained separately from decoded conversion input.
+// This preserves content coding and validators for private/no-transform fallback.
+type managedRaw struct {
+	file *os.File
+	path string
+	hash hash.Hash
+	size int64
+	once sync.Once
+	err  error
+}
+
+func newManagedRaw(directory string) (*managedRaw, error) {
+	file, err := os.CreateTemp(directory, "tavern-source-wire-*")
+	if err != nil {
+		return nil, err
+	}
+	return &managedRaw{file: file, path: file.Name(), hash: sha256.New()}, nil
+}
+func (r *managedRaw) writer() io.Writer { return io.MultiWriter(r.file, r.hash) }
+func (r *managedRaw) complete() error {
+	stat, err := r.file.Stat()
+	if err != nil {
+		return err
+	}
+	r.size = stat.Size()
+	return r.file.Close()
+}
+func (r *managedRaw) open(ctx context.Context) (io.ReadCloser, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	return os.Open(r.path)
+}
+func (r *managedRaw) Close() error {
+	r.once.Do(func() {
+		r.file.Close()
+		r.err = os.Remove(r.path)
+		if errors.Is(r.err, os.ErrNotExist) {
+			r.err = nil
+		}
+	})
+	return r.err
+}
+
+func originalSourceInfo(headers http.Header, size int64) (transformv1.SourceInfo, error) {
+	mimeType, _, err := mime.ParseMediaType(headers.Get("Content-Type"))
+	if err != nil || strings.Contains(mimeType, "*") || size <= 0 {
+		return transformv1.SourceInfo{}, planning.ErrUnsupportedSource
+	}
+	return transformv1.SourceInfo{MIME: mimeType, Size: size}, nil
+}
+
+type managedWireReader struct {
+	ctx    context.Context
+	reader io.Reader
+}
+
+func (r *managedWireReader) Read(data []byte) (int, error) {
+	if err := r.ctx.Err(); err != nil {
+		return 0, err
+	}
+	return r.reader.Read(data)
 }

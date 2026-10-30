@@ -69,6 +69,14 @@ func init() {
 
 // Middleware initializes a middleware component based on the provided configuration and returns the middleware logic.
 func Middleware(c *configv1.Middleware) (middleware.Middleware, func(), error) {
+	return middlewareWithManaged(c, nil)
+}
+
+func MiddlewareWithManaged(c *configv1.Middleware, runtime *planning.Runtime) (middleware.Middleware, func(), error) {
+	return middlewareWithManaged(c, runtime)
+}
+
+func middlewareWithManaged(c *configv1.Middleware, runtime *planning.Runtime) (middleware.Middleware, func(), error) {
 	hostname, _ := os.Hostname()
 	opts := &cachingOption{
 		VaryLimit:         100,
@@ -86,6 +94,36 @@ func Middleware(c *configv1.Middleware) (middleware.Middleware, func(), error) {
 		return nil, middleware.EmptyCleanup, err
 	}
 
+	store := storagev1.Current()
+	var managed *managedProvider
+	if runtime != nil && !runtime.Enabled {
+		if err := bindPausedManagedRoutes(store, runtime.Router); err != nil {
+			return nil, middleware.EmptyCleanup, err
+		}
+	}
+	if runtime != nil && runtime.Enabled {
+		if opts.representation == nil || !opts.IncludeQueryInCacheKey {
+			return nil, middleware.EmptyCleanup, fmt.Errorf("transform requires caching.representation.enabled and include_query_in_cache_key=true")
+		}
+		if runtime.Worker == nil || runtime.Router == nil || runtime.StartupTimeout <= 0 {
+			return nil, middleware.EmptyCleanup, planning.ErrInvalidParameter
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), runtime.StartupTimeout)
+		_, err := runtime.Worker.Verify(ctx)
+		cancel()
+		if err != nil {
+			return nil, middleware.EmptyCleanup, fmt.Errorf("transform backend contract verification: %w", err)
+		}
+		limits := runtime.Worker.Limits()
+		placeholder := middleware.RoundTripperFunc(func(*http.Request) (*http.Response, error) { return nil, fmt.Errorf("managed origin is not bound") })
+		managed, err = newManagedProvider(store, placeholder, *opts, runtime.Worker, planning.ImageInspector{}, managedLimits{Concurrency: limits.Concurrency, QueueSize: limits.QueueSize, InputBytes: limits.MaxInputBytes, OutputBytes: limits.MaxOutputBytes, Pixels: limits.MaxPixels, Timeout: limits.Timeout, Directory: limits.TemporaryDirectory})
+		if err != nil {
+			return nil, middleware.EmptyCleanup, err
+		}
+		if err = managed.bindRoutes(runtime.Router); err != nil {
+			return nil, middleware.EmptyCleanup, err
+		}
+	}
 	log.Infof("middleware.caching init slice_size %d", opts.SliceSize)
 	if len(opts.VaryIgnoreKey) > 0 {
 		log.Warn("middleware.caching: vary_ignore_key is deprecated and ignored; legacy Vary caching is bypassed")
@@ -118,7 +156,11 @@ func Middleware(c *configv1.Middleware) (middleware.Middleware, func(), error) {
 	)
 
 	return func(origin http.RoundTripper) http.RoundTripper {
-		return bindCaching(origin, storagev1.Current(), opts, processor)
+		bound := *opts
+		if managed != nil {
+			bound.managed = managed.withOrigin(origin)
+		}
+		return bindCaching(origin, store, &bound, processor)
 	}, middleware.EmptyCleanup, nil
 }
 
@@ -136,6 +178,9 @@ func bindCaching(origin http.RoundTripper, store storage.Storage, opts *cachingO
 
 		taskCtx, finish, taskErr := beginCacheTask(store, req.Context(), defaultTaskTimeout)
 		if taskErr != nil {
+			if _, planned := planning.PlanFromContext(req.Context()); planned {
+				return planning.ErrorResponse(req, http.StatusServiceUnavailable), nil
+			}
 			return origin.RoundTrip(prepareRepresentationRequest(req))
 		}
 		req = req.Clone(taskCtx)

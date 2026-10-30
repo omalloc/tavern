@@ -3,7 +3,6 @@ package caching
 import (
 	"errors"
 	"net/http"
-	"strings"
 	"time"
 
 	xhttp "github.com/omalloc/tavern/pkg/x/http"
@@ -52,10 +51,10 @@ func (r *FileChangedProcessor) PostRequest(c *Caching, req *http.Request, resp *
 			_ = c.bucket.DiscardWithMessage(c.req.Context(), c.id, "file changed with cl not match")
 		}
 
-		oldEtag := strings.ToLower(obj.Headers.Get("ETag"))
-		newEtag := strings.ToLower(resp.Header.Get("ETag"))
+		oldEtag := obj.Headers.Get("ETag")
+		newEtag := resp.Header.Get("ETag")
 		if flag && oldEtag != "" && newEtag != "" &&
-			!strings.EqualFold(oldEtag, newEtag) {
+			oldEtag != newEtag {
 			flag = false
 			c.fileChanged = true
 			c.log.Warnf("FileChangedProcessor: etag not match, old: %q, new: %q, id: %s", oldEtag, newEtag, c.id.String())

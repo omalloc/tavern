@@ -43,3 +43,17 @@ func (p *managedProvider) bindRoutes(router *planning.Router) error {
 	name := fmt.Sprintf("managed-source-map-%x", sha256.Sum256([]byte(p.opt.representation.namespace+"\x00"+p.opt.representation.isolationScope)))
 	return registry.RegisterRepresentationPurger(name, &managedPurger{manager: p.manager, router: router})
 }
+
+// Keep the exact parameter mapping during a read rollback. Storage still owns
+// PURGE and barriers; no worker contact or transform execution is required.
+func bindPausedManagedRoutes(store storage.Storage, router *planning.Router) error {
+	owner, ok := store.(representation.Provider)
+	if !ok || owner.RepresentationManager() == nil {
+		return nil
+	}
+	registry, ok := store.(storage.RepresentationRegistry)
+	if !ok {
+		return storage.ErrControlUnsupported
+	}
+	return registry.RegisterRepresentationPurger("managed-paused-source-map", &managedPurger{manager: owner.RepresentationManager(), router: router})
+}

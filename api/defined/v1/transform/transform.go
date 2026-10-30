@@ -18,6 +18,8 @@ type SourceInfo struct {
 	Height   int    `json:"height" yaml:"height"`
 	HasAlpha bool   `json:"has_alpha" yaml:"has_alpha"`
 	Animated bool   `json:"animated" yaml:"animated"`
+	// Version 1 conversion rejects orientation/color metadata until it has its own backend preservation gate.
+	HasMetadata bool `json:"has_metadata" yaml:"has_metadata"`
 }
 
 type CompleteSource interface {

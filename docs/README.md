@@ -89,9 +89,10 @@ docs/
 | [PURGE 设计 / PURGE Design](./purge.md) | PURGE 缓存清除的完整设计、配置和流程 |
 | [CDN 缓存分析 / CDN Cache Analysis](./cdn-cache-analysis.md) | Tavern vs Squid vs ATS 对比分析 |
 | [Vary 与资源转换缓存设计](./vary-representation-design.md) | 当前 Vary 能力分析、问题定位及目标架构（待实现） |
+| [托管图片路由启用与回滚](./managed-image-operations.md) | 成品条件/范围响应、no-transform、失败回退及公开配置（默认关闭） |
 | [图片 worker 契约与部署前检查](./image-worker-contract.md) | HTTP 协议、完整图片检查、预算和独立矩阵检查命令（P3.3） |
 | [透明 v2 缓存启用与回滚](./vary-representation-operations.md) | disk/Pebble 支持矩阵、默认关闭配置和停写交接 |
-| [Vary 与资源转换详细落地方案](./vary-representation-implementation-plan.md) | 四阶段变更批次、接口模型、验收清单及灰度回滚（P2 已完成） |
+| [Vary 与资源转换详细落地方案](./vary-representation-implementation-plan.md) | 四阶段变更批次、接口模型、验收清单及灰度回滚（P2/P3 已完成） |
 | [系统设计规格 / System Design Spec](./superpowers/specs/2026-06-09-tavern-cdn-documentation-design.md) | 本文档集的设计规格 |
 | [实施计划 / Implementation Plan](./superpowers/plans/2026-06-09-tavern-cdn-documentation.md) | 文档集实施的计划 |
 

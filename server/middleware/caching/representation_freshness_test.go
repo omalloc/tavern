@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/omalloc/tavern/api/defined/v1/storage/object"
 	"github.com/omalloc/tavern/internal/protocol"
 )
 
@@ -47,5 +48,19 @@ func TestRepresentationFreshness(t *testing.T) {
 				t.Fatalf("expires %d, age %q, err %v", expires, h.Get("Age"), err)
 			}
 		})
+	}
+}
+
+func TestValidationCannotRelabelOldWireBytes(t *testing.T) {
+	prior := &object.Metadata{Size: 3, BlockSize: 64, Headers: http.Header{"Content-Type": {"image/jpeg"}, "Content-Encoding": {"gzip"}}}
+	prior.Chunks.Set(0)
+	req := varyRequest(t, "https://example.com/a", http.Header{"If-None-Match": {`"A"`}})
+	for _, header := range []http.Header{{"Content-Encoding": {"identity"}}, {"Content-Type": {"image/png"}}, {"Content-Encoding": {"gzip", "identity"}}} {
+		if validValidation(prior, &http.Response{Header: header}, req) {
+			t.Fatal("304 relabeled old bytes", header)
+		}
+	}
+	if !validValidation(prior, &http.Response{Header: http.Header{"Content-Encoding": {"gzip"}, "Content-Type": {"image/jpeg"}}}, req) {
+		t.Fatal("unchanged coding/type rejected")
 	}
 }

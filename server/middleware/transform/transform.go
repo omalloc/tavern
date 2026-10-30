@@ -2,9 +2,7 @@ package transform
 
 import (
 	"fmt"
-	"io"
 	"net/http"
-	"strings"
 
 	configv1 "github.com/omalloc/tavern/api/defined/v1/middleware"
 	"github.com/omalloc/tavern/server/middleware"
@@ -13,19 +11,15 @@ import (
 
 func init() { middleware.Register("transform", Middleware) }
 
-type option struct {
-	Enabled bool `json:"enabled" yaml:"enabled"`
-}
-
-// Public execution stays closed until provider/worker contract validation is
-// connected. Merely configuring this middleware must never claim conversion.
+// The standalone factory supports pass-through. Enabled execution is assembled
+// by the server with the caching owner and a successfully verified runtime.
 func Middleware(config *configv1.Middleware) (middleware.Middleware, func(), error) {
 	var opt option
 	if err := config.Unmarshal(&opt); err != nil {
 		return nil, middleware.EmptyCleanup, err
 	}
 	if opt.Enabled {
-		return nil, middleware.EmptyCleanup, fmt.Errorf("transform execution requires the pending validated provider/worker binding")
+		return nil, middleware.EmptyCleanup, fmt.Errorf("transform execution requires a validated server caching/provider binding")
 	}
 	return middleware.EmptyMiddleware, middleware.EmptyCleanup, nil
 }
@@ -43,8 +37,7 @@ func Planner(resolve Resolver) middleware.Middleware {
 				if status == http.StatusInternalServerError {
 					return nil, err
 				}
-				body := http.StatusText(status)
-				return &http.Response{StatusCode: status, Header: http.Header{"Content-Type": {"text/plain; charset=utf-8"}, "Cache-Control": {"no-store"}}, ContentLength: int64(len(body)), Body: io.NopCloser(strings.NewReader(body))}, nil
+				return planning.ErrorResponse(req, status), nil
 			}
 			ctx := planning.WithoutPlan(req.Context())
 			if matched {
@@ -54,4 +47,19 @@ func Planner(resolve Resolver) middleware.Middleware {
 			return next.RoundTrip(req.WithContext(ctx))
 		})
 	}
+}
+
+func WithRuntime(runtime *planning.Runtime) (middleware.Middleware, error) {
+	if runtime != nil && !runtime.Enabled {
+		return middleware.EmptyMiddleware, nil
+	}
+	if runtime == nil || runtime.Router == nil || runtime.Worker == nil || !runtime.Worker.Verified() {
+		return nil, fmt.Errorf("transform runtime has no verified backend")
+	}
+	return Planner(func(req *http.Request) (planning.Plan, bool, error) {
+		if req.Method != http.MethodGet && req.Method != http.MethodHead {
+			return planning.Plan{}, false, nil
+		}
+		return runtime.Router.Resolve(req)
+	}), nil
 }
