@@ -26,10 +26,11 @@ var ErrTopologyMismatch = errors.New("representation topology changed; explicit 
 type Provider interface{ RepresentationManager() *Manager }
 
 type ManagerConfig struct {
-	StateDirectory string        `json:"state_directory" yaml:"state_directory"`
-	Durable        bool          `json:"durable" yaml:"durable"`
-	GCInterval     time.Duration `json:"gc_interval" yaml:"gc_interval"`
-	GCBudget       int           `json:"gc_budget" yaml:"gc_budget"`
+	Maintenance    func(context.Context) error `json:"-" yaml:"-"`
+	StateDirectory string                      `json:"state_directory" yaml:"state_directory"`
+	Durable        bool                        `json:"durable" yaml:"durable"`
+	GCInterval     time.Duration               `json:"gc_interval" yaml:"gc_interval"`
+	GCBudget       int                         `json:"gc_budget" yaml:"gc_budget"`
 }
 
 type Manager struct {
@@ -39,6 +40,7 @@ type Manager struct {
 	gcMu        sync.Mutex
 	cursors     map[string][]byte
 	nextBucket  int
+	compactNext int
 	stop        chan struct{}
 	closed      sync.Once
 	wg          sync.WaitGroup
@@ -205,6 +207,10 @@ func NewManager(ctx context.Context, buckets []storage.Bucket, config ManagerCon
 				case <-ticker.C:
 					ctx, cancel := context.WithTimeout(context.Background(), config.GCInterval)
 					_, _ = m.CollectUnreachable(ctx, budget)
+					_, _ = m.CompactBarriers(ctx, min(budget, 128))
+					if config.Maintenance != nil {
+						_ = config.Maintenance(ctx)
+					}
 					cancel()
 				}
 			}

@@ -40,18 +40,19 @@ type indexShard struct {
 }
 
 type IndexRepository struct {
-	controls        storage.ControlStore
-	initialLocation string
-	lookup          LookupFunc
-	durable         bool
-	dataBuckets     []storage.Bucket
-	durableBuckets  map[string]storage.DurableRepresentationBucket
-	barrierMu       sync.RWMutex // lock order: barrier, then resource shard
-	barrierLimit    int
-	buckets         map[string]storage.Bucket
-	lifecycle       bool
-	now             func() time.Time
-	shards          [256]indexShard
+	controls             storage.ControlStore
+	initialLocation      string
+	lookup               LookupFunc
+	durable              bool
+	dataBuckets          []storage.Bucket
+	durableBuckets       map[string]storage.DurableRepresentationBucket
+	barrierMu            sync.RWMutex // lock order: barrier, then resource shard
+	barrierLimit         int
+	barrierCompactCursor int
+	buckets              map[string]storage.Bucket
+	lifecycle            bool
+	now                  func() time.Time
+	shards               [256]indexShard
 }
 
 type Option func(*IndexRepository)

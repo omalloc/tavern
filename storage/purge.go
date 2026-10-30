@@ -15,9 +15,12 @@ import (
 )
 
 type representationRegistry struct {
-	mu     sync.RWMutex
-	owners map[string]storagev1.RepresentationPurger
-	fills  map[*legacyFill]struct{}
+	gcMu          sync.Mutex
+	legacyCursors map[string][]byte
+	legacyNext    int
+	mu            sync.RWMutex
+	owners        map[string]storagev1.RepresentationPurger
+	fills         map[*legacyFill]struct{}
 }
 
 func (r *representationRegistry) register(name string, purger storagev1.RepresentationPurger) error {

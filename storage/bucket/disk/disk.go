@@ -625,7 +625,7 @@ func (d *diskBucket) Migrate(ctx context.Context, id *object.ID, dest storage.Bu
 	if err != nil {
 		return err
 	}
-	if !md.IsLegacy() {
+	if !md.IsLegacy() || md.IsLegacyVary() {
 		return storage.ErrProtectedControl
 	}
 	clog := log.Context(ctx)

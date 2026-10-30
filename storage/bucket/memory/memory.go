@@ -403,7 +403,7 @@ func (m *memoryBucket) Migrate(ctx context.Context, id *object.ID, dest storage.
 	if err != nil {
 		return err
 	}
-	if !md.IsLegacy() {
+	if !md.IsLegacy() || md.IsLegacyVary() {
 		return storage.ErrProtectedControl
 	}
 	clog := log.Context(ctx)

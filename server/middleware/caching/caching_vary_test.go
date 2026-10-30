@@ -34,7 +34,7 @@ func (s *varyTestStorage) Select(context.Context, *object.ID) storage.Bucket { r
 
 // Exercise the production middleware and real proxy against a controlled origin.
 // Globals are restored on cleanup, so these tests deliberately do not run parallel.
-func newVaryTestCache(t *testing.T, handler http.HandlerFunc) (http.RoundTripper, storage.Bucket, string) {
+func newVaryTestCache(t testing.TB, handler http.HandlerFunc) (http.RoundTripper, storage.Bucket, string) {
 	t.Helper()
 	origin := httptest.NewServer(handler)
 	t.Cleanup(origin.Close)

@@ -140,6 +140,19 @@ func (r *RepresentationInfo) Clone() *RepresentationInfo {
 	return &out
 }
 
+// IsLegacyVary identifies legacy data that the HTTP cache no longer selects.
+// Reclaimers additionally reject unknown flag bits and reserved physical IDs.
+func (m *Metadata) IsLegacyVary() bool {
+	if !m.IsLegacy() {
+		return false
+	}
+	if m.Flags&(FlagVaryIndex|FlagVaryCache) != 0 || m.HasVary() {
+		return true
+	}
+	fields, wildcard, err := varycontrol.Parse(m.Headers.Values("Vary")...)
+	return err != nil || wildcard || len(fields) > 0
+}
+
 func (m *Metadata) IsLegacy() bool {
 	return m != nil && (m.RecordKind == "" || m.RecordKind == RecordLegacy) &&
 		m.Resource == nil && m.Representation == nil && m.Barriers == nil

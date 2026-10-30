@@ -95,6 +95,8 @@ storage:
   #   state_directory: /cache-control/tavern-v2
   #   gc_interval: 1m
   #   gc_budget: 64
+  #   legacy_vary_gc_budget: 0 # 默认关闭；开启时每轮扫描 1—128 条旧格式记录
+  #   legacy_vary_gc_file_ops: 128 # 每轮删除尝试上限 2—1024，含临时文件
   db_path: .indexdb # path to the index database, for absolute path, please use /absolute/path/to/db
   async_load: true
   eviction_policy: fifo # fifo, lru, lfu

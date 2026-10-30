@@ -104,3 +104,13 @@ func (w *wrappedStorage) RepresentationManager() *representation.Manager {
 	}
 	return nil
 }
+
+func (w *wrappedStorage) CollectLegacyVary(ctx context.Context, records, files int) (storagev1.LegacyCollectionResult, error) {
+	collector, ok := w.base.(storagev1.LegacyVaryCollector)
+	if !ok {
+		return storagev1.LegacyCollectionResult{}, storagev1.ErrControlUnsupported
+	}
+	return collector.CollectLegacyVary(ctx, records, files)
+}
+
+var _ storagev1.LegacyVaryCollector = (*wrappedStorage)(nil)

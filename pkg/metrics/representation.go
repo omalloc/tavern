@@ -20,8 +20,12 @@ var (
 	representationGC         = prometheus.NewCounterVec(prometheus.CounterOpts{Namespace: Namespace, Name: "representation_gc_total", Help: "GC decision events: collected candidate, skipped/protected record, or failed scan/deletion."}, []string{"result"})
 )
 
+var barrierCompaction = prometheus.NewCounterVec(prometheus.CounterOpts{Namespace: Namespace, Name: "representation_barrier_compaction_total", Help: "Barrier maintenance decisions; removed/retained candidates and failed passes."}, []string{"result"})
+var legacyCollection = prometheus.NewCounterVec(prometheus.CounterOpts{Namespace: Namespace, Name: "legacy_vary_gc_total", Help: "Retired legacy Vary maintenance decisions; collected/skipped candidates and failed passes."}, []string{"result"})
+var legacyFileOps = prometheus.NewCounter(prometheus.CounterOpts{Namespace: Namespace, Name: "legacy_vary_gc_file_ops_total", Help: "Budgeted final/temporary file removal attempts by legacy Vary maintenance."})
+
 func init() {
-	tavernRegistry.MustRegister(varyLookup, varyAdmission, representationCommit, representationPending, representationInvalidate, sourceFetch, transformTotal, transformDuration, transformQueue, transformActive, transformRejected, representationGC)
+	tavernRegistry.MustRegister(barrierCompaction, legacyCollection, legacyFileOps, varyLookup, varyAdmission, representationCommit, representationPending, representationInvalidate, sourceFetch, transformTotal, transformDuration, transformQueue, transformActive, transformRejected, representationGC)
 }
 
 // All caller-supplied labels pass fixed allowlists, including test backends and
@@ -90,4 +94,20 @@ func RecordTransformRejected(backend, stage, reason string) {
 }
 func RecordRepresentationGC(result string) {
 	representationGC.WithLabelValues(fixedLabel(result, "collected", "skipped", "failed")).Inc()
+}
+
+func RecordBarrierCompaction(scanned, removed int, failed bool) {
+	barrierCompaction.WithLabelValues("removed").Add(float64(removed))
+	barrierCompaction.WithLabelValues("retained").Add(float64(max(0, scanned-removed)))
+	if failed {
+		barrierCompaction.WithLabelValues("failed").Inc()
+	}
+}
+func RecordLegacyCollection(collected, skipped, files int, failed bool) {
+	legacyCollection.WithLabelValues("collected").Add(float64(collected))
+	legacyCollection.WithLabelValues("skipped").Add(float64(skipped))
+	legacyFileOps.Add(float64(files))
+	if failed {
+		legacyCollection.WithLabelValues("failed").Inc()
+	}
 }

@@ -39,7 +39,29 @@ func initializeRepresentations(config *conf.RepresentationStorage, buckets []sto
 	if budget == 0 {
 		budget = 64
 	}
-	manager, err := representation.NewManager(context.Background(), buckets, representation.ManagerConfig{StateDirectory: config.StateDirectory, Durable: true, GCInterval: interval, GCBudget: budget})
+	var maintenance func(context.Context) error
+	if config.LegacyVaryGCBudget < 0 || config.LegacyVaryGCBudget > 128 || config.LegacyVaryGCFileOps < 0 || config.LegacyVaryGCFileOps > 1024 {
+		return nil, storagev1.ErrInvalidationBudget
+	}
+	if config.LegacyVaryGCBudget > 0 {
+		fileOps := config.LegacyVaryGCFileOps
+		if fileOps == 0 {
+			fileOps = 128
+		}
+		if fileOps < 2 {
+			return nil, storagev1.ErrInvalidationBudget
+		}
+		for _, bucket := range buckets {
+			if _, ok := bucket.(storagev1.LegacyVaryReclaimer); !ok {
+				return nil, storagev1.ErrControlUnsupported
+			}
+		}
+		maintenance = func(ctx context.Context) error {
+			_, err := registry.collectLegacyVary(ctx, buckets, config.LegacyVaryGCBudget, fileOps)
+			return err
+		}
+	}
+	manager, err := representation.NewManager(context.Background(), buckets, representation.ManagerConfig{StateDirectory: config.StateDirectory, Durable: true, GCInterval: interval, GCBudget: budget, Maintenance: maintenance})
 	if err != nil {
 		return nil, err
 	}

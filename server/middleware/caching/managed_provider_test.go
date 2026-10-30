@@ -20,6 +20,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 
@@ -169,6 +170,9 @@ type managedFixture struct {
 }
 
 type sourceReadBucket struct {
+	failData, failControlRead, failControlWrite             atomic.Bool
+	dataFailures, controlReadFailures, controlWriteFailures atomic.Int32
+	controlReads, controlWrites                             atomic.Int64
 	storage.Bucket
 	reads     *atomic.Int32
 	sourceIDs sync.Map
@@ -187,9 +191,19 @@ func (b *sourceReadBucket) Store(ctx context.Context, md *object.Metadata) error
 	return b.Bucket.Store(ctx, md)
 }
 func (b *sourceReadBucket) LoadControl(ctx context.Context, id *object.ID) (*object.Metadata, error) {
+	b.controlReads.Add(1)
+	if b.failControlRead.Load() {
+		b.controlReadFailures.Add(1)
+		return nil, syscall.ENODEV
+	}
 	return b.Bucket.(storage.ControlStore).LoadControl(ctx, id)
 }
 func (b *sourceReadBucket) StoreControl(ctx context.Context, md *object.Metadata) error {
+	b.controlWrites.Add(1)
+	if b.failControlWrite.Load() {
+		b.controlWriteFailures.Add(1)
+		return syscall.EIO
+	}
 	return b.Bucket.(storage.ControlStore).StoreControl(ctx, md)
 }
 func (b *sourceReadBucket) ScanMetadata(ctx context.Context, cursor []byte, limit int) ([]*object.Metadata, []byte, error) {
@@ -199,7 +213,7 @@ func (b *sourceReadBucket) SetRepresentationEvictor(fn func(context.Context, *ob
 	b.Bucket.(storage.RepresentationEviction).SetRepresentationEvictor(fn)
 }
 
-func newManagedFixture(t *testing.T) *managedFixture {
+func newManagedFixture(t testing.TB) *managedFixture {
 	t.Helper()
 	_, bucket, _ := newVaryTestCache(t, func(http.ResponseWriter, *http.Request) { t.Error("unexpected global origin") })
 	f := &managedFixture{directory: t.TempDir(), cacheControl: "max-age=600", etag: `"source-v1"`}
@@ -748,4 +762,54 @@ func TestManagedProviderHTTPWorkerCompletePublication(t *testing.T) {
 	if err != nil || len(entries) != 0 {
 		t.Fatalf("worker/cache temp files leaked: %v %v", entries, err)
 	}
+	t.Run("worker-disappears-after-verification", func(t *testing.T) {
+		server.Close()
+		req, plan := f.request(t, "format=png", "image/png")
+		source, err := f.provider.source(req, plan)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer source.close()
+		root, err := source.repo.Load(t.Context(), source.key)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, ref := range root.Resource.Variants {
+			if ref.SelectionKind == object.SelectionManaged {
+				if _, err = source.repo.Retire(t.Context(), source.key, ref); err != nil {
+					t.Fatal(err)
+				}
+			}
+		}
+		for attempt := 0; attempt < 2; attempt++ {
+			response, err := f.provider.roundTrip(req, plan)
+			if err != nil {
+				t.Fatal(err)
+			}
+			body, err := io.ReadAll(response.Body)
+			response.Body.Close()
+			if err != nil || response.StatusCode != 502 || response.Header.Get("Cache-Control") != "no-store" || bytes.Equal(body, f.raw) {
+				t.Fatal("unavailable worker bypassed target format", response.StatusCode, err)
+			}
+		}
+		originalReq, originalPlan := f.request(t, "format=source", "image/jpeg")
+		response, err := f.provider.roundTrip(originalReq, originalPlan)
+		if err != nil {
+			t.Fatal(err)
+		}
+		body, err := io.ReadAll(response.Body)
+		response.Body.Close()
+		if err != nil || response.StatusCode != 200 || response.Header.Get("Content-Type") != "image/jpeg" || !bytes.Equal(body, f.raw) {
+			t.Fatal("worker outage prevented valid original response", response.StatusCode, err)
+		}
+		assertNoImageTemporaryFiles(t, f)
+	})
+}
+
+func (b *sourceReadBucket) WriteChunkFile(ctx context.Context, id *object.ID, index uint32) (io.WriteCloser, string, error) {
+	if b.failData.Load() {
+		b.dataFailures.Add(1)
+		return nil, "", syscall.ENOSPC
+	}
+	return b.Bucket.WriteChunkFile(ctx, id, index)
 }

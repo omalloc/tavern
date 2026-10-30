@@ -86,9 +86,11 @@ type Storage struct {
 // RepresentationStorage retains control ownership even when caching reads are
 // disabled. Removing this binding while persisted v2 controls exist is rejected.
 type RepresentationStorage struct {
-	StateDirectory string        `json:"state_directory" yaml:"state_directory"`
-	GCInterval     time.Duration `json:"gc_interval" yaml:"gc_interval"`
-	GCBudget       int           `json:"gc_budget" yaml:"gc_budget"`
+	LegacyVaryGCBudget  int           `json:"legacy_vary_gc_budget" yaml:"legacy_vary_gc_budget"`
+	LegacyVaryGCFileOps int           `json:"legacy_vary_gc_file_ops" yaml:"legacy_vary_gc_file_ops"`
+	StateDirectory      string        `json:"state_directory" yaml:"state_directory"`
+	GCInterval          time.Duration `json:"gc_interval" yaml:"gc_interval"`
+	GCBudget            int           `json:"gc_budget" yaml:"gc_budget"`
 }
 
 func (r *Storage) FillDefault() {

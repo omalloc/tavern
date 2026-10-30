@@ -109,3 +109,16 @@ type TaskCoordinator interface {
 }
 
 type Quiescer interface{ Quiesce(context.Context) error }
+
+// LegacyVaryReclaimer is privileged bounded maintenance. Callers must hold the
+// storage owner's legacy exclusion guard and retire URL roots in every bucket.
+// Reclaim never follows VirtualKey references and counts file removal attempts.
+type LegacyVaryReclaimer interface {
+	RetireLegacyVaryRoot(context.Context, *object.ID) error
+	ReclaimLegacyVary(context.Context, *object.ID, int) (int, bool, error)
+}
+
+type LegacyCollectionResult struct{ Scanned, Collected, Skipped, FileOps int }
+type LegacyVaryCollector interface {
+	CollectLegacyVary(context.Context, int, int) (LegacyCollectionResult, error)
+}

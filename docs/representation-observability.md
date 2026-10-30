@@ -73,6 +73,8 @@ sum by (backend, stage, reason) (rate(tr_tavern_transform_queue_rejected_total[5
 
 阈值需用固定图片、流量分布和节点资源校准。本阶段不提供性能倍数、吞吐保证或通用告警阈值；后续故障演练和基准单独记录。
 
+维护任务另提供 `tr_tavern_representation_barrier_compaction_total{result="removed|retained|failed"}`、`tr_tavern_legacy_vary_gc_total{result="collected|skipped|failed"}` 和 `tr_tavern_legacy_vary_gc_file_ops_total`。前者计候选及失败轮次，后者分别计旧格式对象决定和最终/临时文件删除尝试；不将目录扫描、元数据同步或不存在文件解释为已释放字节数。配置及故障演练见 [维护说明](representation-maintenance.md)。
+
 新的入场调试日志只记录 resource_id、固定结果/原因和合法字段名；转换调试日志记录 resource_id、有限规格指纹与结果，不打印选择值。原有访问日志沿用 access_log 配置，指标与这些日志各自保持其用途。
 
 ## 验证
