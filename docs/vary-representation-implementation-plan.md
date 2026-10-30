@@ -2,7 +2,7 @@
 
 日期：2026-10-29。
 
-状态：实施中。P1.1—P1.5 已通过受控阶段验收，P2.1—P2.4 已实现并通过定向验证；下一批为 P2.5。勾选框只标记已经落实的工作，公开 v2 持久化缓存和图片转换尚未开放。
+状态：实施中。P1.1—P1.5 已通过受控阶段验收，P2.1—P2.5 已实现并通过定向验证；下一批为 P2.6。勾选框只标记已经落实的工作，公开 v2 持久化缓存和图片转换尚未开放。
 
 前置分析：[HTTP Vary 与资源转换缓存改造设计](./vary-representation-design.md)。前置文档说明问题和目标架构；本文进一步确定模块边界、实施批次、阶段依赖、兼容方式和验收门槛。若两份文档在实施细节上存在差异，以本文的细化决策为准。
 
@@ -346,12 +346,12 @@ RepresentationStore
 
 ### P2.5 请求执行接口与进程交接
 
-- [ ] caching 使用注入的 next/origin RoundTripper 执行回源，不再在 doProxy 内直接绕过中间件链调用全局 proxy。
-- [ ] server 构造底层代理适配器，统一处理 upstream 选择、指标和默认不安全合并禁用。普通 GET/HEAD 和非缓存请求都通过同一注入入口。
-- [ ] `cloneRequest` 保留调用方 Context/cancel/deadline，选择 peer 时基于原 Context 派生；请求和响应头 rewrite 与表示匹配边界明确。
-- [ ] 将处理请求的网络 Context 与已接受缓存填充/转换任务的受限生命周期分开；客户端取消释放其读取，不让永不结束的后台任务持有预留。
-- [ ] 对 `main.go` SIGUSR2 当前“先 Close storage 再 Upgrade”路径做交接检查：停止新填充、等待/取消旧写入会话、关闭旧存储，之后才允许新写入者使用同一库；旧进程退出期间只服务可安全完成的读取或旁路。
-- [ ] 一份存储目录只允许一个写入所有者。若无法证明现有交接保证单写，则实现所有权锁/停写屏障；不能用进程内资源锁承诺跨进程原子性。
+- [x] caching 使用注入的 next/origin RoundTripper 执行回源，不再在 doProxy 内直接绕过中间件链调用全局 proxy。
+- [x] server 构造底层代理适配器，统一处理 upstream 选择、指标和默认不安全合并禁用。普通 GET/HEAD 和非缓存请求都通过同一注入入口。
+- [x] `cloneRequest` 保留调用方 Context/cancel/deadline，选择 peer 时基于原 Context 派生；请求和响应头 rewrite 与表示匹配边界明确。
+- [x] 将处理请求的网络 Context 与已接受缓存填充/转换任务的受限生命周期分开；客户端取消释放其读取，不让永不结束的后台任务持有预留。
+- [x] 对 `main.go` SIGUSR2 当前“先 Close storage 再 Upgrade”路径做交接检查：停止新填充、等待/取消旧写入会话、关闭旧存储，之后才允许新写入者使用同一库；旧进程退出期间只服务可安全完成的读取或旁路。
+- [x] 一份存储目录只允许一个写入所有者。若无法证明现有交接保证单写，则实现所有权锁/停写屏障；不能用进程内资源锁承诺跨进程原子性。
 
 ### P2.6 阶段验收门槛
 
@@ -787,4 +787,17 @@ P2.2 已提交为 `1ea5f5f`，由下面的 P2.3 批次接续 PURGE 与依赖失�
 
 发布边界：Manager 仍通过内部受控绑定接入；公开 YAML/JSON v2 和图片转换开关尚未开放。持久化能力仍限 disk/Pebble，memory 只承诺进程内行为；单写所有权与停写交接在 P2.5 完成后才具备灰度前提。
 
-下一批为 P2.5：请求执行接口与进程交接。
+### P2.5 实施记录
+
+- caching 的所有回源调用、非 GET/HEAD 旁路和后台刷新均使用注入的 next/origin RoundTripper。server 在链底部构造 proxy.Transport，保留 upstream 选择、连接池与指标，并固定关闭未经响应选择验证的共享回源。测试中的调用也改为显式注入。
+- clone 与 peer Context 保留调用方值、取消和期限，不修改调用方 RequestURI。请求头 rewrite 必须位于 caching 之前，server 拒绝仅在 miss 上运行的内层请求 rewrite；内层确定性响应处理先返回 caching，再参与准入和选择快照。
+- native/migrator 与 diraware 提供 TaskCoordinator；前台缓存任务有两分钟上限并受客户端取消约束，后台刷新用保留值的 WithoutCancel Context 建立独立三十秒任务。停止接受后新请求直接通过同一 origin 入口旁路。完成回调在响应文件、同步/异步写入和读取租约关闭后释放。
+- 同步/异步块写入器 Close 先打断回源 Read，再等待缓冲区与异步回调结束；AsyncReadCloser 同样关闭源 Body 并等待取流 goroutine。取消不再与关闭写队列并发，也不能仅凭 Context 已取消就认为任务已经结束。
+- disk 对数据目录及索引目录同时持有 OS 排他锁，覆盖改用另一 DBPath 的双写风险；句柄和删除操作均有停写屏障。memory 提供同样的句柄停写行为。工厂创建的 IndexDB 和 SharedKV 拒绝迟到操作，等待活跃回调后才关闭底层数据库，旧进程的日志/查询回调也不会访问已关闭 DB。
+- SIGUSR2 和正常关闭通过同一停写流程：取消/等待已接受任务，等待文件句柄释放，成功关闭数据库与所有权锁后才执行 Upgrade。任何停写/关闭错误都会阻止启动新写入者；升级失败后旧进程保持缓存旁路，不能自动重开同一库。server Stop 尊重关闭期限，重复 Close 幂等。构造失败释放已获得的目录所有权。
+
+验证：Go 1.26.0 下受影响的 lifecycle、iobuf、proxy、server、caching、storage、disk/memory、IndexDB/Pebble、SharedKV 和 representation 定向 race 测试通过。新增真实子进程目录争用及释放后重开、旧进程迟到写入/删除保护、活跃句柄阻止交接、handoff 失败顺序、阻塞填充取消、异步回调 join、注入 origin/非缓存方法旁路、Context/deadline 保留、rewrite 顺序和已关闭 DB 查询测试。真实 SIGUSR2 活跃请求演练与公开灰度配置留在 P2.6 完成。
+
+发布边界：公开 v2 与图片转换仍默认关闭；已有 flock 依赖从间接引用改为直接引用，版本未变。
+
+下一批为 P2.6：透明 v2 缓存灰度与回滚验收。

@@ -1,9 +1,11 @@
 package sharedkv
 
 import (
+	"bytes"
 	"context"
 	"encoding/binary"
 	"errors"
+	"github.com/omalloc/tavern/pkg/lifecycle"
 	"sync"
 
 	"github.com/cockroachdb/pebble/v2"
@@ -13,19 +15,23 @@ import (
 var _ storage.SharedKV = (*noneSharedKV)(nil)
 
 type noneSharedKV struct {
-	db     *pebble.DB
-	closed sync.Once
+	db       *pebble.DB
+	closed   sync.Once
+	work     lifecycle.Group
+	closeErr error
 }
 
 func (r *noneSharedKV) Close() error {
-	var err error
-	r.closed.Do(func() {
-		err = r.db.Close()
-	})
-	return err
+	r.closed.Do(func() { r.work.Drain(context.Background()); r.closeErr = r.db.Close() })
+	return r.closeErr
 }
 
-func (r *noneSharedKV) Get(_ context.Context, key []byte) ([]byte, error) {
+func (r *noneSharedKV) Get(ctx context.Context, key []byte) ([]byte, error) {
+	ctx, done, guardErr := r.work.Begin(ctx, 0)
+	if guardErr != nil {
+		return nil, guardErr
+	}
+	defer done()
 	val, c, err := r.db.Get(key)
 	if err != nil {
 		if errors.Is(err, pebble.ErrNotFound) {
@@ -36,14 +42,24 @@ func (r *noneSharedKV) Get(_ context.Context, key []byte) ([]byte, error) {
 
 	defer func() { _ = c.Close() }()
 
-	return val, nil
+	return bytes.Clone(val), nil
 }
 
-func (r *noneSharedKV) Set(_ context.Context, key []byte, val []byte) error {
+func (r *noneSharedKV) Set(ctx context.Context, key []byte, val []byte) error {
+	ctx, done, guardErr := r.work.Begin(ctx, 0)
+	if guardErr != nil {
+		return guardErr
+	}
+	defer done()
 	return r.db.Set(key, val, pebble.NoSync)
 }
 
-func (r *noneSharedKV) Incr(_ context.Context, key []byte, delta uint32) (uint32, error) {
+func (r *noneSharedKV) Incr(ctx context.Context, key []byte, delta uint32) (uint32, error) {
+	ctx, done, guardErr := r.work.Begin(ctx, 0)
+	if guardErr != nil {
+		return 0, guardErr
+	}
+	defer done()
 	batch := r.db.NewIndexedBatch()
 	defer func() { _ = batch.Close() }()
 
@@ -74,7 +90,12 @@ func (r *noneSharedKV) Incr(_ context.Context, key []byte, delta uint32) (uint32
 	return counter, nil
 }
 
-func (r *noneSharedKV) Decr(_ context.Context, key []byte, delta uint32) (uint32, error) {
+func (r *noneSharedKV) Decr(ctx context.Context, key []byte, delta uint32) (uint32, error) {
+	ctx, done, guardErr := r.work.Begin(ctx, 0)
+	if guardErr != nil {
+		return 0, guardErr
+	}
+	defer done()
 	batch := r.db.NewIndexedBatch()
 	defer func() { _ = batch.Close() }()
 
@@ -109,7 +130,12 @@ func (r *noneSharedKV) Decr(_ context.Context, key []byte, delta uint32) (uint32
 	return counter, nil
 }
 
-func (r *noneSharedKV) GetCounter(_ context.Context, key []byte) (uint32, error) {
+func (r *noneSharedKV) GetCounter(ctx context.Context, key []byte) (uint32, error) {
+	ctx, done, guardErr := r.work.Begin(ctx, 0)
+	if guardErr != nil {
+		return 0, guardErr
+	}
+	defer done()
 	val, closer, err := r.db.Get(key)
 	if err != nil {
 		return 0, err
@@ -119,11 +145,21 @@ func (r *noneSharedKV) GetCounter(_ context.Context, key []byte) (uint32, error)
 	return binary.BigEndian.Uint32(val), nil
 }
 
-func (r *noneSharedKV) Delete(_ context.Context, key []byte) error {
+func (r *noneSharedKV) Delete(ctx context.Context, key []byte) error {
+	ctx, done, guardErr := r.work.Begin(ctx, 0)
+	if guardErr != nil {
+		return guardErr
+	}
+	defer done()
 	return r.db.Delete(key, pebble.NoSync)
 }
 
 func (r *noneSharedKV) DropPrefix(ctx context.Context, prefix []byte) error {
+	ctx, done, guardErr := r.work.Begin(ctx, 0)
+	if guardErr != nil {
+		return guardErr
+	}
+	defer done()
 	end := make([]byte, len(prefix))
 	copy(end, prefix)
 	end[len(end)-1]++
@@ -132,6 +168,11 @@ func (r *noneSharedKV) DropPrefix(ctx context.Context, prefix []byte) error {
 }
 
 func (r *noneSharedKV) Iterate(ctx context.Context, f func(key []byte, val []byte) error) error {
+	ctx, done, guardErr := r.work.Begin(ctx, 0)
+	if guardErr != nil {
+		return guardErr
+	}
+	defer done()
 	iter, err := r.db.NewIterWithContext(ctx, &pebble.IterOptions{})
 	if err != nil {
 		return err
@@ -153,6 +194,11 @@ func (r *noneSharedKV) Iterate(ctx context.Context, f func(key []byte, val []byt
 }
 
 func (r *noneSharedKV) IteratePrefix(ctx context.Context, prefix []byte, f func(key []byte, val []byte) error) error {
+	ctx, done, guardErr := r.work.Begin(ctx, 0)
+	if guardErr != nil {
+		return guardErr
+	}
+	defer done()
 	iter, err := r.db.NewIterWithContext(ctx, &pebble.IterOptions{
 		LowerBound: prefix,
 		UpperBound: keyUpperBound(prefix),

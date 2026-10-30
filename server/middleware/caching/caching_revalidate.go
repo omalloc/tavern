@@ -246,8 +246,11 @@ func (r *RevalidateProcessor) freshness(c *Caching, resp *http.Response) bool {
 func (r *RevalidateProcessor) asyncRevalidate(c *Caching, req *http.Request) {
 	defer c.representationLease.Close()
 	// Create a background context with timeout
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
+	ctx, finish, taskErr := beginCacheTask(c.taskStore, context.WithoutCancel(req.Context()), 30*time.Second)
+	if taskErr != nil {
+		return
+	}
+	defer finish()
 
 	// Clone the request for background processing
 	bgReq := req.Clone(ctx)

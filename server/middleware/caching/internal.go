@@ -22,7 +22,6 @@ import (
 	"github.com/omalloc/tavern/pkg/iobuf"
 	"github.com/omalloc/tavern/pkg/traces"
 	xhttp "github.com/omalloc/tavern/pkg/x/http"
-	"github.com/omalloc/tavern/proxy"
 	"github.com/omalloc/tavern/storage/representation"
 )
 
@@ -47,7 +46,8 @@ type Caching struct {
 	representationRepo    *representation.IndexRepository
 	representationLease   *representation.ReadLease
 	bucket                storage.Bucket
-	proxyClient           proxy.Proxy
+	origin                http.RoundTripper
+	taskStore             storage.Storage
 	chunkFlight           *ChunkFlightGroup
 	cacheStatus           storage.CacheStatus
 	cacheable             bool

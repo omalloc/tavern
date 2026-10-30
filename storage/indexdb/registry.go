@@ -29,7 +29,11 @@ func (r *Registry) Create(name string, option storage.Option) (storage.IndexDB, 
 	}
 
 	log.Debugf("creating indexdb %s in path %s", name, option.DBPath())
-	return factory(option.DBPath(), option)
+	db, err := factory(option.DBPath(), option)
+	if err != nil {
+		return nil, err
+	}
+	return &guardedDB{IndexDB: db}, nil
 }
 
 func Register(name string, factory storage.IndexDBFactory) {

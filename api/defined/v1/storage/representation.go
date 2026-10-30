@@ -3,6 +3,7 @@ package storage
 import (
 	"context"
 	"errors"
+	"time"
 
 	"github.com/omalloc/tavern/api/defined/v1/storage/object"
 )
@@ -99,3 +100,12 @@ type RepresentationEviction interface {
 type RepresentationBucketProvider interface {
 	RepresentationBuckets() []Bucket
 }
+
+// TaskCoordinator fences request/background work before closing storage.
+// The returned finish must run after response readers and async writers close.
+type TaskCoordinator interface {
+	BeginCacheTask(context.Context, time.Duration) (context.Context, func(), error)
+	Drain(context.Context) error
+}
+
+type Quiescer interface{ Quiesce(context.Context) error }

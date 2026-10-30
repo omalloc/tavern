@@ -20,6 +20,7 @@ import (
 	"github.com/omalloc/tavern/contrib/log"
 	"github.com/omalloc/tavern/pkg/algorithm/lru"
 	"github.com/omalloc/tavern/pkg/iobuf"
+	"github.com/omalloc/tavern/pkg/lifecycle"
 	"github.com/omalloc/tavern/storage/indexdb"
 )
 
@@ -44,6 +45,7 @@ type memoryBucket struct {
 	evictWG               sync.WaitGroup
 	closeOnce             sync.Once
 	closeErr              error
+	handles               lifecycle.Group
 	representationMu      sync.RWMutex
 	representationEvictor func(context.Context, *object.Metadata) error
 }
@@ -82,7 +84,12 @@ func (m *memoryBucket) Allow() int {
 
 // Close implements [storage.Bucket].
 func (m *memoryBucket) Close() error {
-	m.closeOnce.Do(func() { close(m.stop); m.evictWG.Wait(); m.closeErr = m.indexdb.Close() })
+	m.closeOnce.Do(func() {
+		m.handles.Drain(context.Background())
+		close(m.stop)
+		m.evictWG.Wait()
+		m.closeErr = m.indexdb.Close()
+	})
 	return m.closeErr
 }
 
@@ -127,6 +134,11 @@ func (m *memoryBucket) Discard(ctx context.Context, id *object.ID) error {
 }
 
 func (m *memoryBucket) discard(ctx context.Context, md *object.Metadata) error {
+	_, finish, err := m.handles.Begin(ctx, 0)
+	if err != nil {
+		return err
+	}
+	defer finish()
 	// 缓存不存在
 	if md == nil {
 		return os.ErrNotExist
@@ -346,6 +358,10 @@ func (m *memoryBucket) WriteChunkFile(ctx context.Context, id *object.ID, index 
 	if id.IsControl() {
 		return nil, "", storage.ErrProtectedControl
 	}
+	_, finish, err := m.handles.Begin(ctx, 0)
+	if err != nil {
+		return nil, "", err
+	}
 	wpath := id.WPathSlice(m.path, index)
 	_ = m.fs.MkdirAll(filepath.Dir(wpath), m.fileMode)
 
@@ -357,22 +373,28 @@ func (m *memoryBucket) WriteChunkFile(ctx context.Context, id *object.ID, index 
 
 	f, err := m.fs.OpenReadWrite(wpath, vfs.WriteCategoryUnspecified)
 	if err != nil {
+		finish()
 		return nil, wpath, err
 	}
 
-	return iobuf.ChunkWriterCloser(f, _empty), wpath, nil
+	return &trackedWriter{WriteCloser: iobuf.ChunkWriterCloser(f, _empty), finish: finish}, wpath, nil
 }
 
-func (m *memoryBucket) ReadChunkFile(_ context.Context, id *object.ID, index uint32) (storage.File, string, error) {
+func (m *memoryBucket) ReadChunkFile(ctx context.Context, id *object.ID, index uint32) (storage.File, string, error) {
 	if id.IsControl() {
 		return nil, "", storage.ErrProtectedControl
+	}
+	_, finish, err := m.handles.Begin(ctx, 0)
+	if err != nil {
+		return nil, "", err
 	}
 	wpath := id.WPathSlice(m.path, index)
 	f, err := m.fs.Open(wpath)
 	if err != nil {
+		finish()
 		return nil, wpath, err
 	}
-	return storage.WrapVFSFile(f), wpath, err
+	return &trackedFile{File: storage.WrapVFSFile(f), finish: finish}, wpath, nil
 }
 
 // Migrate implements [storage.Bucket].

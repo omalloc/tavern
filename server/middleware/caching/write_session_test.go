@@ -36,7 +36,7 @@ func TestWriteSessionKeepsOriginMetadataAndFixedTarget(t *testing.T) {
 	id, _ := newObjectIDFromRequest(req, "", true)
 	pc := NewProcessorChain(NewStateProcessor(), NewVaryProcessor(), NewRevalidateProcessor(), NewFileChangedProcessor(),
 		NewFillRangeProcessor(WithFillRangePercent(100), WithChunkSize(64)))
-	c := &Caching{req: req, ctx: req.Context(), id: id, bucket: bucket, proxyClient: proxy.GetProxy(), processor: pc,
+	c := &Caching{req: req, ctx: req.Context(), id: id, bucket: bucket, origin: proxy.Transport{Proxy: proxy.GetProxy()}, processor: pc,
 		log: log.Context(req.Context()), opt: &cachingOption{SliceSize: 64, AsyncFlushChunk: true}}
 	resp, err := c.doProxy(req, false)
 	if err != nil {
@@ -86,7 +86,7 @@ func TestRepresentationBackgroundRefreshOwnsSnapshotAndContext(t *testing.T) {
 	defer cancel()
 	req := varyRequest(t, f.target, header).WithContext(ctx)
 	pc := NewProcessorChain(NewStateProcessor(), NewVaryProcessor(), NewRevalidateProcessor())
-	c, err := pc.preCacheProcessor(proxy.GetProxy(), &representationTestStorage{bucket: f.bucket}, f.opt, req)
+	c, err := pc.preCacheProcessor(proxy.Transport{Proxy: proxy.GetProxy()}, &representationTestStorage{bucket: f.bucket}, f.opt, req)
 	if err != nil || !c.hit {
 		t.Fatal(err)
 	}

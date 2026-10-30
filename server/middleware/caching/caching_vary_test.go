@@ -67,7 +67,7 @@ func newVaryTestCache(t *testing.T, handler http.HandlerFunc) (http.RoundTripper
 		t.Fatal(err)
 	}
 	t.Cleanup(cleanup)
-	return mw(nil), bucket, origin.URL + "/image"
+	return mw(proxy.Transport{Proxy: proxy.GetProxy()}), bucket, origin.URL + "/image"
 }
 
 func varyRequest(t *testing.T, target string, header http.Header) *http.Request {

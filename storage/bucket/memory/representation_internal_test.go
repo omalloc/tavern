@@ -59,7 +59,7 @@ func TestRepresentationEvictionRequiresCoordinator(t *testing.T) {
 			if err = b.Close(); err != nil {
 				t.Fatal(err)
 			}
-			r, _, err := b.ReadChunkFile(t.Context(), id, 0)
+			r, err := b.fs.Open(id.WPathSlice(b.path, 0))
 			if err != nil {
 				t.Fatal("unsafe fallback deleted bytes", err)
 			}

@@ -114,7 +114,8 @@ func newApp(bc *conf.Bootstrap, logger log.Logger) (*kratos.App, error) {
 	// init storage
 	store, err := storage.New(bc.Storage, logger)
 	if err != nil {
-		log.Fatalf("failed to initialize storage: %v", err)
+		flip.Stop()
+		return nil, fmt.Errorf("initialize storage: %w", err)
 	}
 	storage.SetDefault(store)
 
@@ -169,6 +170,11 @@ func newApp(bc *conf.Bootstrap, logger log.Logger) (*kratos.App, error) {
 			return nil
 		}),
 		kratos.AfterStop(func(ctx context.Context) error {
+			closeCtx, cancel := context.WithTimeout(context.Background(), stopTimeout)
+			defer cancel()
+			if err := handoffStorage(closeCtx, store, func() error { return nil }); err != nil {
+				return err
+			}
 			log.Infof("tavern stopped with pid %d", os.Getpid())
 			return nil
 		}),
@@ -182,13 +188,12 @@ func newApp(bc *conf.Bootstrap, logger log.Logger) (*kratos.App, error) {
 			now := time.Now()
 			log.Info("tavern sig event SIGUSR2")
 
-			// close all db
-			if err := store.Close(); err != nil {
-				log.Errorf("failed to close storage: %s", err)
-			}
-
-			if err := flip.Upgrade(); err != nil {
-				log.Errorf("failed to grace upgrade: %s", err)
+			handoffCtx, cancel := context.WithTimeout(context.Background(), stopTimeout)
+			err := handoffStorage(handoffCtx, store, flip.Upgrade)
+			cancel()
+			if err != nil {
+				log.Errorf("failed to upgrade; cache remains bypassed: %v", err)
+				continue
 			}
 
 			log.Infof("tavern upgrade success. cost %s", time.Since(now))

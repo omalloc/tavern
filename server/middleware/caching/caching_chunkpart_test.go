@@ -45,8 +45,8 @@ func Test_getContents(t *testing.T) {
 			BlockSize: 524288,
 			Chunks:    bitmap.Bitmap{},
 		},
-		bucket:      memoryBucket,
-		proxyClient: proxy.New(),
+		bucket: memoryBucket,
+		origin: proxy.Transport{Proxy: proxy.New()},
 	}
 
 	// 模拟已有的块：0, 2
@@ -119,8 +119,8 @@ func Test_getContents_lastChunkSizeMismatch(t *testing.T) {
 			BlockSize: blockSize,
 			Chunks:    bitmap.Bitmap{},
 		},
-		bucket:      memoryBucket,
-		proxyClient: proxy.New(),
+		bucket: memoryBucket,
+		origin: proxy.Transport{Proxy: proxy.New()},
 	}
 
 	// Cached chunks: 0 (full) and 3 (last, partial)

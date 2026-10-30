@@ -14,6 +14,7 @@ require (
 	github.com/gizak/termui/v3 v3.1.0
 	github.com/go-viper/mapstructure/v2 v2.4.0
 	github.com/goccy/go-json v0.10.5
+	github.com/gofrs/flock v0.13.0
 	github.com/google/uuid v1.6.0
 	github.com/kelindar/bitmap v1.5.3
 	github.com/maniartech/signals v1.3.1
@@ -50,7 +51,6 @@ require (
 	github.com/edsrzf/mmap-go v1.2.0 // indirect
 	github.com/getsentry/sentry-go v0.43.0 // indirect
 	github.com/go-ole/go-ole v1.2.6 // indirect
-	github.com/gofrs/flock v0.13.0 // indirect
 	github.com/gogo/protobuf v1.3.2 // indirect
 	github.com/golang/snappy v1.0.0 // indirect
 	github.com/kelindar/simd v1.1.2 // indirect

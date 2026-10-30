@@ -66,7 +66,7 @@ func TestLegacyPurgeDuringBodyDoesNotResurrectOrDamageNewFill(t *testing.T) {
 				t.Fatal(err)
 			}
 			t.Cleanup(cleanup)
-			rt := mw(nil)
+			rt := mw(proxy.Transport{Proxy: proxy.GetProxy()})
 			target := origin.URL + "/file"
 			old, err := rt.RoundTrip(varyRequest(t, target, nil))
 			if err != nil {

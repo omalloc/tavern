@@ -21,7 +21,6 @@ import (
 	"github.com/omalloc/tavern/pkg/iobuf"
 	"github.com/omalloc/tavern/pkg/iobuf/ioindexes"
 	xhttp "github.com/omalloc/tavern/pkg/x/http"
-	"github.com/omalloc/tavern/proxy"
 	"github.com/omalloc/tavern/server/middleware"
 	storagev1 "github.com/omalloc/tavern/storage"
 )
@@ -114,7 +113,6 @@ func Middleware(c *configv1.Middleware) (middleware.Middleware, func(), error) {
 
 	return func(origin http.RoundTripper) http.RoundTripper {
 
-		proxyClient := proxy.GetProxy()
 		store := storagev1.Current()
 
 		// Response sharing stays disabled until followers are checked against
@@ -124,12 +122,25 @@ func Middleware(c *configv1.Middleware) (middleware.Middleware, func(), error) {
 			// only cache GET/HEAD request
 			if req.Method != http.MethodGet && req.Method != http.MethodHead {
 				// discard RequestURI for proxy client
-				req.RequestURI = ""
-				return proxyClient.Do(req, false, time.Millisecond)
+				return origin.RoundTrip(prepareRepresentationRequest(req))
 			}
 
+			taskCtx, finish, taskErr := beginCacheTask(store, req.Context(), defaultTaskTimeout)
+			if taskErr != nil {
+				return origin.RoundTrip(prepareRepresentationRequest(req))
+			}
+			req = req.Clone(taskCtx)
+			defer func() {
+				if err != nil {
+					closeBody(resp)
+					finishCacheTask(taskCtx, nil, finish)
+				} else {
+					finishCacheTask(taskCtx, resp, finish)
+				}
+			}()
+
 			// find indexdb cache-key has hit/miss.
-			caching, err := processor.preCacheProcessor(proxyClient, store, opts, req)
+			caching, err := processor.preCacheProcessor(origin, store, opts, req)
 			defer func() {
 				if err != nil {
 					closeBody(resp)

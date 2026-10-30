@@ -24,7 +24,10 @@ type writeJob struct {
 // fires an onSuccess callback per block. The difference is that the callback is
 // invoked from the background goroutine rather than inline in Read.
 type savepartAsyncReader struct {
-	R io.ReadCloser
+	R         io.ReadCloser
+	readMu    sync.Mutex
+	closeOnce sync.Once
+	closeErr  error
 
 	skip      bool
 	eof       bool
@@ -61,6 +64,11 @@ func (s *savepartAsyncReader) startWriter() {
 }
 
 func (s *savepartAsyncReader) Read(p []byte) (n int, err error) {
+	s.readMu.Lock()
+	defer s.readMu.Unlock()
+	if s.closed {
+		return 0, io.ErrClosedPipe
+	}
 	// check for previous write errors
 	s.writeMu.Lock()
 	if s.writeErr != nil {
@@ -90,15 +98,19 @@ func (s *savepartAsyncReader) Read(p []byte) (n int, err error) {
 }
 
 func (s *savepartAsyncReader) Close() error {
-	if !s.closed {
+	s.closeOnce.Do(func() {
+		// Interrupt a pending origin Read before waiting for its buffer/queue lock.
+		s.closeErr = s.R.Close()
+		s.readMu.Lock()
+		defer s.readMu.Unlock()
 		s.closed = true
 		close(s.writeCh)
-		s.writeWg.Wait() // wait for pending writes
+		s.writeWg.Wait()
 		if s.onClose != nil {
 			s.onClose(s.eof)
 		}
-	}
-	return s.R.Close()
+	})
+	return s.closeErr
 }
 
 func (s *savepartAsyncReader) flush(data []byte, realLen int, eof bool) error {

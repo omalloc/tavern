@@ -12,6 +12,7 @@ import (
 	"github.com/omalloc/tavern/api/defined/v1/storage/object"
 	"github.com/omalloc/tavern/conf"
 	"github.com/omalloc/tavern/contrib/log"
+	"github.com/omalloc/tavern/pkg/lifecycle"
 	"github.com/omalloc/tavern/storage/bucket/empty"
 	"github.com/omalloc/tavern/storage/selector"
 	"github.com/omalloc/tavern/storage/sharedkv"
@@ -21,7 +22,10 @@ var _ storage.Migrator = (*migratorStorage)(nil)
 
 type migratorStorage struct {
 	representations representationRegistry
+	tasks           lifecycle.Group
 	closed          bool
+	closeOnce       sync.Once
+	closeErr        error
 	mu              sync.Mutex
 	log             *log.Helper
 
@@ -56,6 +60,7 @@ func NewMigrator(config *conf.Storage, logger log.Logger) (storage.Migrator, err
 	}
 
 	if err := m.reinit(config); err != nil {
+		m.Close()
 		return nil, err
 	}
 
@@ -177,6 +182,11 @@ func (m *migratorStorage) Select(ctx context.Context, id *object.ID) storage.Buc
 
 // Demote implements [storage.Migrator].
 func (m *migratorStorage) Demote(ctx context.Context, id *object.ID, src storage.Bucket) error {
+	ctx, done, err := m.tasks.Begin(ctx, 0)
+	if err != nil {
+		return err
+	}
+	defer done()
 	// Hot -> Warm -> Cold
 	var layer string
 	switch src.StoreType() {
@@ -198,6 +208,11 @@ func (m *migratorStorage) Demote(ctx context.Context, id *object.ID, src storage
 
 // Promote implements [storage.Migrator].
 func (m *migratorStorage) Promote(ctx context.Context, id *object.ID, src storage.Bucket) error {
+	ctx, done, err := m.tasks.Begin(ctx, 0)
+	if err != nil {
+		return err
+	}
+	defer done()
 	// Cold -> Warm -> Hot
 	var layer string
 	switch src.StoreType() {
@@ -278,6 +293,14 @@ func (m *migratorStorage) SharedKV() storage.SharedKV {
 
 // Close implements [storage.Migrator].
 func (m *migratorStorage) Close() error {
+	m.closeOnce.Do(func() { m.closeErr = m.closeStorage() })
+	return m.closeErr
+}
+
+func (m *migratorStorage) closeStorage() error {
+	if err := m.Drain(context.Background()); err != nil {
+		return err
+	}
 	var errs []error
 	// close all buckets
 	for _, bucket := range m.warmBucket {

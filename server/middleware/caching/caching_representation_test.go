@@ -34,7 +34,7 @@ func (s *representationTestStorage) Buckets() []storage.Bucket { return []storag
 func representationTestTransport(store storage.Storage, opt *cachingOption) http.RoundTripper {
 	pc := NewProcessorChain(NewStateProcessor(), NewVaryProcessor(), NewRevalidateProcessor())
 	return middleware.RoundTripperFunc(func(req *http.Request) (resp *http.Response, err error) {
-		c, err := pc.preCacheProcessor(proxy.GetProxy(), store, opt, req)
+		c, err := pc.preCacheProcessor(proxy.Transport{Proxy: proxy.GetProxy()}, store, opt, req)
 		defer func() {
 			if err != nil {
 				closeBody(resp)
@@ -135,7 +135,7 @@ func TestRepresentationLookupKeepsResourceAndResponseSeparate(t *testing.T) {
 		t.Fatal("ready representation fetched origin")
 	}
 	pc := NewProcessorChain(NewStateProcessor(), NewVaryProcessor(), NewRevalidateProcessor())
-	cached, err := pc.preCacheProcessor(proxy.GetProxy(), store, opt, varyRequest(t, target, header))
+	cached, err := pc.preCacheProcessor(proxy.Transport{Proxy: proxy.GetProxy()}, store, opt, varyRequest(t, target, header))
 	if err != nil || !cached.hit || cached.resourceMD == nil || cached.variantRef == nil || cached.rootmd != nil {
 		t.Fatalf("missing independent references: %+v, %v", cached, err)
 	}

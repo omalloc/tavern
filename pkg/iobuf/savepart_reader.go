@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"sync"
 )
 
 // _ is a compile-time check to ensure that savepartReader implements the io.ReadCloser interface.
@@ -21,7 +22,10 @@ type (
 
 // savepartReader is a wrapper around io.ReadCloser that processes data in fixed-size blocks and emits events during reading.
 type savepartReader struct {
-	R io.ReadCloser
+	R         io.ReadCloser
+	readMu    sync.Mutex
+	closeOnce sync.Once
+	closeErr  error
 
 	skip      bool
 	eof       bool
@@ -38,6 +42,11 @@ type savepartReader struct {
 
 // Read reads data into p from the underlying io.ReadCloser and processes it with internal buffers and events.
 func (s *savepartReader) Read(p []byte) (n int, err error) {
+	s.readMu.Lock()
+	defer s.readMu.Unlock()
+	if s.closed {
+		return 0, io.ErrClosedPipe
+	}
 	n, err = s.R.Read(p)
 	if err != nil {
 		if errors.Is(err, io.EOF) {
@@ -62,11 +71,18 @@ func (s *savepartReader) Read(p []byte) (n int, err error) {
 
 // Close closes the underlying reader and triggers the onClose event if defined. Returns any error from the reader's Close method.
 func (s *savepartReader) Close() error {
-	if s.onClose != nil && !s.closed {
-		s.onClose(s.eof)
+	s.closeOnce.Do(func() {
+		// Interrupt a pending origin Read before waiting for its buffer/queue lock.
+		s.closeErr = s.R.Close()
+		s.readMu.Lock()
+		defer s.readMu.Unlock()
 		s.closed = true
-	}
-	return s.R.Close()
+
+		if s.onClose != nil {
+			s.onClose(s.eof)
+		}
+	})
+	return s.closeErr
 }
 
 // flush processes provided data, manages buffer writes, handles skip logic, and writes remaining data on EOF.

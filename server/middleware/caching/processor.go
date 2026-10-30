@@ -14,7 +14,6 @@ import (
 	"github.com/omalloc/tavern/contrib/log"
 	"github.com/omalloc/tavern/internal/protocol"
 	xhttp "github.com/omalloc/tavern/pkg/x/http"
-	"github.com/omalloc/tavern/proxy"
 )
 
 // Processor defines the interface for caching processor middleware.
@@ -83,15 +82,16 @@ func (pc *ProcessorChain) PostRequest(caching *Caching, req *http.Request, resp 
 	return resp, nil
 }
 
-func (pc *ProcessorChain) preCacheProcessor(proxyClient proxy.Proxy, store storage.Storage, opt *cachingOption, req *http.Request) (*Caching, error) {
+func (pc *ProcessorChain) preCacheProcessor(origin http.RoundTripper, store storage.Storage, opt *cachingOption, req *http.Request) (*Caching, error) {
 	// Initialize the Caching struct with the request context, logger, proxy client, processor chain, and caching options.
 	caching := &Caching{
-		log:         log.Context(req.Context()),
-		ctx:         req.Context(),
-		proxyClient: proxyClient,
-		processor:   pc,
-		opt:         opt,
-		req:         req,
+		log:       log.Context(req.Context()),
+		ctx:       req.Context(),
+		origin:    origin,
+		taskStore: store,
+		processor: pc,
+		opt:       opt,
+		req:       req,
 	}
 
 	objectID, err := newObjectIDFromRequest(req, "", opt.IncludeQueryInCacheKey)

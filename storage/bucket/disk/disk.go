@@ -17,6 +17,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/gofrs/flock"
+	"github.com/omalloc/tavern/pkg/lifecycle"
 	"github.com/paulbellamy/ratecounter"
 	"github.com/prometheus/client_golang/prometheus"
 
@@ -54,11 +56,26 @@ type diskBucket struct {
 	loadWG                sync.WaitGroup
 	closeOnce             sync.Once
 	closeErr              error
+	ownership             []*flock.Flock
+	handles               lifecycle.Group
 	representationMu      sync.RWMutex
 	representationEvictor func(context.Context, *object.Metadata) error
 }
 
 func New(opt *storage.BucketConfig, sharedkv storage.SharedKV) (storage.Bucket, error) {
+	ownership, err := acquireOwnership(opt.Path, opt.DBPath)
+	if err != nil {
+		return nil, err
+	}
+	success := false
+	defer func() {
+		if !success {
+			for _, lock := range ownership {
+				lock.Close()
+			}
+		}
+	}()
+
 	bucket := &diskBucket{
 		opt:          opt,
 		path:         opt.Path,
@@ -90,6 +107,7 @@ func New(opt *storage.BucketConfig, sharedkv storage.SharedKV) (storage.Bucket, 
 		bucket.fileFlag |= 0o1000000 // O_NOATIME
 	}
 
+	bucket.ownership = ownership
 	bucket.initWorkdir()
 
 	// create indexdb
@@ -110,6 +128,7 @@ func New(opt *storage.BucketConfig, sharedkv storage.SharedKV) (storage.Bucket, 
 	// load lru
 	bucket.loadLRU()
 
+	success = true
 	return bucket, nil
 }
 
@@ -278,6 +297,11 @@ func (d *diskBucket) DiscardWithMetadata(ctx context.Context, meta *object.Metad
 }
 
 func (d *diskBucket) discard(ctx context.Context, md *object.Metadata) error {
+	_, finish, err := d.handles.Begin(ctx, 0)
+	if err != nil {
+		return err
+	}
+	defer finish()
 	// 缓存不存在
 	if md == nil {
 		return os.ErrNotExist
@@ -559,27 +583,40 @@ func (d *diskBucket) WriteChunkFile(ctx context.Context, id *object.ID, index ui
 	if id.IsControl() {
 		return nil, "", storage.ErrProtectedControl
 	}
+	_, finish, err := d.handles.Begin(ctx, 0)
+	if err != nil {
+		return nil, "", err
+	}
 	wpath := id.WPathSlice(d.path, index)
 	_ = os.MkdirAll(filepath.Dir(wpath), d.fileMode)
 
 	tmpPath := wpath + time.Now().Format(".tmp20060102150405")
 	f, err := os.OpenFile(tmpPath, os.O_CREATE|os.O_TRUNC|os.O_RDWR, d.fileMode)
 	if err != nil {
+		finish()
 		return nil, wpath, fmt.Errorf("bucket open-file chunk[%d] failed err %w", index, err)
 	}
 
-	return iobuf.ChunkWriterCloser(f, func() error {
+	return &trackedWriter{WriteCloser: iobuf.ChunkWriterCloser(f, func() error {
 		return os.Rename(tmpPath, wpath)
-	}), wpath, nil
+	}), finish: finish}, wpath, nil
 }
 
 func (d *diskBucket) ReadChunkFile(ctx context.Context, id *object.ID, index uint32) (storage.File, string, error) {
 	if id.IsControl() {
 		return nil, "", storage.ErrProtectedControl
 	}
+	_, finish, err := d.handles.Begin(ctx, 0)
+	if err != nil {
+		return nil, "", err
+	}
 	wpath := id.WPathSlice(d.path, index)
 	f, err := os.OpenFile(wpath, d.fileFlag, d.fileMode)
-	return f, wpath, err
+	if err != nil {
+		finish()
+		return nil, wpath, err
+	}
+	return &trackedFile{File: f, finish: finish}, wpath, nil
 }
 
 // Migrate implements [storage.Bucket].
@@ -647,7 +684,17 @@ func (d *diskBucket) SetMigration(migration storage.Migration) error {
 
 // Close implements storage.Bucket.
 func (d *diskBucket) Close() error {
-	d.closeOnce.Do(func() { d.loadWG.Wait(); close(d.stop); d.evictWG.Wait(); d.closeErr = d.indexdb.Close() })
+	d.closeOnce.Do(func() {
+		d.handles.Drain(context.Background())
+		d.loadWG.Wait()
+		close(d.stop)
+		d.evictWG.Wait()
+		d.closeErr = d.indexdb.Close()
+		// If closing the DB fails, keep ownership so another writer cannot overlap.
+		if d.closeErr == nil {
+			d.closeErr = d.releaseOwnership()
+		}
+	})
 	return d.closeErr
 }
 

@@ -12,6 +12,7 @@ import (
 	"github.com/omalloc/tavern/api/defined/v1/storage/object"
 	"github.com/omalloc/tavern/conf"
 	"github.com/omalloc/tavern/contrib/log"
+	"github.com/omalloc/tavern/pkg/lifecycle"
 	"github.com/omalloc/tavern/storage/bucket/empty"
 	"github.com/omalloc/tavern/storage/diraware"
 	"github.com/omalloc/tavern/storage/selector"
@@ -22,7 +23,10 @@ var _ storage.Storage = (*nativeStorage)(nil)
 
 type nativeStorage struct {
 	representations representationRegistry
+	tasks           lifecycle.Group
 	closed          bool
+	closeOnce       sync.Once
+	closeErr        error
 	mu              sync.Mutex
 	log             *log.Helper
 
@@ -58,6 +62,7 @@ func New(config *conf.Storage, logger log.Logger) (storage.Storage, error) {
 	}
 
 	if err := n.reinit(config); err != nil {
+		n.Close()
 		return nil, err
 	}
 
@@ -163,6 +168,14 @@ func (n *nativeStorage) SharedKV() storage.SharedKV {
 
 // Close implements storage.Storage.
 func (n *nativeStorage) Close() error {
+	n.closeOnce.Do(func() { n.closeErr = n.closeStorage() })
+	return n.closeErr
+}
+
+func (n *nativeStorage) closeStorage() error {
+	if err := n.Drain(context.Background()); err != nil {
+		return err
+	}
 	var errs []error
 	// close all buckets
 	for _, bucket := range n.warmlBucket {

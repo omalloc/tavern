@@ -2,6 +2,7 @@ package diraware
 
 import (
 	"context"
+	"time"
 
 	storagev1 "github.com/omalloc/tavern/api/defined/v1/storage"
 	"github.com/omalloc/tavern/api/defined/v1/storage/object"
@@ -81,4 +82,17 @@ func (w *wrappedStorage) BeginLegacyFill(ctx context.Context, raw string) (stora
 
 func (w *wrappedStorage) Close() error {
 	return w.base.Close()
+}
+
+func (w *wrappedStorage) BeginCacheTask(ctx context.Context, timeout time.Duration) (context.Context, func(), error) {
+	if tasks, ok := w.base.(storagev1.TaskCoordinator); ok {
+		return tasks.BeginCacheTask(ctx, timeout)
+	}
+	return ctx, func() {}, nil
+}
+func (w *wrappedStorage) Drain(ctx context.Context) error {
+	if tasks, ok := w.base.(storagev1.TaskCoordinator); ok {
+		return tasks.Drain(ctx)
+	}
+	return nil
 }

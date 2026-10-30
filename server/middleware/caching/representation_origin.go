@@ -152,7 +152,10 @@ func (c *Caching) proxyRepresentation(req *http.Request) (*http.Response, error)
 }
 
 func (c *Caching) executeUpstream(req *http.Request) (*http.Response, error) {
-	return c.proxyClient.Do(req, false, c.opt.CollapsedRequestWaitTimeout.AsDuration())
+	if c.origin == nil {
+		return nil, errors.New("cache origin transport is not configured")
+	}
+	return c.origin.RoundTrip(req)
 }
 
 // Capture before network I/O and resolve the recorded bucket once. Neither

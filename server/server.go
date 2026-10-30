@@ -19,12 +19,15 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 
+	middlewarev1 "github.com/omalloc/tavern/api/defined/v1/middleware"
 	pluginv1 "github.com/omalloc/tavern/api/defined/v1/plugin"
+	storagev1 "github.com/omalloc/tavern/api/defined/v1/storage"
 	"github.com/omalloc/tavern/conf"
 	"github.com/omalloc/tavern/contrib/log"
 	"github.com/omalloc/tavern/contrib/transport"
 	xhttp "github.com/omalloc/tavern/pkg/x/http"
 	"github.com/omalloc/tavern/pkg/x/runtime"
+	"github.com/omalloc/tavern/proxy"
 	"github.com/omalloc/tavern/server/middleware"
 	_ "github.com/omalloc/tavern/server/middleware/caching"
 	_ "github.com/omalloc/tavern/server/middleware/multirange"
@@ -160,6 +163,11 @@ func (s *HTTPServer) Stop(ctx context.Context) error {
 	}
 
 	// close storage.
+	if tasks, ok := storage.Current().(storagev1.TaskCoordinator); ok {
+		if err := tasks.Drain(ctx); err != nil {
+			return errors.Join(append(errs, err)...)
+		}
+	}
 	if err := storage.Close(); err != nil {
 		errs = append(errs, err)
 	}
@@ -348,7 +356,13 @@ func (s *HTTPServer) buildEndpoint() (http.HandlerFunc, error) {
 }
 
 func (s *HTTPServer) buildMiddlewareChain(tripper http.RoundTripper) (http.RoundTripper, error) {
+	if tripper == nil {
+		tripper = proxy.Transport{Proxy: proxy.GetProxy()}
+	}
 	middlewares := s.config.Server.Middleware
+	if err := validateCacheRewriteOrder(middlewares); err != nil {
+		return nil, err
+	}
 
 	// merge global options to each middleware options
 	global := s.globalOptions(make(map[string]any))
@@ -396,4 +410,24 @@ func wrapUpstreamError(w http.ResponseWriter) {
 
 		_ = conn.Close()
 	}
+}
+
+// Cache lookup must see the same selection fields as the origin request. A
+// request rewrite nested inside caching would run only on misses, not hits.
+func validateCacheRewriteOrder(configs []*middlewarev1.Middleware) error {
+	cached := false
+	for _, config := range configs {
+		if config == nil {
+			continue
+		}
+		switch strings.ToLower(config.Name) {
+		case "caching":
+			cached = true
+		case "rewrite":
+			if cached && config.Options["request_headers_rewrite"] != nil {
+				return fmt.Errorf("request header rewrite must precede caching in the middleware chain")
+			}
+		}
+	}
+	return nil
 }
