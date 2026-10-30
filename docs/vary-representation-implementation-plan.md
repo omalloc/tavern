@@ -2,7 +2,7 @@
 
 日期：2026-10-29。
 
-状态：实施中。P1.1—P1.4 已实现并通过定向验证；P1.5 阶段验收及后续批次尚未完成。勾选框只标记已经落实的工作，v2 持久化缓存和图片转换尚未开放。
+状态：实施中。P1.1—P1.5 已实现并通过受控阶段验收；下一批为 P2.1。勾选框只标记已经落实的工作，v2 持久化缓存和图片转换尚未开放。
 
 前置分析：[HTTP Vary 与资源转换缓存改造设计](./vary-representation-design.md)。前置文档说明问题和目标架构；本文进一步确定模块边界、实施批次、阶段依赖、兼容方式和验收门槛。若两份文档在实施细节上存在差异，以本文的细化决策为准。
 
@@ -226,12 +226,12 @@ unpublished → filling → complete → retired
 
 ### P1.5 阶段验收门槛
 
-- [ ] 针对两个字段的笛卡尔积验证每个表示都能二次命中且无跨组合复用。
-- [ ] 按顺序测试无 Vary → Accept → Accept + Accept-Encoding → 移除 Vary，以及不同表示使用不同字段集合。
-- [ ] 验证已有缓存重新回源的 200/304，不能因为 IsVaryCache 提前返回而跳过索引更新。
-- [ ] 带逗号 Accept 的两个变体清理时定位真实子 ID，不出现拆碎的虚假键。
-- [ ] 并发新增多个变体后，根保留全部已提交引用；超限只影响新组合。
-- [ ] 未开启转换功能，不引入新编解码依赖。新的 v2 缓存继续保持受控测试状态，等待阶段二。
+- [x] 针对两个字段的笛卡尔积验证每个表示都能二次命中且无跨组合复用。
+- [x] 按顺序测试无 Vary → Accept → Accept + Accept-Encoding → 移除 Vary，以及不同表示使用不同字段集合。
+- [x] 验证已有缓存重新回源的 200/304，不能因为 IsVaryCache 提前返回而跳过索引更新。
+- [x] 带逗号 Accept 的两个变体清理时定位真实子 ID，不出现拆碎的虚假键。
+- [x] 并发新增多个变体后，根保留全部已提交引用；超限只影响新组合。
+- [x] 未开启转换功能，不引入新编解码依赖。新的 v2 缓存继续保持受控测试状态，等待阶段二。
 
 ## 6. 阶段二：表示存储与生命周期
 
@@ -682,4 +682,23 @@ P1.3 已提交为 `f6eb9c9`，由下面的 P1.4 批次接续完整 200/304 更�
 
 发布边界：当前是 P1.4 受控功能基础。配对版本提供逻辑发布检查，不代表断电安全或完整生命周期验收；目录屏障、同步落盘、迁移、淘汰协调和单写交接仍待 P2。已替换的旧表示未立即物理删除，避免干扰已有读取；后续按租约和 GC 协议回收。
 
-下一批为 P1.5 阶段验收，之后进入 P2 存储生命周期闭环。
+P1.4 已提交为 `603cadb`，由下面的 P1.5 批次接续阶段验收。
+
+
+### 2026-10-30：P1.5
+
+- `TestVaryAcceptanceEncodingCartesian` 使用 `Accept × Accept-Encoding` 的四种组合验证二次命中，逐字节核对 Body、MIME、Content-Length 和 Content-Encoding，并解压实际 gzip 字节校验内容。图片 Body 使用不透明源字节，未启用图片转换或引入新编解码依赖。
+- `TestVaryAcceptanceFieldSetsAndRevalidation` 覆盖无 Vary → Accept → Accept + Accept-Encoding → 移除 Vary，及不同表示使用不同字段集合。过期后的 200 更新独立 Body ID 和所选引用；304 改变逻辑选择快照及配对版本，同时保留原 Body ID，其他编码不能复用该表示。
+- `IndexRepository.Retire` 在资源锁内重新读取根，只撤销与观察值完整匹配的引用，并在控制写成功后返回实际存储 ID 与当时的位置；旧观察不能撤销同一 Body ID 上更新后的 304 引用。控制写失败不返回可清理目标。
+- `TestVaryAcceptanceCommaSelectorRetirement` 验证带逗号和引号的两个 Accept 选择项：撤销后按真实子 ID 清理块文件，另一个表示继续命中，被清理的组合可独立回填。物理清理仅在测试已关闭全部响应读取后执行。
+- `TestVaryAcceptanceConcurrentBudget` 用 channel/barrier 令四个组合同时回源，验证合并后保留全部引用；新组合超限连续旁路，已有组合仍全部命中。
+- `TestVaryAcceptancePublicConfigurationCannotEnableV2` 验证公开配置不能开启内部受控路径：Vary 请求连续旁路，不创建普通对象或 v2 控制记录。
+
+验证结果（Go 1.26.0）：
+
+- `env GOTOOLCHAIN=go1.26.0 go test -race ./server/middleware/caching ./storage/representation -run 'Test(VaryAcceptance|Retire)' -count=1` 通过。
+- `git diff --check` 通过；go.mod/go.sum 无变化。遵循最小验证策略，未重复已通过且源码未变的前序回归，未运行全仓验证。
+
+发布边界：阶段一受控验收完成，公开流量仍旁路 Vary。Retire 只做逻辑引用撤销，不是生产 PURGE 或自动 GC；读取租约、失效屏障、同步落盘、迁移、恢复和单写交接仍待 P2，不能据此开放持久化 v2 缓存。
+
+下一批为 P2.1：重排缓存流水线、固定写入目标、代际隔离及分块状态。
