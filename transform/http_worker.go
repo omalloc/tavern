@@ -65,7 +65,7 @@ func NewHTTPWorker(config HTTPWorkerConfig, client *http.Client) (*HTTPWorker, e
 	if limits.MaxInputBytes <= 0 || limits.MaxInputBytes > MaxEncodedImageBytes || limits.MaxOutputBytes <= 0 || limits.MaxOutputBytes > MaxEncodedImageBytes || limits.MaxPixels <= 0 || limits.Timeout <= 0 || limits.QueueSize <= 0 {
 		return nil, ErrInvalidParameter
 	}
-	budget, err := NewWorkBudget(limits.Concurrency, limits.QueueSize)
+	budget, err := NewObservedWorkBudget(limits.Concurrency, limits.QueueSize, "http", "worker")
 	if err != nil {
 		return nil, err
 	}

@@ -106,7 +106,7 @@ func newManagedProvider(store storage.Storage, origin http.RoundTripper, opt cac
 	if limits.QueueSize == 0 {
 		limits.QueueSize = 32
 	}
-	budget, err := planning.NewWorkBudget(limits.Concurrency, limits.QueueSize)
+	budget, err := planning.NewObservedWorkBudget(limits.Concurrency, limits.QueueSize, managedBackendName(backend), "task")
 	if err != nil {
 		return nil, err
 	}
@@ -276,4 +276,11 @@ func (p *managedProvider) fallbackSource(ctx context.Context, source *managedSou
 
 func preserveManagedSource(req *http.Request, headers http.Header) bool {
 	return cachecontrol.Parse(strings.Join(req.Header.Values("Cache-Control"), ",")).NoTransform() || cachecontrol.Parse(strings.Join(headers.Values("Cache-Control"), ",")).NoTransform()
+}
+
+func managedBackendName(backend transformv1.Transformer) string {
+	if _, ok := backend.(*planning.HTTPWorker); ok {
+		return "http"
+	}
+	return "other"
 }

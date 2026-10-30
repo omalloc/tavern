@@ -21,6 +21,7 @@ import (
 	"github.com/omalloc/tavern/api/defined/v1/storage/object"
 	transformv1 "github.com/omalloc/tavern/api/defined/v1/transform"
 	"github.com/omalloc/tavern/contrib/log"
+	pkgmetrics "github.com/omalloc/tavern/pkg/metrics"
 	"github.com/omalloc/tavern/storage/representation"
 	planning "github.com/omalloc/tavern/transform"
 )
@@ -59,7 +60,14 @@ func (p *managedProvider) sourceRequest(req *http.Request, plan planning.Plan) (
 	result.Header.Set("Accept-Encoding", "identity")
 	return result, nil
 }
-func (p *managedProvider) source(req *http.Request, plan planning.Plan) (*managedSource, error) {
+func (p *managedProvider) source(req *http.Request, plan planning.Plan) (fetched *managedSource, failure error) {
+	delegated := false
+	defer func() {
+		if failure != nil && !delegated {
+			pkgmetrics.RecordSourceFetch("failed")
+			pkgmetrics.RecordVaryLookup("bypass", "control_error")
+		}
+	}()
 	request, err := p.sourceRequest(req, plan)
 	if err != nil {
 		return nil, err
@@ -91,10 +99,14 @@ func (p *managedProvider) source(req *http.Request, plan planning.Plan) (*manage
 				if err != nil {
 					return nil, err
 				}
+				pkgmetrics.RecordSourceFetch("hit")
+				pkgmetrics.RecordVaryLookup("hit", "matched")
 				return source, nil
 			}
 			if info, ok := p.imageInfo(selected.Representation); ok {
 				source.info = info
+				pkgmetrics.RecordSourceFetch("hit")
+				pkgmetrics.RecordVaryLookup("hit", "matched")
 				return source, nil
 			}
 			blob, err := p.decodeCachedSource(req.Context(), source)
@@ -107,12 +119,15 @@ func (p *managedProvider) source(req *http.Request, plan planning.Plan) (*manage
 				source.close()
 				return nil, err
 			}
+			pkgmetrics.RecordSourceFetch("hit")
+			pkgmetrics.RecordVaryLookup("hit", "matched")
 			return source, nil
 		}
 		if err != nil && !errors.Is(err, storage.ErrKeyNotFound) {
 			return nil, err
 		}
 	}
+	delegated = true
 	return p.fetchSource(source)
 }
 func (p *managedProvider) imageInfo(md *object.Metadata) (transformv1.SourceInfo, bool) {
@@ -125,7 +140,14 @@ func (p *managedProvider) imageInfo(md *object.Metadata) (transformv1.SourceInfo
 	}
 	return transformv1.SourceInfo{MIME: info.MIME, Size: info.DecodedSize, Width: info.Width, Height: info.Height, HasAlpha: info.HasAlpha, Animated: info.Animated, HasMetadata: info.HasMetadata}, true
 }
-func (p *managedProvider) fetchSource(source *managedSource) (*managedSource, error) {
+func (p *managedProvider) fetchSource(source *managedSource) (fetched *managedSource, failure error) {
+	outcome := "miss"
+	defer func() {
+		if failure != nil {
+			outcome = "failed"
+		}
+		pkgmetrics.RecordSourceFetch(outcome)
+	}()
 	request := source.request
 	c := &Caching{log: log.Context(request.Context()), ctx: request.Context(), req: request, opt: &p.opt, origin: p.origin, taskStore: p.store, representationRepo: source.repo}
 	defer func() { c.representationLease.Close() }()
@@ -143,6 +165,7 @@ func (p *managedProvider) fetchSource(source *managedSource) (*managedSource, er
 		return nil, fmt.Errorf("image source returned status %d", response.StatusCode)
 	}
 	if c.cacheStatus == storage.CacheRevalidateHit {
+		outcome = "revalidate"
 		selected, err := source.repo.LookupOriginMetadata(request.Context(), source.key, representationSelectionHeader(request))
 		if err == nil && selected.Fresh {
 			if info, ok := p.imageInfo(selected.Representation); ok {

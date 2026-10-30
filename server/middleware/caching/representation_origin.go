@@ -14,7 +14,9 @@ import (
 
 	"github.com/omalloc/tavern/api/defined/v1/storage"
 	"github.com/omalloc/tavern/api/defined/v1/storage/object"
+	"github.com/omalloc/tavern/contrib/log"
 	"github.com/omalloc/tavern/internal/protocol"
+	pkgmetrics "github.com/omalloc/tavern/pkg/metrics"
 	xhttp "github.com/omalloc/tavern/pkg/x/http"
 	"github.com/omalloc/tavern/pkg/x/http/varycontrol"
 	"github.com/omalloc/tavern/storage/representation"
@@ -186,31 +188,50 @@ func (c *Caching) beginRepresentationFill(req *http.Request) (*representation.In
 }
 
 func (c *Caching) admitRepresentation(client, upstream *http.Request, resp *http.Response, previous *object.VariantRef, state *representation.IndexState, bucket storage.Bucket, started, received time.Time) *http.Response {
+	result, reason := "bypass", "shape"
+	var fields []string
+	defer func() {
+		pkgmetrics.RecordVaryAdmission(result, reason)
+		if c.log != nil && state != nil && c.log.Enabled(log.LevelDebug) {
+			c.log.Debugw(log.DefaultMessageKey, "representation response admission", "resource_id", state.Key().ResourceID(), "result", result, "reason", reason, "vary_fields", fields)
+		}
+	}()
 	headers, size, span, admitted := analyzeRepresentationResponse(upstream, resp, c.opt.SliceSize)
 	if !admitted {
 		return resp
 	}
 	fields, wildcard, err := varycontrol.Parse(headers.Values("Vary")...)
 	if err != nil || wildcard {
+		reason = varyAdmissionReason(err, wildcard)
 		return resp
 	}
 	ref, err := representation.NewHTTPSelector(fields, representationSelectionHeader(upstream))
 	if err != nil {
+		reason = "invalid_vary"
+		if errors.Is(err, varycontrol.ErrSnapshotTooLarge) {
+			reason = "selector_budget"
+		}
 		return resp
 	}
 	expires, err := representationFreshness(headers, started, received)
 	if err != nil {
+		reason = "policy"
 		return resp
 	}
 	repo := c.representationRepo
 	lease, err := repo.ReserveFor(client.Context(), state, ref, c.opt.VaryLimit)
 	if err != nil {
+		reason = "control_error"
+		if errors.Is(err, representation.ErrSelectorLimit) {
+			reason = "selector_budget"
+		}
 		return resp
 	}
 	root := state.Resource().Resource
 	generation := uuid.NewString()
 	id, err := state.Key().RepresentationID(root.Incarnation, root.PurgeEpoch, ref.SelectorFingerprint, generation)
 	if err != nil {
+		reason = "control_error"
 		repo.Release(lease)
 		return resp
 	}
@@ -223,9 +244,11 @@ func (c *Caching) admitRepresentation(client, upstream *http.Request, resp *http
 			BodyGeneration: generation, StorageSelectorFingerprint: ref.SelectorFingerprint, State: object.RepresentationFilling, Kind: object.RepresentationOrigin}}
 	logger := c.log
 	if err := repo.BindFill(client.Context(), state, lease, md); err != nil {
+		reason = "control_error"
 		repo.Release(lease)
 		return resp
 	}
+	result, reason = "admitted", "eligible"
 	resp.Body = newRepresentationWriter(resp.Body, client.Context(), bucket, repo, state, lease, ref, previous, md, span, func(err error) { logger.Warnf("representation fill failed for %s: %v", id.HashStr(), err) })
 	c.id, c.bypass, c.cacheStatus = id.Clone(), false, storage.CacheMiss
 	if previous != nil {

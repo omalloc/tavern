@@ -9,26 +9,42 @@ import (
 	"time"
 
 	"github.com/omalloc/tavern/api/defined/v1/storage"
+	pkgmetrics "github.com/omalloc/tavern/pkg/metrics"
 	"github.com/omalloc/tavern/storage/representation"
 )
 
-// Internal staged integration with read-only behavior by default. Its write
-// path has no YAML/JSON exposure and never uses the legacy body writer.
+// Runtime binding for opt-in v2 representations; default configuration remains
+// disabled. V2 publication never uses the legacy body writer.
 type representationLookup struct {
 	repository     *representation.IndexRepository
 	manager        *representation.Manager
 	namespace      string
 	isolationScope string
-	writes         bool // controlled write lifecycle, never exposed to config
+	writes         bool // resolved by validated runtime configuration
 }
 
-func (c *Caching) lookupRepresentation(store storage.Storage) error {
+func (c *Caching) lookupRepresentation(store storage.Storage) (failure error) {
+	result, reason := "miss", "not_found"
+	defer func() {
+		if failure != nil {
+			result, reason = "bypass", "control_error"
+		}
+		pkgmetrics.RecordVaryLookup(result, reason)
+	}()
 	c.cacheStatus, c.bypass = storage.BYPASS, true
 	c.representationBuckets = store.Buckets()
 	if provider, ok := store.(storage.RepresentationBucketProvider); ok {
 		c.representationBuckets = provider.RepresentationBuckets()
 	}
-	if requestBypassesCache(c.req) || hasClientConditions(c.req) || (c.req.Body != nil && c.req.Body != http.NoBody) {
+	switch {
+	case requestBypassesCache(c.req):
+		result, reason = "bypass", "request_policy"
+		return nil
+	case hasClientConditions(c.req):
+		result, reason = "bypass", "conditions"
+		return nil
+	case c.req.Body != nil && c.req.Body != http.NoBody:
+		result, reason = "bypass", "body"
 		return nil
 	}
 	config := c.opt.representation
@@ -55,11 +71,15 @@ func (c *Caching) lookupRepresentation(store storage.Storage) error {
 	if err != nil {
 		return err
 	}
+	if !selected.Fresh {
+		reason = "stale"
+	}
 	if !selected.Fresh && !config.writes {
 		return nil
 	}
 	received := time.Unix(selected.Representation.RespUnix, 0)
 	if _, err := representationFreshness(selected.Representation.Headers.Clone(), received, received); err != nil {
+		result, reason = "bypass", "policy"
 		return nil
 	}
 	// Resolve the location recorded by the resource, not a newly selected
@@ -83,8 +103,12 @@ func (c *Caching) lookupRepresentation(store storage.Storage) error {
 				readable = false
 			}
 			c.hit = selected.Fresh && readable
+			if selected.Fresh && !readable {
+				reason = "range"
+			}
 			c.bypass = !c.hit
 			if c.hit {
+				result, reason = "hit", "matched"
 				c.cacheStatus = storage.CacheHit
 				now := repo.Now().Unix()
 				if c.opt.FuzzyRefresh && c.opt.FuzzyRefreshRate > 0 && c.md.HasComplete() && hasConditionHeader(c.md.Headers) &&

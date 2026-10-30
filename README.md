@@ -62,7 +62,7 @@ These capabilities also exist in different forms across NGINX, Varnish, Squid, a
 
 ### Requirements
 
-- Go 1.26+
+- Go 1.26.x (CI validates 1.26.0)
 - Linux or macOS
 - An HTTP origin for cacheable content
 
@@ -121,6 +121,8 @@ The example configuration restricts administrative routes and `PURGE` to local h
 - Single-range, suffix-range, open-ended, and multi-range responses
 - Partial cache hits and configurable missing-range fill
 - Opt-in persistent Vary representations on disk/Pebble; see [enablement and rollback](docs/vary-representation-operations.md). Disabled by default; legacy Vary stays bypassed and `vary_ignore_key` is ignored
+- Managed JPEG/PNG/WebP routes through a verified HTTP worker, disabled by default; see [image routing and rollback](docs/managed-image-operations.md). Each deployed conversion matrix must pass its contract checks; Tavern remains CGO-free
+- Bounded representation and conversion metrics with a [Grafana dashboard and operations guide](docs/representation-observability.md)
 - Optional query-string inclusion in cache keys
 - Declarative request and response header rewriting
 - Chunked object storage for incremental reads and writes

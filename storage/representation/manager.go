@@ -18,6 +18,7 @@ import (
 
 	"github.com/omalloc/tavern/api/defined/v1/storage"
 	"github.com/omalloc/tavern/api/defined/v1/storage/object"
+	pkgmetrics "github.com/omalloc/tavern/pkg/metrics"
 )
 
 var ErrTopologyMismatch = errors.New("representation topology changed; explicit offline migration or rebuild is required")
@@ -246,7 +247,8 @@ func (m *Manager) Repository(key object.ResourceKey) (*IndexRepository, error) {
 	return m.repositoryForID(key.ResourceID())
 }
 
-func (m *Manager) Purge(ctx context.Context, raw string, control storage.PurgeControl) error {
+func (m *Manager) Purge(ctx context.Context, raw string, control storage.PurgeControl) (failure error) {
+	defer func() { pkgmetrics.RecordRepresentationInvalidation(control.Hard, control.Dir, failure != nil) }()
 	var failures []error
 	for _, bucket := range m.buckets {
 		if err := m.repos[bucket.ID()].Purge(ctx, raw, control); err != nil {
@@ -402,6 +404,7 @@ type CollectionResult struct{ Scanned, Collected, Retained, Protected int }
 func (m *Manager) CollectUnreachable(ctx context.Context, budget int) (CollectionResult, error) {
 	var result CollectionResult
 	if budget <= 0 {
+		pkgmetrics.RecordRepresentationGC("failed")
 		return result, ErrInvalidRecord
 	}
 	m.gcMu.Lock()
@@ -412,6 +415,7 @@ func (m *Manager) CollectUnreachable(ctx context.Context, budget int) (Collectio
 		remaining := min(128, budget-result.Scanned)
 		records, next, err := bucket.(storage.MetadataScanner).ScanMetadata(ctx, m.cursors[bucket.ID()], remaining)
 		if err != nil {
+			pkgmetrics.RecordRepresentationGC("failed")
 			return result, err
 		}
 		m.cursors[bucket.ID()] = next
@@ -419,25 +423,31 @@ func (m *Manager) CollectUnreachable(ctx context.Context, budget int) (Collectio
 			result.Scanned++
 			if md.RecordKind != object.RecordRepresentation || md.Representation == nil || md.Representation.SchemaVersion != object.RepresentationSchemaVersion {
 				result.Protected++
+				pkgmetrics.RecordRepresentationGC("skipped")
 				continue
 			}
 			repo, err := m.repositoryForID(md.Representation.ResourceID)
 			if err != nil {
 				result.Protected++
+				pkgmetrics.RecordRepresentationGC("skipped")
 				continue
 			}
 			collected, err := repo.collectCandidate(ctx, bucket.ID(), md)
 			if errors.Is(err, ErrInvalidRecord) || errors.Is(err, ErrUnsupportedSchema) {
 				result.Protected++
+				pkgmetrics.RecordRepresentationGC("skipped")
 				continue
 			}
 			if err != nil {
+				pkgmetrics.RecordRepresentationGC("failed")
 				return result, fmt.Errorf("representation collection: %w", err)
 			}
 			if collected {
 				result.Collected++
+				pkgmetrics.RecordRepresentationGC("collected")
 			} else {
 				result.Retained++
+				pkgmetrics.RecordRepresentationGC("skipped")
 			}
 		}
 		if next == nil {

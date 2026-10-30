@@ -10,11 +10,14 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/omalloc/tavern/api/defined/v1/storage"
 	"github.com/omalloc/tavern/api/defined/v1/storage/object"
 	transformv1 "github.com/omalloc/tavern/api/defined/v1/transform"
+	"github.com/omalloc/tavern/contrib/log"
+	pkgmetrics "github.com/omalloc/tavern/pkg/metrics"
 	"github.com/omalloc/tavern/storage/representation"
 	planning "github.com/omalloc/tavern/transform"
 )
@@ -135,6 +138,25 @@ func (p *managedProvider) convert(ctx context.Context, source *managedSource, sp
 		}
 		return nil, planning.ErrUnsupportedSource
 	}
+	started := time.Now()
+	defer func() {
+		outcome := "success"
+		switch {
+		case errors.Is(failure, context.DeadlineExceeded):
+			outcome = "timeout"
+		case errors.Is(failure, context.Canceled):
+			outcome = "cancelled"
+		case errors.Is(failure, representation.ErrSuperseded):
+			outcome = "superseded"
+		case failure != nil:
+			outcome = "failed"
+		}
+		pkgmetrics.RecordTransform(managedBackendName(p.backend), source.info.MIME, spec.Spec().OutputMIME, outcome, time.Since(started))
+		logger := log.Context(ctx)
+		if logger.Enabled(log.LevelDebug) {
+			logger.Debugw(log.DefaultMessageKey, "managed conversion completed", "resource_id", source.key.ResourceID(), "spec_fingerprint", spec.Fingerprint(), "result", outcome)
+		}
+	}()
 	output, err := p.backend.Transform(ctx, input, spec.Spec())
 	if output != nil {
 		defer output.Close()

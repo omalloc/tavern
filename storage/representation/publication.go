@@ -7,6 +7,7 @@ import (
 
 	"github.com/omalloc/tavern/api/defined/v1/storage/object"
 	"github.com/omalloc/tavern/internal/protocol"
+	pkgmetrics "github.com/omalloc/tavern/pkg/metrics"
 	xhttp "github.com/omalloc/tavern/pkg/x/http"
 )
 
@@ -105,7 +106,8 @@ func (r *IndexRepository) ReserveFor(ctx context.Context, state *IndexState, sel
 // storeChild publishes final metadata for both 200 and 304 without allowing a late validator to overwrite
 // another validation of the same ID. In durable mode the child files and metadata
 // are sealed before the synchronous root update, which is the publication point.
-func (r *IndexRepository) Publish(ctx context.Context, state *IndexState, lease *Reservation, ref object.VariantRef, md *object.Metadata, previous *object.VariantRef, storeChild func() error) (bool, error) {
+func (r *IndexRepository) Publish(ctx context.Context, state *IndexState, lease *Reservation, ref object.VariantRef, md *object.Metadata, previous *object.VariantRef, storeChild func() error) (published bool, failure error) {
+	defer func() { pkgmetrics.RecordRepresentationCommit(published, failure != nil) }()
 	if lease == nil {
 		return false, ErrInvalidRecord
 	}

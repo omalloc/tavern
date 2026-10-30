@@ -11,7 +11,7 @@
 |:---|:---|
 | **项目名称 / Name** | Tavern |
 | **Go Module** | `github.com/omalloc/tavern` |
-| **语言 / Language** | Go 1.25+ |
+| **语言 / Language** | Go 1.26.x（CI 1.26.0） |
 | **构建模式 / Build Mode** | CGO_ENABLED=0 (静态链接) |
 | **许可证 / License** | MIT |
 | **CI/CD** | GitHub Actions (`.github/workflows/go.yml`) |
@@ -37,7 +37,7 @@
 
 | 组件 / Component | 技术 / Technology | 版本 / Version | 用途 / Purpose |
 |:---|:---|:---|:---|
-| **语言 / Language** | Go | ≥ 1.25 | 主语言 |
+| **语言 / Language** | Go | 1.26.x | 主语言 |
 | **HTTP 框架 / HTTP Framework** | Kratos (inspired) | — | `contrib/` 内部实现 |
 | **LSM-Tree 引擎 / LSM Engine** | PebbleDB | — | 缓存元数据索引 |
 | **LSM-Tree 引擎 / LSM Engine** | NutsDB | — | 备选缓存元数据索引 |

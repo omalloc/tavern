@@ -2,7 +2,7 @@
 
 日期：2026-10-29。
 
-状态：实施中。P1.1—P1.5 已通过受控阶段验收，P2.1—P2.6 已实现并通过定向验证；P3.1—P3.4 协商、源/成品缓存、HTTP worker 与成品 HTTP 语义已实现并通过阶段验收；下一批为 P4.1。透明 v2 持久化缓存和托管图片均接通默认关闭的公开配置。勾选框只标记已经落实的工作。
+状态：实施中。P1.1—P1.5 已通过受控阶段验收，P2.1—P2.6 已实现并通过定向验证；P3.1—P3.4 协商、源/成品缓存、HTTP worker 与成品 HTTP 语义已实现并通过阶段验收；P4.1 指标、面板与运行文档已完成；下一批为 P4.2。透明 v2 持久化缓存和托管图片均接通默认关闭的公开配置。勾选框只标记已经落实的工作。
 
 前置分析：[HTTP Vary 与资源转换缓存改造设计](./vary-representation-design.md)。前置文档说明问题和目标架构；本文进一步确定模块边界、实施批次、阶段依赖、兼容方式和验收门槛。若两份文档在实施细节上存在差异，以本文的细化决策为准。
 
@@ -498,23 +498,23 @@ server:
 
 ### P4.1 指标和文档
 
-基础错误计数随前面阶段同步加入，第四阶段完成面板和运行手册。
+已实现有界指标、12 个 Grafana 面板和 [观测运行说明](representation-observability.md)。指标统一使用 tr_tavern_ 前缀；选择与入场分别计数，避免把一个 MISS 后的资格旁路误算成第二次查找。
 
-| 指标（拟议） | 有界标签 | 用途 |
+| 指标 | 有界标签 | 用途 |
 | --- | --- | --- |
-| `vary_lookup_total` | hit/miss/bypass、reason | 观察字段匹配、星号和预算旁路 |
-| `representation_commit_total` | published/superseded/failed | 观察提交冲突及迟到写入 |
-| `representation_pending` | origin/derived | 检查预留泄漏 |
-| `representation_invalidate_total` | soft/hard、file/dir | 检查 PURGE 使用与错误 |
-| `source_fetch_total` | hit/revalidate/miss | 验证源资源复用 |
-| `transform_total` | source_mime、target_mime、result | 验证转换复用与失败 |
-| `transform_duration_seconds` | backend、result | 耗时分布 |
-| `transform_queue_depth` | backend | 排队/预算 |
-| `representation_gc_total` | collected/skipped/failed | 回收与故障 |
+| `vary_lookup_total` | result、reason | v2 选择及已知旧格式旁路 |
+| `vary_admission_total` | result、reason | 响应形状、星号、字段/选择预算和共享策略 |
+| `representation_commit_total` | published/superseded/failed | 配对发布及迟到结果，包括元数据更新 |
+| `representation_pending` | origin/derived | 未释放 lease，不等于不同选择项数 |
+| `representation_invalidate_total` | mode、scope、result | 文件/目录失效结果，含映射屏障 |
+| `source_fetch_total` | hit/revalidate/miss/failed | 源资源复用与获取失败 |
+| `transform_total` | backend、source_mime、target_mime、result | 实际转换接口尝试，不计命中和启动探测 |
+| `transform_duration_seconds` | backend、result | 后端调用至输出验证/发布完成 |
+| `transform_queue_depth` / `transform_active` | backend、stage | 任务与 worker 预算；未消费私有输出仍占用 |
+| `transform_queue_rejected_total` | backend、stage、reason | 队列满、等待超时和取消 |
+| `representation_gc_total` | collected/skipped/failed | 回收决定和扫描/删除错误 |
 
-不以任意 URL、Cookie、Accept 原文、动态版本字符串或完整规格作为标签；日志记录稳定 ID、选择字段名、旁路原因和有限规格摘要，调试也不直接打印敏感选择值。
-
-更新 README 中 Vary 的实际能力状态、弃用 vary_ignore_key 的说明、升级后的冷缓存影响、worker 契约及 JPEG/PNG/WebP 支持矩阵。只有真实后端通过契约验收的组合才标为支持。
+标签值经过固定允许列表，不以任意 URL、Cookie、Accept 原文、动态版本字符串或完整规格作为标签。新的受控调试日志只记录稳定资源 ID、合法字段名、固定原因和有限规格指纹，不打印选择值。README、中英文说明、功能/架构文档和操作说明已按实际能力校正，说明默认关闭、旧 Vary 冷缓存影响及 worker 实测矩阵；不将未验收的后端组合标为支持。CI 的 Go 工具链对齐已验证的 1.26.0。
 
 ### P4.2 回收、升级与故障演练
 
@@ -846,3 +846,15 @@ P2.2 已提交为 `1ea5f5f`，由下面的 P2.3 批次接续 PURGE 与依赖失�
 验证：受影响 server、caching、transform 中间件、multirange、协商/worker 与对象元数据 package 的定向 race 检查通过；CGO_ENABLED=0 受影响包检查与主程序构建通过。公开配置下 20 个同规格并发只回源/转换各一次；disk/Pebble 重开后成品直接命中；回滚关闭期间的参数映射 PURGE 在重新开启后仍有效。显式 cwebp 1.6.0 通过公开 JPEG→WebP、JPEG→PNG、PNG→JPEG 路径，同源 20 个混合目标请求只回源一次、每种成品各转换一次，worker 完整 9 组合矩阵也通过。未运行全仓测试；部署服务仍需按实际版本独立验收。
 
 阶段三达到本方案的受控验收门槛。下一批为 P4.1 指标与运行文档校正。
+
+
+## P4.1 实施记录（2026-10-30）
+
+- 新增统一注册的有界指标 API；所有可传入标签均经允许列表，任意 URL/请求值只归入 other，不增加动态维度。新增源/成品、逻辑屏障、提交、预留与 GC 指标，托管路径也计入已有 cache_requests_total。
+- 将 Vary 查找与响应入场分开；发布单独统计成功、迟到拒绝与失败，预留从实际分配到 Release 保持可观测，失效不会假装任务已经完成。转换次数只统计调用转换接口的尝试，排除成品 HIT 和启动契约探测；耗时范围明确为后端调用至验证/发布完成。
+- 任务/worker 预算分别维护当前排队、活跃和拒绝指标；私有输出及后端输出在 Close 前保留活跃名额。源获取区分新鲜元数据、可复用 304、完整换代和失败。补充以固定 resource_id、字段名、规格指纹及固定结果为内容的受控调试日志。
+- 现有 Grafana Dashboard 新增分组与 12 个面板，保留数据源/instance 设置，增加观测说明及查询口径。中英文 README、功能与架构文档校正默认开关、持久 Vary、图片矩阵、元数据限制和旧格式冷缓存说明；CI Go 版本与已验证 1.26.0 对齐。
+
+验证：pkg/metrics、storage/representation、transform、caching、server 定向 race 与 CGO_ENABLED=0 检查通过。新增测试验证任意请求数据不能扩展标签、成品 HIT 不计转换、失败/迟到发布释放预留、取消及满队列后 gauge 回到基线。Dashboard 检查 32 个唯一面板 ID、新增 13 条查询的指标引用及网格边界通过；未连接部署 Grafana/Prometheus，未运行全仓测试。
+
+下一批为 P4.2：旧格式限速回收、屏障维护、故障演练与定向基准。

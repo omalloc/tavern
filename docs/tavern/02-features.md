@@ -20,11 +20,11 @@
 | **热点迁移 (Hot Migration)** | ✅ | v1.1 | `storage.migration` |
 | **冷热分离 (Warm/Cold Split)** | ✅ | v1.1 | Bucket `type: hot/cold/warm` |
 | **请求合并 (Request Collapsing)** | 暂停 | — | 旧共享路径停用，配置保留兼容 |
-| **Vary 多版本缓存** | 改造中 | — | 当前安全旁路，等待 v2 生命周期验收 |
+| **Vary 多版本缓存** | 可选启用 | — | disk/Pebble 持久化 v2；默认关闭 |
 | **Header 重写 (Rewrite)** | ✅ | v1.0 | `server.middleware.rewrite` |
 | **Multi-Range 支持** | ✅ | v1.0 | `server.middleware.multirange` |
 | **CRC 文件校验** | ✅ | v1.1 | `plugin.verifier` |
-| **图像压缩自适应 (WebP)** | ❌ | — | 已废弃 |
+| **托管图片转换 (JPEG/PNG/WebP)** | 可选启用 | — | HTTP worker 实测矩阵；默认关闭 |
 
 ### 1.2 缓存预取 (Prefetch) / Cache Prefetch
 
@@ -63,19 +63,22 @@ server:
 
 ### 1.5 Vary 多版本缓存 / Vary-Based Versioned Cache
 
-**当前状态：** 正在按 [实现方案](../vary-representation-implementation-plan.md) 分批改造，目前采用安全旁路：
+**当前状态：** disk/Pebble 持久化 v2 已通过生命周期验收，可通过 caching.representation.enabled 选择启用，默认关闭。参见 [启用与回滚](../vary-representation-operations.md)。
 
-- 非空 Vary、`Vary: *`、非法字段和超过选择字段预算的响应均透传，不创建缓存写入器；保留源站 Vary。
-- 旧 Vary 索引及子表示不再用于命中；普通无 Vary 缓存继续工作。
-- `vary_ignore_key` 已弃用且不生效；非空配置在初始化时提示一次，不忽略 Cookie 等选择字段。示例配置已删除此项。
-- `vary_limit` 保留配置兼容，v2 版本预算尚未接通；v2 开放前不承诺多版本持久化缓存。
-- Authorization、请求 no-store/no-cache、max-age=0 保守旁路；响应 no-store/private/no-cache 优先于 max-age 和内部 TTL。
+- v2 按合法 Vary 字段和原始选择快照匹配，区分字段缺失、空值、多值顺序以及组合字段。上限为 32 个字段、16 KiB 快照。
+- `Vary: *`、非法/超预算字段、禁止共享的请求或响应继续旁路。Authorization、请求 no-store/no-cache/max-age=0 采用保守策略；响应 no-store/private/no-cache 优先于内部 TTL。
+- `vary_limit` 对 origin 与 managed 分别限制 ready/pending 的不同选择项。同一选择项的多个在途写入不会扩大选择数；每个任务仍拥有独立可释放的预留。
+- 配对元数据发布、持久失效屏障、固定定位、读取租约、集合迁移、软/硬/目录 PURGE、重启恢复和升级停写交接均已接入。配置回滚关闭读取时保留存储 owner 与控制目录。
+- 旧 Vary 根索引和子表示不再参与命中，v2 不回读旧 Vary。升级可能使旧 Vary 内容重新回源；普通无 Vary 旧缓存继续工作。旧格式限速回收与维护工作列在后续维护阶段。
+- `vary_ignore_key` 已弃用且不生效，不能用它省略 Cookie 等选择字段。
 
-选择工具已实现合法字段解析、缺失/空值区分、有序快照和版本化 SHA-256 指纹，默认限制 32 个字段、16 KiB 快照。P1.3 已补充 v2 模型、独立键和索引查询/预留；P1.4 已接入内部受控的完整 200 写入、304 更新及配对版本发布；P1.5 已通过字段组合、编码字节、并发预算和真实子 ID 清理验收。公开流量仍旁路 Vary，等待 P2 生命周期完成。
+托管图片路由另行灰度开启，使用同一协调器管理源与成品依赖。JPEG/PNG/WebP 支持取决于实际 HTTP worker 通过的输入输出矩阵，不能仅按声明启用。成品 HIT 不重复读取/解码源或转换；源 304 保持内容版本，换代/PURGE 使旧依赖退出新鲜命中。GET、HEAD、条件与单/多范围针对最终编码字节处理，no-transform 保留原样，失败回退需明确授权且客户端接受源类型。
 
-P2.1 已补齐受控路径的固定写入、206 确认块读取、未知长度 200 的 EOF 发布，以及后台刷新状态隔离。已有表示缺块时完整回源到新代际，再裁剪客户端范围。P2.2 已提供内部 Pebble 同步提交、资源/目录失效屏障和恢复校验；memory/NutsDB 不支持持久化 v2。P2.3 已将 Storage.PURGE 接通内部协调器，并补齐旧格式在途写入屏障和源/成品依赖校验；稳定定位、读取租约及迁移回收仍待后续批次。
+首版不缩放/裁剪、不提取动画首帧；朝向/色彩元数据跨格式保留未验收的图片转换明确拒绝，原样路径可以保留。完整配置和能力边界见 [托管图片路由](../managed-image-operations.md)，协议和独立验收见 [worker 契约](../image-worker-contract.md)。
 
-**代码路径：** `pkg/x/http/varycontrol/`、`server/middleware/caching/caching_vary.go`。
+新指标区分选择、入场、提交、预留、源复用、转换、预算与 GC，并提供 [Grafana 面板及运行说明](../representation-observability.md)。透明响应共享仍保持暂停；图片任务通过源/成品两层门控复用完整结果。
+
+**代码路径：** `pkg/x/http/varycontrol/`、`storage/representation/`、`transform/`、`server/middleware/caching/managed_*.go`。
 
 ### 1.6 缓存校验 (Cache Validation) / Cache Validation
 

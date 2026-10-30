@@ -7,6 +7,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/omalloc/tavern/api/defined/v1/storage/object"
+	pkgmetrics "github.com/omalloc/tavern/pkg/metrics"
 )
 
 // Reservation is an opaque, process-local selector budget lease. It is not a
@@ -121,6 +122,7 @@ func (r *IndexRepository) reserveLocked(ctx context.Context, key object.Resource
 	}
 	pending[reservation.id] = reservation
 	shard.pending[key.ID().Hash()] = pending
+	pkgmetrics.RepresentationPending(reservationKind(selector), 1)
 	return reservation, nil
 }
 
@@ -137,6 +139,7 @@ func (r *IndexRepository) Release(reservation *Reservation) {
 		return
 	}
 	reservation.released = true
+	pkgmetrics.RepresentationPending(reservationKind(reservation.selector), -1)
 	if reservation.boundID != nil {
 		identity := dataIdentity{reservation.boundID.Hash(), reservation.boundLocation}
 		shard.writers[identity]--
@@ -149,4 +152,11 @@ func (r *IndexRepository) Release(reservation *Reservation) {
 	if len(pending) == 0 {
 		delete(shard.pending, key)
 	}
+}
+
+func reservationKind(selector object.VariantRef) string {
+	if selector.SelectionKind == object.SelectionManaged {
+		return "derived"
+	}
+	return "origin"
 }

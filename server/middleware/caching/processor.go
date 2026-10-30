@@ -13,6 +13,7 @@ import (
 	"github.com/omalloc/tavern/api/defined/v1/storage"
 	"github.com/omalloc/tavern/contrib/log"
 	"github.com/omalloc/tavern/internal/protocol"
+	pkgmetrics "github.com/omalloc/tavern/pkg/metrics"
 	xhttp "github.com/omalloc/tavern/pkg/x/http"
 )
 
@@ -131,6 +132,11 @@ func (pc *ProcessorChain) preCacheProcessor(origin http.RoundTripper, store stor
 	// Legacy Vary indexes cannot identify representations reliably. Keep
 	// them out of the processor chain until the v2 store owns their lifecycle.
 	if requestBypassesCache(req) || legacyVary(md) {
+		reason := "legacy"
+		if requestBypassesCache(req) {
+			reason = "request_policy"
+		}
+		pkgmetrics.RecordVaryLookup("bypass", reason)
 		caching.bypass = true
 		caching.md = nil
 		caching.cacheStatus = storage.BYPASS

@@ -7,6 +7,7 @@ import (
 	"github.com/omalloc/tavern/api/defined/v1/storage"
 	"github.com/omalloc/tavern/api/defined/v1/storage/object"
 	"github.com/omalloc/tavern/internal/protocol"
+	pkgmetrics "github.com/omalloc/tavern/pkg/metrics"
 	xhttp "github.com/omalloc/tavern/pkg/x/http"
 	"github.com/omalloc/tavern/pkg/x/http/cachecontrol"
 	"github.com/omalloc/tavern/pkg/x/http/varycontrol"
@@ -21,8 +22,8 @@ type VaryProcessor struct {
 }
 
 // Lookup never reads the legacy header/VirtualKey index. Those keys lost field
-// boundaries and cannot safely distinguish representations. The v2 store will
-// replace this bypass once its invalidation and recovery contracts are complete.
+// boundaries and cannot safely distinguish representations. Opt-in v2 lookups
+// run before this legacy processor and own their separate lifecycle.
 func (v *VaryProcessor) Lookup(c *Caching, _ *http.Request) (bool, error) {
 	if c.md == nil {
 		return false, nil
@@ -70,15 +71,24 @@ func requestBypassesCache(req *http.Request) bool {
 
 func admitResponse(req *http.Request, resp *http.Response) bool {
 	if requestBypassesCache(req) {
+		pkgmetrics.RecordVaryAdmission("bypass", "policy")
 		return false
 	}
 	fields, wildcard, err := varycontrol.Parse(resp.Header.Values("Vary")...)
-	if err != nil || wildcard || len(fields) > 0 {
-		// All Vary responses bypass until v2 publication is enabled. This
-		// includes valid selections, wildcard, invalid tokens and budgets.
+	if err != nil || wildcard {
+		pkgmetrics.RecordVaryAdmission("bypass", varyAdmissionReason(err, wildcard))
+		return false
+	}
+	if len(fields) > 0 {
+		pkgmetrics.RecordVaryAdmission("bypass", "legacy")
 		return false
 	}
 	_, cacheable := xhttp.ParseCacheTime(protocol.ProtocolCacheTime, resp.Header)
+	if cacheable {
+		pkgmetrics.RecordVaryAdmission("admitted", "legacy")
+	} else {
+		pkgmetrics.RecordVaryAdmission("bypass", "policy")
+	}
 	return cacheable
 }
 

@@ -369,13 +369,19 @@ server/middleware/caching/
 
 ### 4.2 缓存 Key 计算 / Cache Key Computation
 
-普通缓存使用 URL 构造 object.ID；`include_query_in_cache_key: true` 区分 `/path?a=1` 与 `/path?a=2`。当前 Vary 响应和旧 Vary 索引安全旁路，不再用请求头拼接字符串构造或清理变体。`vary_ignore_key` 已弃用且不生效。
+普通无 Vary 缓存使用 URL 构造 object.ID；`include_query_in_cache_key: true` 区分 `/path?a=1` 与 `/path?a=2`。旧 Vary 键与索引始终安全旁路，不再使用请求头字符串拼接作为变体身份；`vary_ignore_key` 已弃用且不生效。
 
-新选择工具对字段集合归一化，并对保留缺失状态和字段值顺序的快照使用版本化、带长度编码后计算 SHA-256；命中还必须比较完整快照。v2 根/表示键、索引查询/预留和受控的 200/304 更新已通过阶段一验收，引用与子元数据通过配对版本判断是否完成逻辑发布。逻辑撤销返回实际表示 ID 与位置，物理清理仍需 P2 读取租约协调；公开开关、持久化失效和完整生命周期仍待后续批次验收，详见 [实现方案](../vary-representation-implementation-plan.md)。
+v2 的逻辑 ResourceID 包含命名空间、规范 URL 和上游/凭据隔离范围。HTTP 选择项对字段集合归一化，对保留缺失状态和字段值顺序的快照使用版本化长度编码和 SHA-256；命中时还比较完整快照。物理表示 ID 包含资源 incarnation、失效 epoch、选择指纹和不可变 BodyGeneration，避免旧数据与新代际混用。
 
-P2.1 受控路径按回源前捕获、响应分析、资格预留、固定写入和发布分工；持久化表示头与客户端 Range 头分离。单范围 206 只有确认块可读，未知长度 200 需 EOF 后确定完整大小；缺块完整重建到新代际，客户端裁剪在源写入器之外完成。旧异步回调使用固定 `writeSession`，后台刷新在启动前深拷贝状态并使用独立上下文。
+回源前捕获填充票据并固定位置，响应资格通过后预留选择项，完整块和最终元数据经同步后发布根引用。引用与子元数据具有配对版本。单范围 206 只有确认块可读，未知长度 200 在 EOF 后确认大小；缺块重建到新代际，客户端范围裁剪在源写入器之外进行。
 
-P2.2 增加独立 barrier catalog 和资源根的屏障身份。受控持久化模式先在资源锁外同步块和目录，再在提交锁内同步子元数据及根；Pebble 的同步路径独立于普通 NoSync 配置，缺失能力的后端构造失败。P2.3 将 Storage.PURGE 路由到已注册的控制 owner，先确认屏障再清理全部 bucket 的旧格式实际 ID；旧在途写入使用进程内票据阻止重新发布。托管成品绑定源 ID/版本及失效状态，源换代退役其旧依赖；稳定定位、读取租约、迁移和物理回收仍待后续批次。
+Barrier catalog 与资源根共同保存文件/目录失效语义。Storage.PURGE 先确认逻辑屏障，再处理全部 bucket 的旧格式实际 ID；旧在途任务也有写入票据。读取租约固定位置，集合迁移完整复制并同步后切换根；旧位置在读者完成前保留。物理 GC 只删除没有引用、读取 pin、填充及迁移占用的代际。disk/Pebble 的持久同步独立于普通 NoSync，启动拓扑与目录单写入者受持久绑定和锁保护；在线重分片未开放。
+
+托管图片首先把已识别的 format/quality 映射为源 URL 与完整规格，其余查询字节原样保留。源按实际 origin Vary 选择；成品按确切源 ID/内容版本、规格和 policy/encoder 身份匹配，不按客户端 Accept 原文重复建项。源与成品任务分别门控，完成的命中直接读取完整成品。HTTP worker 只接收本地已确认完整图片字节，不递归请求公开 URL。
+
+server 固定 rewrite → transform-plan → multirange/caching 的相对顺序，并将缓存的 origin RoundTripper 显式注入；计划存放于类型化 Context，客户端同名伪头不形成计划。成品条件与范围绑定固定结果后组装。所有新写入、后台验证和响应生产者都参与存储停写交接，取消不能替代实际结束确认。
+
+透明 v2 和托管图片均默认关闭，分别见 [v2 启用与回滚](../vary-representation-operations.md)、[图片启用与回滚](../managed-image-operations.md)。指标口径和面板见 [观测说明](../representation-observability.md)。
 
 ### 4.3 请求合并流程 / Request Collapsing Flow
 

@@ -194,6 +194,18 @@ func bindCaching(origin http.RoundTripper, store storage.Storage, opts *cachingO
 		}()
 
 		if plan, planned := planning.PlanFromContext(req.Context()); planned {
+			defer func() {
+				status := storage.BYPASS
+				if resp != nil {
+					switch resp.Header.Get(protocol.ProtocolCacheStatusKey) {
+					case storage.CacheHit.String():
+						status = storage.CacheHit
+					case storage.CacheMiss.String():
+						status = storage.CacheMiss
+					}
+				}
+				cacheRequestTotal.WithLabelValues(status.String(), "managed").Inc()
+			}()
 			if opts.managed == nil {
 				return nil, fmt.Errorf("managed image plan has no bound provider")
 			}

@@ -1,7 +1,10 @@
 package caching
 
 import (
+	"errors"
+
 	pkgmetrics "github.com/omalloc/tavern/pkg/metrics"
+	"github.com/omalloc/tavern/pkg/x/http/varycontrol"
 	"github.com/prometheus/client_golang/prometheus"
 )
 
@@ -47,4 +50,14 @@ func init() {
 		cacheFlushFailedTotal,
 		cacheFillrangeTotal,
 	)
+}
+
+func varyAdmissionReason(err error, wildcard bool) string {
+	if wildcard {
+		return "wildcard"
+	}
+	if errors.Is(err, varycontrol.ErrTooManyFields) {
+		return "field_budget"
+	}
+	return "invalid_vary"
 }
