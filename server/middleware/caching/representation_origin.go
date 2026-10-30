@@ -126,12 +126,25 @@ func (c *Caching) proxyRepresentation(req *http.Request) (*http.Response, error)
 	}
 	for attempt := 0; attempt < 2; attempt++ {
 		started := repo.Now()
-		resp, err := c.executeUpstream(upstream)
+		var resp *http.Response
+		var err error
+		if c.opt.sharing != nil && prior == nil && req.Header.Get("Range") == "" {
+			resp, err = c.opt.sharing.RoundTrip(c.origin, scopeResponseRequest(upstream, root.Resource))
+		} else {
+			resp, err = c.executeUpstream(upstream)
+		}
 		if err != nil {
 			closeBody(resp)
 			return nil, err
 		}
 		received := repo.Now()
+		if resp.Request != nil {
+			if aged, _ := resp.Request.Context().Value(responseAlreadyAgedKey{}).(bool); aged {
+				// The bounded shared response already includes origin delay and
+				// buffer residence. Do not add that same interval a second time.
+				started = received
+			}
+		}
 		if resp.StatusCode == http.StatusNotModified {
 			if validating && validValidation(prior, resp, upstream) {
 				result, ok := c.validatedRepresentation(req, upstream, resp, prior, priorRef, state, bucket, priorBucket, started, received)

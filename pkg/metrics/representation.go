@@ -23,10 +23,20 @@ var (
 var barrierCompaction = prometheus.NewCounterVec(prometheus.CounterOpts{Namespace: Namespace, Name: "representation_barrier_compaction_total", Help: "Barrier maintenance decisions; removed/retained candidates and failed passes."}, []string{"result"})
 var legacyCollection = prometheus.NewCounterVec(prometheus.CounterOpts{Namespace: Namespace, Name: "legacy_vary_gc_total", Help: "Retired legacy Vary maintenance decisions; collected/skipped candidates and failed passes."}, []string{"result"})
 var legacyFileOps = prometheus.NewCounter(prometheus.CounterOpts{Namespace: Namespace, Name: "legacy_vary_gc_file_ops_total", Help: "Budgeted final/temporary file removal attempts by legacy Vary maintenance."})
+var responseSharing = prometheus.NewCounterVec(prometheus.CounterOpts{Namespace: Namespace, Name: "response_sharing_total", Help: "One decision per optional verified whole-response sharing invocation."}, []string{"result"})
+var responseSharingActive = prometheus.NewGauge(prometheus.GaugeOpts{Namespace: Namespace, Name: "response_sharing_active", Help: "Reserved response buffers, retained until the last body closes."})
+var responseSharingWaiters = prometheus.NewGauge(prometheus.GaugeOpts{Namespace: Namespace, Name: "response_sharing_waiters", Help: "Requests currently waiting for response reuse proof and complete bytes."})
 
 func init() {
 	tavernRegistry.MustRegister(barrierCompaction, legacyCollection, legacyFileOps, varyLookup, varyAdmission, representationCommit, representationPending, representationInvalidate, sourceFetch, transformTotal, transformDuration, transformQueue, transformActive, transformRejected, representationGC)
+	tavernRegistry.MustRegister(responseSharing, responseSharingActive, responseSharingWaiters)
 }
+
+func RecordResponseSharing(result string) {
+	responseSharing.WithLabelValues(fixedLabel(result, "leader", "shared", "rejected", "capacity", "timeout", "cancelled", "bypass")).Inc()
+}
+func ResponseSharingActive(delta float64)  { responseSharingActive.Add(delta) }
+func ResponseSharingWaiters(delta float64) { responseSharingWaiters.Add(delta) }
 
 // All caller-supplied labels pass fixed allowlists, including test backends and
 // error paths. Neither a raw URL nor an arbitrary encoder/spec/version can grow

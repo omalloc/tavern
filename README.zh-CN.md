@@ -51,7 +51,7 @@ Tavern 以不依赖 CGO 的 Go 二进制交付，使用 YAML 配置。既可以�
 
 | 关注点 | Tavern 的处理方式 | 运维效果 |
 |:---|:---|:---|
-| **源站保护** | 在硬过期前刷新对象；Vary 正确性改造期间暂停响应共享 | 重校验流量更平滑；并发 MISS 需按独立回源评估源站负载 |
+| **源站保护** | 在硬过期前刷新对象；透明 v2 可独立开启经过验证的完整冷 GET 合并 | 重校验流量更平滑；并发 MISS 需按独立回源评估源站负载 |
 | **部分内容分发** | 缓存单区间、后缀区间、开放区间和多区间请求；复用已有切片并补齐缺失区间 | 减少安装包、软件包和媒体对象的重复传输 |
 | **显式缓存生命周期** | 支持 URL/目录 `PURGE`、软过期/硬删除、淘汰与存储分层 | 缓存失效与存储行为更可控 |
 | **缓存节点运维** | 提供 Prometheus、健康检查、性能分析、结构化日志、终端实时视图和二进制平滑切换 | 减少运维缓存节点所需的外围组件 |
@@ -110,7 +110,7 @@ curl -sS -D - -o /dev/null http://localhost:8080/path/to/object
 
 ### 缓存与回源控制
 
-- 全量 MISS 和缺块获取独立回源，等待响应共享复用校验完成
+- 默认全量 MISS 和缺块获取独立回源；透明 v2 可单独开启经过实际响应验证的等价完整冷 GET 合并
 - 在硬过期前按概率异步刷新
 - 基于 `ETag` / `If-None-Match` 和 `Last-Modified` / `If-Modified-Since` 的条件重校验
 - 通过请求头触发缓存预取
@@ -156,8 +156,8 @@ server:
     - name: multirange
     - name: caching
       options:
-        collapsed_request: false # Vary 改造期间暂停旧响应共享
-        collapsed_request_wait_timeout: 100ms
+        response_sharing:
+          enabled: false # 需 representation.enabled；仅限经过验证的等价完整冷 GET
         fuzzy_refresh: true
         fuzzy_refresh_rate: 0.1
         fill_range_percent: 100
@@ -225,7 +225,7 @@ HTTP Server
     └── Upstream proxy
         ├── 连接池
         ├── TCP / Unix Socket 传输
-        └── 独立回源（响应共享暂停）
+        └── 独立回源（可选完整冷 GET 验证合并）
 
 Caching
 └── Storage selector

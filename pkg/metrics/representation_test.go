@@ -20,6 +20,7 @@ func TestRepresentationMetricLabelsCannotContainRequestValues(t *testing.T) {
 		RecordTransformRejected(secret, secret, secret)
 		RecordSourceFetch(secret)
 		RecordRepresentationGC(secret)
+		RecordResponseSharing(secret)
 	}
 	families, err := tavernRegistry.Gather()
 	if err != nil {

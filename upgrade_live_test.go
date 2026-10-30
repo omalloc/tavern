@@ -70,7 +70,7 @@ func TestLiveSIGUSR2DrainsFillBeforeNewWriter(t *testing.T) {
 		fmt.Fprint(w, body)
 	}))
 	defer origin.Close()
-	config := &conf.Bootstrap{PidFile: filepath.Join(base, "pid"), Logger: &conf.Logger{}, Upstream: &conf.Upstream{Address: []string{origin.URL}}, Server: &conf.Server{Addr: filepath.Join(base, "http.sock"), ReadTimeout: 10 * time.Second, WriteTimeout: 10 * time.Second, AccessLog: &conf.ServerAccessLog{}, PProf: &conf.ServerPProf{}, Middleware: []*middlewarev1.Middleware{{Name: "caching", Required: true, Options: map[string]any{"include_query_in_cache_key": true, "slice_size": 64, "representation": map[string]any{"enabled": true}}}}}, Storage: &conf.Storage{Driver: "native", DBType: "pebble", DBPath: ".index", SelectionPolicy: "hashring", SliceSize: 64, DirAware: &conf.DirAware{}, Representation: &conf.RepresentationStorage{StateDirectory: filepath.Join(base, "state")}, Buckets: []*conf.Bucket{{Path: filepath.Join(base, "data"), MaxObjectLimit: 100}}}}
+	config := &conf.Bootstrap{PidFile: filepath.Join(base, "pid"), Logger: &conf.Logger{}, Upstream: &conf.Upstream{Address: []string{origin.URL}}, Server: &conf.Server{Addr: filepath.Join(base, "http.sock"), ReadTimeout: 10 * time.Second, WriteTimeout: 10 * time.Second, AccessLog: &conf.ServerAccessLog{}, PProf: &conf.ServerPProf{}, Middleware: []*middlewarev1.Middleware{{Name: "caching", Required: true, Options: map[string]any{"include_query_in_cache_key": true, "slice_size": 64, "representation": map[string]any{"enabled": true}, "response_sharing": map[string]any{"enabled": true}}}}}, Storage: &conf.Storage{Driver: "native", DBType: "pebble", DBPath: ".index", SelectionPolicy: "hashring", SliceSize: 64, DirAware: &conf.DirAware{}, Representation: &conf.RepresentationStorage{StateDirectory: filepath.Join(base, "state")}, Buckets: []*conf.Bucket{{Path: filepath.Join(base, "data"), MaxObjectLimit: 100}}}}
 	data, _ := json.Marshal(config)
 	configPath := filepath.Join(base, "config.json")
 	if err = os.WriteFile(configPath, data, 0600); err != nil {
@@ -104,7 +104,7 @@ func TestLiveSIGUSR2DrainsFillBeforeNewWriter(t *testing.T) {
 		case <-time.After(time.Second):
 		}
 	}()
-	transport := &http.Transport{DisableKeepAlives: true, DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+	transport := &http.Transport{DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
 		return (&net.Dialer{}).DialContext(ctx, "unix", config.Server.Addr)
 	}}
 	defer transport.CloseIdleConnections()

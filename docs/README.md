@@ -91,6 +91,7 @@ docs/
 | [Vary 与资源转换缓存设计](./vary-representation-design.md) | 当前 Vary 能力分析、问题定位及目标架构（待实现） |
 | [Vary/图片观测与面板](./representation-observability.md) | 有界指标口径、Grafana 分组和运行判断（P4.1） |
 | [表示缓存维护与故障演练](./representation-maintenance.md) | 旧 Vary 限速回收、屏障压缩、重启故障与固定样本基准（P4.2） |
+| [透明 v2 响应合并](./response-sharing-operations.md) | 独立开关、实际响应验证、缓冲预算与回滚（P4.3） |
 | [托管图片路由启用与回滚](./managed-image-operations.md) | 成品条件/范围响应、no-transform、失败回退及公开配置（默认关闭） |
 | [图片 worker 契约与部署前检查](./image-worker-contract.md) | HTTP 协议、完整图片检查、预算和独立矩阵检查命令（P3.3） |
 | [透明 v2 缓存启用与回滚](./vary-representation-operations.md) | disk/Pebble 支持矩阵、默认关闭配置和停写交接 |

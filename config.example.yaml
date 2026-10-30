@@ -46,8 +46,12 @@ server:
       options:
         fuzzy_refresh: true
         fuzzy_refresh_rate: 0.1
-        collapsed_request: false # 旧响应共享暂停，等待基于实际 Vary 的复用校验
-        collapsed_request_wait_timeout: 100ms
+        response_sharing:
+          enabled: false # 需先开启 representation；仅合并通过响应头验证的等价完整冷 GET
+          max_body_bytes: 1048576
+          max_flights: 32
+          max_waiters: 32
+          wait_timeout: 1s
         include_query_in_cache_key: true
         fill_range_percent: 100
         object_pool_enabled: true

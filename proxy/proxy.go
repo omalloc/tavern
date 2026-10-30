@@ -15,8 +15,6 @@ import (
 	"github.com/omalloc/proxy/selector/node/direct"
 	"github.com/omalloc/proxy/selector/random"
 
-	"github.com/omalloc/tavern/proxy/singleflight"
-
 	"github.com/prometheus/client_golang/prometheus"
 )
 
@@ -43,7 +41,6 @@ type ReverseProxy struct {
 
 	clientMap map[string]*http.Client // addr -> http.Client
 	dialer    *net.Dialer
-	flight    *singleflight.Group
 }
 
 type Option func(*ReverseProxy)
@@ -58,7 +55,6 @@ func New(opts ...Option) *ReverseProxy {
 			KeepAlive: 30 * time.Second,
 		},
 		selector: random.NewBuilder().Build(), // default algorithm is random
-		flight:   &singleflight.Group{},
 	}
 
 	for _, opt := range opts {
@@ -67,7 +63,9 @@ func New(opts ...Option) *ReverseProxy {
 	return r
 }
 
-func (r *ReverseProxy) Do(req *http.Request, collapsed bool, waitTimeout time.Duration) (*http.Response, error) {
+// The legacy collapse arguments remain source-compatible but no longer share
+// responses. Verified sharing belongs to the cache's captured resource fill.
+func (r *ReverseProxy) Do(req *http.Request, _ bool, _ time.Duration) (*http.Response, error) {
 	r.selectorMu.Lock()
 	current, done, err := r.selector.Select(req.Context())
 	r.selectorMu.Unlock()
@@ -95,24 +93,7 @@ func (r *ReverseProxy) Do(req *http.Request, collapsed bool, waitTimeout time.Du
 		return resp, doErr
 	}
 
-	if !collapsed {
-		return trackedDo()
-	}
-
-	ret := <-r.flight.DoChan(onceKey(req), waitTimeout, func() (*http.Response, error) {
-		return trackedDo()
-	})
-
-	if ret.Err != nil {
-		return ret.Val, ret.Err
-	}
-
-	if ret.Shared {
-		collapseRequestsTotal.WithLabelValues("shared").Inc()
-		return ret.Val, ret.Err
-	}
-	collapseRequestsTotal.WithLabelValues("primary").Inc()
-	return ret.Val, ret.Err
+	return trackedDo()
 }
 
 func (r *ReverseProxy) DoLoopback(req *http.Request) (*http.Response, error) {
@@ -191,14 +172,6 @@ func (r *ReverseProxy) uncompress(resp *http.Response, err error) (*http.Respons
 		}
 	}
 	return resp, err
-}
-
-func onceKey(req *http.Request) string {
-	sb := strings.Builder{}
-	sb.WriteString(req.Method)
-	sb.WriteString(req.URL.String())
-	sb.WriteString(req.Header.Get("Range"))
-	return sb.String()
 }
 
 // Apply is apply all nodes when any changes happen

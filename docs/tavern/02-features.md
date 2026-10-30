@@ -57,9 +57,9 @@ server:
 
 ### 1.4 请求合并 (Request Collapsing) / Request Collapsing
 
-**当前状态：** 缓存中间件暂停 ObjectFlight、ChunkFlight 和 proxy singleflight 的响应共享；即使配置 `collapsed_request: true` 也独立回源。只有按实际源站 Vary、缓存资格和请求条件验证等待者后才会恢复合并。并发 MISS 的回源次数可能增加，应关注源站负载。
+**当前状态：** 透明 v2 可通过独立、默认关闭的 `response_sharing.enabled` 合并完全等价的完整冷 GET。实际响应通过 Vary、资格、长度及 EOF 检查后，各等待者取得自己的 Header/Body；PURGE/目录屏障和位置代际不同不合并。HEAD、条件、认证/Cookie、指定 peer、Range 和缺块保持独立；旧 `collapsed_request` 不启用共享。
 
-**代码路径：** `server/middleware/caching/caching.go`。合并组件仍保留，后续优化方案见 [P4.3](../vary-representation-implementation-plan.md#p43-安全恢复请求合并)。
+**代码路径：** `server/middleware/caching/response_sharing.go`。有界小响应预读会增加首字节延迟；预算、灰度和回滚见 [响应合并说明](../response-sharing-operations.md)。
 
 ### 1.5 Vary 多版本缓存 / Vary-Based Versioned Cache
 
@@ -69,14 +69,14 @@ server:
 - `Vary: *`、非法/超预算字段、禁止共享的请求或响应继续旁路。Authorization、请求 no-store/no-cache/max-age=0 采用保守策略；响应 no-store/private/no-cache 优先于内部 TTL。
 - `vary_limit` 对 origin 与 managed 分别限制 ready/pending 的不同选择项。同一选择项的多个在途写入不会扩大选择数；每个任务仍拥有独立可释放的预留。
 - 配对元数据发布、持久失效屏障、固定定位、读取租约、集合迁移、软/硬/目录 PURGE、重启恢复和升级停写交接均已接入。配置回滚关闭读取时保留存储 owner 与控制目录。
-- 旧 Vary 根索引和子表示不再参与命中，v2 不回读旧 Vary。升级可能使旧 Vary 内容重新回源；普通无 Vary 旧缓存继续工作。旧格式限速回收与维护工作列在后续维护阶段。
+- 旧 Vary 根索引和子表示不再参与命中，v2 不回读旧 Vary。升级可能使旧 Vary 内容重新回源；普通无 Vary 旧缓存继续工作。旧格式可按默认关闭的限速任务回收，屏障维护不按年龄删历史，见 [维护说明](../representation-maintenance.md)。
 - `vary_ignore_key` 已弃用且不生效，不能用它省略 Cookie 等选择字段。
 
 托管图片路由另行灰度开启，使用同一协调器管理源与成品依赖。JPEG/PNG/WebP 支持取决于实际 HTTP worker 通过的输入输出矩阵，不能仅按声明启用。成品 HIT 不重复读取/解码源或转换；源 304 保持内容版本，换代/PURGE 使旧依赖退出新鲜命中。GET、HEAD、条件与单/多范围针对最终编码字节处理，no-transform 保留原样，失败回退需明确授权且客户端接受源类型。
 
 首版不缩放/裁剪、不提取动画首帧；朝向/色彩元数据跨格式保留未验收的图片转换明确拒绝，原样路径可以保留。完整配置和能力边界见 [托管图片路由](../managed-image-operations.md)，协议和独立验收见 [worker 契约](../image-worker-contract.md)。
 
-新指标区分选择、入场、提交、预留、源复用、转换、预算与 GC，并提供 [Grafana 面板及运行说明](../representation-observability.md)。透明响应共享仍保持暂停；图片任务通过源/成品两层门控复用完整结果。
+新指标区分选择、入场、提交、预留、源复用、转换、预算与 GC，并提供 [Grafana 面板及运行说明](../representation-observability.md)。透明响应合并默认关闭并可独立灰度；图片任务通过源/成品两层门控复用完整结果。
 
 **代码路径：** `pkg/x/http/varycontrol/`、`storage/representation/`、`transform/`、`server/middleware/caching/managed_*.go`。
 
@@ -475,7 +475,8 @@ server:
     - name: caching
       options:
         fuzzy_refresh: true
-        collapsed_request: false # 旧响应共享暂停
+        response_sharing:
+          enabled: false # 需先启用透明 v2；仅限经过验证的等价完整冷 GET
         vary_limit: 100
         object_pool_size: 20000
   access_log:

@@ -385,7 +385,7 @@ server 固定 rewrite → transform-plan → multirange/caching 的相对顺序�
 
 ### 4.3 请求合并流程 / Request Collapsing Flow
 
-以下为保留组件的历史流程。当前缓存中间件已停用这三层旧共享路径，所有 MISS 和缺块获取独立回源；`collapsed_request` 配置不启用共享。恢复前须按实际源站 Vary 和缓存资格验证等待者。
+以下为保留组件的历史流程，三层旧共享路径保持停用，`collapsed_request` 不启用共享。当前透明 v2 的独立 `response_sharing` 只在捕获资源/屏障身份后，对实际响应验证通过的等价完整冷 GET 进行有界预读合并；缺块和 Range 仍独立。新实现及预算见 [响应合并说明](../response-sharing-operations.md)。
 
 ```mermaid
 sequenceDiagram
