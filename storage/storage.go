@@ -15,6 +15,7 @@ import (
 	"github.com/omalloc/tavern/pkg/lifecycle"
 	"github.com/omalloc/tavern/storage/bucket/empty"
 	"github.com/omalloc/tavern/storage/diraware"
+	"github.com/omalloc/tavern/storage/representation"
 	"github.com/omalloc/tavern/storage/selector"
 	"github.com/omalloc/tavern/storage/sharedkv"
 )
@@ -24,6 +25,7 @@ var _ storage.Storage = (*nativeStorage)(nil)
 type nativeStorage struct {
 	representations representationRegistry
 	tasks           lifecycle.Group
+	manager         *representation.Manager
 	closed          bool
 	closeOnce       sync.Once
 	closeErr        error
@@ -62,6 +64,13 @@ func New(config *conf.Storage, logger log.Logger) (storage.Storage, error) {
 	}
 
 	if err := n.reinit(config); err != nil {
+		n.Close()
+		return nil, err
+	}
+
+	var err error
+	n.manager, err = initializeRepresentations(config.Representation, n.RepresentationBuckets(), &n.representations)
+	if err != nil {
 		n.Close()
 		return nil, err
 	}
@@ -175,6 +184,9 @@ func (n *nativeStorage) Close() error {
 func (n *nativeStorage) closeStorage() error {
 	if err := n.Drain(context.Background()); err != nil {
 		return err
+	}
+	if n.manager != nil {
+		n.manager.Close()
 	}
 	var errs []error
 	// close all buckets

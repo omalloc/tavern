@@ -72,7 +72,11 @@ func (c *Caching) representationKey(req *http.Request) (object.ResourceKey, erro
 	if !c.opt.IncludeQueryInCacheKey {
 		u.RawQuery, u.ForceQuery = "", false
 	}
-	return object.NewResourceKey(u.String(), c.opt.representation.namespace, c.opt.representation.isolationScope)
+	scope := c.opt.representation.isolationScope
+	if peer := req.Header.Get(protocol.InternalUpstreamAddr); peer != "" {
+		scope += "\x00peer\x00" + peer
+	}
+	return object.NewResourceKey(u.String(), c.opt.representation.namespace, scope)
 }
 
 func (c *Caching) bypassRepresentation(req *http.Request) {

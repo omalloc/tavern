@@ -327,36 +327,13 @@ func TestVaryAcceptanceConcurrentBudget(t *testing.T) {
 	}
 }
 
-func TestVaryAcceptancePublicConfigurationCannotEnableV2(t *testing.T) {
-	var calls atomic.Int32
-	_, bucket, target := newVaryTestCache(t, func(w http.ResponseWriter, r *http.Request) {
-		calls.Add(1)
-		originImage(w, r.Header.Get("Accept"), "Accept", "")
-	})
-	mw, cleanup, err := Middleware(&configv1.Middleware{Options: map[string]any{
-		"include_query_in_cache_key": true, "slice_size": 64, "vary_limit": 16,
-		"representation": map[string]any{"enabled": true, "writes": true, "namespace": "http-v2", "isolation_scope": "origin"},
+func TestVaryAcceptancePublicConfigurationRequiresDurableManager(t *testing.T) {
+	_, bucket, _ := newVaryTestCache(t, func(http.ResponseWriter, *http.Request) { t.Error("origin must not run during startup validation") })
+	_, _, err := Middleware(&configv1.Middleware{Options: map[string]any{
+		"representation": map[string]any{"enabled": true, "namespace": "http-v2"},
 	}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(cleanup)
-	rt := mw(http.DefaultTransport)
-	for range 2 {
-		resp, body, err := readVaryResponse(rt, varyRequest(t, target, http.Header{"Accept": {acceptanceJPEG}}))
-		if err != nil || body != acceptanceJPEG || !strings.HasPrefix(resp.Header.Get(protocol.ProtocolCacheStatusKey), "BYPASS") {
-			t.Fatal("public configuration enabled the controlled path", resp, body, err)
-		}
-	}
-	if calls.Load() != 2 {
-		t.Fatal("public Vary flow started caching")
+	if err == nil {
+		t.Fatal("public v2 enabled without a durable manager")
 	}
 	requireEmptyVaryCache(t, bucket)
-	key, err := object.NewResourceKey(target, "http-v2", "origin")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := bucket.(storage.ControlStore).LoadControl(t.Context(), key.ID()); !errors.Is(err, storage.ErrKeyNotFound) {
-		t.Fatal("public configuration created a v2 control record", err)
-	}
 }

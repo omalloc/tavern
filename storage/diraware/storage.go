@@ -6,6 +6,7 @@ import (
 
 	storagev1 "github.com/omalloc/tavern/api/defined/v1/storage"
 	"github.com/omalloc/tavern/api/defined/v1/storage/object"
+	"github.com/omalloc/tavern/storage/representation"
 )
 
 // Checker decides whether a cached object should be marked expired.
@@ -93,6 +94,13 @@ func (w *wrappedStorage) BeginCacheTask(ctx context.Context, timeout time.Durati
 func (w *wrappedStorage) Drain(ctx context.Context) error {
 	if tasks, ok := w.base.(storagev1.TaskCoordinator); ok {
 		return tasks.Drain(ctx)
+	}
+	return nil
+}
+
+func (w *wrappedStorage) RepresentationManager() *representation.Manager {
+	if provider, ok := w.base.(representation.Provider); ok {
+		return provider.RepresentationManager()
 	}
 	return nil
 }

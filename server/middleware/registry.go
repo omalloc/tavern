@@ -37,7 +37,7 @@ func (p *middlewareRegistry) Register(name string, factory Factory) {
 func (r *middlewareRegistry) Create(cfg *configv1.Middleware) (Middleware, func(), error) {
 	fullname := createFullName(cfg.Name)
 	if method, ok := r.getMiddleware(fullname); ok {
-		if cfg.Required {
+		if cfg.Required || fullname == createFullName("caching") {
 			instance, cleanup, err := method(cfg)
 			if err != nil {
 				log.Errorw(log.DefaultMessageKey, "Failed to create required middleware", "reason", "create_required_middleware_failed", "name", cfg.Name, "error", err, "config", cfg)

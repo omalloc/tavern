@@ -40,21 +40,22 @@ func (r Duration) AsDuration() time.Duration {
 }
 
 type cachingOption struct {
-	IncludeQueryInCacheKey      bool     `json:"include_query_in_cache_key" yaml:"include_query_in_cache_key"`
-	FuzzyRefresh                bool     `json:"fuzzy_refresh" yaml:"fuzzy_refresh"`
-	FuzzyRefreshRate            float64  `json:"fuzzy_refresh_rate" yaml:"fuzzy_refresh_rate"`
-	CollapsedRequest            bool     `json:"collapsed_request" yaml:"collapsed_request"`
-	CollapsedRequestWaitTimeout Duration `json:"collapsed_request_wait_timeout" yaml:"collapsed_request_wait_timeout"`
-	ObjectPoolEnabled           bool     `json:"object_pool_enabled" yaml:"object_pool_enabled"`
-	ObjectPollSize              int      `json:"object_poll_size" yaml:"object_poll_size"`
-	SliceSize                   uint64   `json:"slice_size" yaml:"slice_size"`
-	FillRangePercent            uint64   `json:"fill_range_percent" yaml:"fill_range_percent"`
-	VaryLimit                   int      `json:"vary_limit" yaml:"vary_limit"`
-	VaryIgnoreKey               []string `json:"vary_ignore_key" yaml:"vary_ignore_key"`
-	Hostname                    string   `json:"hostname" yaml:"hostname"`
-	AsyncFlushChunk             bool     `json:"async_flush_chunk" yaml:"async_flush_chunk"`
-	// Bound internally for controlled representation tests. No external v2 enable switch
-	// is exposed until the P2 lifecycle and invalidation protocol is complete.
+	IncludeQueryInCacheKey       bool                  `json:"include_query_in_cache_key" yaml:"include_query_in_cache_key"`
+	FuzzyRefresh                 bool                  `json:"fuzzy_refresh" yaml:"fuzzy_refresh"`
+	FuzzyRefreshRate             float64               `json:"fuzzy_refresh_rate" yaml:"fuzzy_refresh_rate"`
+	CollapsedRequest             bool                  `json:"collapsed_request" yaml:"collapsed_request"`
+	CollapsedRequestWaitTimeout  Duration              `json:"collapsed_request_wait_timeout" yaml:"collapsed_request_wait_timeout"`
+	ObjectPoolEnabled            bool                  `json:"object_pool_enabled" yaml:"object_pool_enabled"`
+	ObjectPollSize               int                   `json:"object_poll_size" yaml:"object_poll_size"`
+	SliceSize                    uint64                `json:"slice_size" yaml:"slice_size"`
+	FillRangePercent             uint64                `json:"fill_range_percent" yaml:"fill_range_percent"`
+	VaryLimit                    int                   `json:"vary_limit" yaml:"vary_limit"`
+	VaryIgnoreKey                []string              `json:"vary_ignore_key" yaml:"vary_ignore_key"`
+	Hostname                     string                `json:"hostname" yaml:"hostname"`
+	AsyncFlushChunk              bool                  `json:"async_flush_chunk" yaml:"async_flush_chunk"`
+	Representation               *representationOption `json:"representation,omitempty" yaml:"representation,omitempty"`
+	RepresentationIsolationScope string                `json:"representation_isolation_scope,omitempty" yaml:"representation_isolation_scope,omitempty"`
+	// Runtime representation binding is resolved from the storage owner.
 	representation *representationLookup
 	// events.
 	publish func(ctx context.Context, payload event.CacheCompleted) `json:"-" yaml:"-"`
@@ -77,6 +78,9 @@ func Middleware(c *configv1.Middleware) (middleware.Middleware, func(), error) {
 		AsyncFlushChunk:   false,   // 即刻写出chunk索引 功能（会增加 indexdb io）
 	}
 	if err := c.Unmarshal(opts); err != nil {
+		return nil, middleware.EmptyCleanup, err
+	}
+	if err := opts.bindRepresentations(storagev1.Current()); err != nil {
 		return nil, middleware.EmptyCleanup, err
 	}
 

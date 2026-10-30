@@ -14,11 +14,15 @@ import (
 	"sync"
 	"time"
 
+	"github.com/gofrs/flock"
+
 	"github.com/omalloc/tavern/api/defined/v1/storage"
 	"github.com/omalloc/tavern/api/defined/v1/storage/object"
 )
 
 var ErrTopologyMismatch = errors.New("representation topology changed; explicit offline migration or rebuild is required")
+
+type Provider interface{ RepresentationManager() *Manager }
 
 type ManagerConfig struct {
 	StateDirectory string        `json:"state_directory" yaml:"state_directory"`
@@ -37,6 +41,7 @@ type Manager struct {
 	stop        chan struct{}
 	closed      sync.Once
 	wg          sync.WaitGroup
+	stateLock   *flock.Flock
 }
 
 var _ storage.RepresentationPurger = (*Manager)(nil)
@@ -49,6 +54,12 @@ func NewManager(ctx context.Context, buckets []storage.Bucket, config ManagerCon
 		return nil, ErrInvalidRecord
 	}
 	m := &Manager{buckets: append([]storage.Bucket(nil), buckets...), repos: make(map[string]*IndexRepository), cursors: make(map[string][]byte), stop: make(chan struct{})}
+	success := false
+	defer func() {
+		if !success && m.stateLock != nil {
+			m.stateLock.Close()
+		}
+	}()
 	for _, bucket := range m.buckets {
 		if bucket == nil {
 			return nil, ErrInvalidRecord
@@ -81,6 +92,17 @@ func NewManager(ctx context.Context, buckets []storage.Bucket, config ManagerCon
 	if config.Durable {
 		if config.StateDirectory == "" {
 			return nil, ErrTopologyMismatch
+		}
+		if err := os.MkdirAll(config.StateDirectory, 0700); err != nil {
+			return nil, err
+		}
+		m.stateLock = flock.New(filepath.Join(config.StateDirectory, ".tavern-writer.lock"))
+		locked, err := m.stateLock.TryLock()
+		if err != nil {
+			return nil, err
+		}
+		if !locked {
+			return nil, fmt.Errorf("representation state directory already has a writer")
 		}
 		if err := checkTopologyManifest(config.StateDirectory, m.fingerprint, false); err != nil {
 			return nil, err
@@ -187,6 +209,7 @@ func NewManager(ctx context.Context, buckets []storage.Bucket, config ManagerCon
 			}
 		})
 	}
+	success = true
 	return m, nil
 }
 
@@ -239,6 +262,10 @@ func (m *Manager) Close() error {
 		m.wg.Wait()
 		for _, bucket := range m.buckets {
 			bucket.(storage.RepresentationEviction).SetRepresentationEvictor(nil)
+		}
+		if m.stateLock != nil {
+			m.stateLock.Close()
+			m.stateLock = nil
 		}
 	})
 	return nil

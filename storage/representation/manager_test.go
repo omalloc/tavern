@@ -655,3 +655,14 @@ func TestManagerActualReopenKeepsMigrationAndOrphanJournal(t *testing.T) {
 	f.collect(t)
 	absent(t, f.bucket(target.ID()), orphan.ID)
 }
+
+func TestManagerStateDirectoryHasOneOwner(t *testing.T) {
+	f := newManagerFixture(t)
+	second, err := representation.NewManager(t.Context(), []storage.Bucket{f.buckets[0], f.buckets[1]}, representation.ManagerConfig{StateDirectory: f.stateDir, Durable: true})
+	if err == nil {
+		second.Close()
+		t.Fatal("second state-directory owner accepted")
+	}
+	// Failed construction cannot unregister the live manager's eviction routing.
+	f.publish(t, httpSelector(t, "jpeg"), "after-denial", "body", false)
+}

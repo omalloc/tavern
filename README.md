@@ -120,7 +120,7 @@ The example configuration restricts administrative routes and `PURGE` to local h
 
 - Single-range, suffix-range, open-ended, and multi-range responses
 - Partial cache hits and configurable missing-range fill
-- Safe bypass of Vary responses and legacy variants during the [v2 rollout](docs/vary-representation-implementation-plan.md); `vary_ignore_key` is deprecated and ignored
+- Opt-in persistent Vary representations on disk/Pebble; see [enablement and rollback](docs/vary-representation-operations.md). Disabled by default; legacy Vary stays bypassed and `vary_ignore_key` is ignored
 - Optional query-string inclusion in cache keys
 - Declarative request and response header rewriting
 - Chunked object storage for incremental reads and writes

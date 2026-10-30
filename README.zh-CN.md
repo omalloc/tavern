@@ -120,7 +120,7 @@ curl -sS -D - -o /dev/null http://localhost:8080/path/to/object
 
 - 单区间、后缀区间、开放区间和多区间响应
 - 部分命中与可配置的缺失区间填充
-- [v2 改造](docs/vary-representation-implementation-plan.md)期间安全旁路 Vary 响应和旧变体；`vary_ignore_key` 已弃用且不生效
+- disk/Pebble 可选择启用持久化 Vary 表示缓存，默认关闭；参见[启用与回滚](docs/vary-representation-operations.md)。旧 Vary 仍旁路，`vary_ignore_key` 继续忽略
 - 可选择是否把查询参数纳入缓存键
 - 通过声明式规则重写请求头和响应头
 - 对象切片存储，支持渐进式读写

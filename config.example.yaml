@@ -51,6 +51,9 @@ server:
         object_pool_size: 20000
         async_flush_chunk: true
         vary_limit: 100
+        representation:
+          enabled: false # 开启前配置 storage.representation；详见 docs/vary-representation-operations.md
+          namespace: http-v2
   access_log:
     enabled: true
     encrypt:
@@ -84,6 +87,11 @@ plugin:
 storage:
   driver: native # native, custom-driver
   db_type: pebble # ready [ pebble, nutsdb ], not implements [ boltdb, badgerdb ]
+  # 启用 v2 前取消注释；回滚关闭读取时保留本绑定和目录。
+  # representation:
+  #   state_directory: /cache-control/tavern-v2
+  #   gc_interval: 1m
+  #   gc_budget: 64
   db_path: .indexdb # path to the index database, for absolute path, please use /absolute/path/to/db
   async_load: true
   eviction_policy: fifo # fifo, lru, lfu

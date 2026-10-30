@@ -70,16 +70,25 @@ type Upstream struct {
 }
 
 type Storage struct {
-	Driver          string     `json:"driver" yaml:"driver"`
-	DBType          string     `json:"db_type" yaml:"db_type"`
-	DBPath          string     `json:"db_path" yaml:"db_path"` // default db path
-	AsyncLoad       bool       `json:"async_load" yaml:"async_load"`
-	EvictionPolicy  string     `json:"eviction_policy" yaml:"eviction_policy"`
-	SelectionPolicy string     `json:"selection_policy" yaml:"selection_policy"`
-	SliceSize       uint64     `json:"slice_size" yaml:"slice_size"`
-	DirAware        *DirAware  `json:"diraware" yaml:"diraware"`
-	Migration       *Migration `json:"migration" yaml:"migration"`
-	Buckets         []*Bucket  `json:"buckets" yaml:"buckets"`
+	Driver          string                 `json:"driver" yaml:"driver"`
+	DBType          string                 `json:"db_type" yaml:"db_type"`
+	DBPath          string                 `json:"db_path" yaml:"db_path"` // default db path
+	AsyncLoad       bool                   `json:"async_load" yaml:"async_load"`
+	EvictionPolicy  string                 `json:"eviction_policy" yaml:"eviction_policy"`
+	SelectionPolicy string                 `json:"selection_policy" yaml:"selection_policy"`
+	SliceSize       uint64                 `json:"slice_size" yaml:"slice_size"`
+	DirAware        *DirAware              `json:"diraware" yaml:"diraware"`
+	Migration       *Migration             `json:"migration" yaml:"migration"`
+	Representation  *RepresentationStorage `json:"representation,omitempty" yaml:"representation,omitempty"`
+	Buckets         []*Bucket              `json:"buckets" yaml:"buckets"`
+}
+
+// RepresentationStorage retains control ownership even when caching reads are
+// disabled. Removing this binding while persisted v2 controls exist is rejected.
+type RepresentationStorage struct {
+	StateDirectory string        `json:"state_directory" yaml:"state_directory"`
+	GCInterval     time.Duration `json:"gc_interval" yaml:"gc_interval"`
+	GCBudget       int           `json:"gc_budget" yaml:"gc_budget"`
 }
 
 func (r *Storage) FillDefault() {

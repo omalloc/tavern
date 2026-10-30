@@ -14,6 +14,7 @@ import (
 	"github.com/omalloc/tavern/contrib/log"
 	"github.com/omalloc/tavern/pkg/lifecycle"
 	"github.com/omalloc/tavern/storage/bucket/empty"
+	"github.com/omalloc/tavern/storage/representation"
 	"github.com/omalloc/tavern/storage/selector"
 	"github.com/omalloc/tavern/storage/sharedkv"
 )
@@ -23,6 +24,7 @@ var _ storage.Migrator = (*migratorStorage)(nil)
 type migratorStorage struct {
 	representations representationRegistry
 	tasks           lifecycle.Group
+	manager         *representation.Manager
 	closed          bool
 	closeOnce       sync.Once
 	closeErr        error
@@ -60,6 +62,13 @@ func NewMigrator(config *conf.Storage, logger log.Logger) (storage.Migrator, err
 	}
 
 	if err := m.reinit(config); err != nil {
+		m.Close()
+		return nil, err
+	}
+
+	var err error
+	m.manager, err = initializeRepresentations(config.Representation, m.RepresentationBuckets(), &m.representations)
+	if err != nil {
 		m.Close()
 		return nil, err
 	}
@@ -300,6 +309,9 @@ func (m *migratorStorage) Close() error {
 func (m *migratorStorage) closeStorage() error {
 	if err := m.Drain(context.Background()); err != nil {
 		return err
+	}
+	if m.manager != nil {
+		m.manager.Close()
 	}
 	var errs []error
 	// close all buckets

@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -380,6 +381,9 @@ func (s *HTTPServer) buildMiddlewareChain(tripper http.RoundTripper) (http.Round
 		}
 		next, cleanup, err := middleware.Create(conf)
 		if err != nil {
+			if conf.Required || strings.EqualFold(conf.Name, "caching") {
+				return nil, err
+			}
 			log.Warnf("failed to create middleware %s: %v", conf.Name, err)
 			continue
 		}
@@ -394,6 +398,10 @@ func (s *HTTPServer) buildMiddlewareChain(tripper http.RoundTripper) (http.Round
 func (s *HTTPServer) globalOptions(src map[string]any) map[string]any {
 
 	src["slice_size"] = s.config.Storage.SliceSize
+	if s.config.Upstream != nil {
+		encoded, _ := json.Marshal(s.config.Upstream)
+		src["representation_isolation_scope"] = fmt.Sprintf("%x", sha256.Sum256(encoded))
+	}
 	if s.config.Hostname != "" {
 		src["hostname"] = s.config.Hostname
 	}
