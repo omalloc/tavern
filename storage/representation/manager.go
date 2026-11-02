@@ -107,12 +107,16 @@ func NewManager(ctx context.Context, buckets []storage.Bucket, config ManagerCon
 		if !locked {
 			return nil, fmt.Errorf("representation state directory already has a writer")
 		}
-		if err := checkTopologyManifest(config.StateDirectory, m.fingerprint, false); err != nil {
+		bindings, err := controlBindings(ctx, m.buckets)
+		if err != nil {
+			return nil, err
+		}
+		if err := checkTopologyManifest(config.StateDirectory, m.fingerprint, bindings, false); err != nil {
 			return nil, err
 		}
 	}
 	for _, bucket := range m.buckets {
-		opts := []Option{WithLifecycle(m.buckets...)}
+		opts := []Option{WithLifecycle(m.buckets...), WithWriteback()}
 		if config.Durable {
 			opts = append(opts, WithDurability(m.buckets...))
 		}
@@ -158,7 +162,11 @@ func NewManager(ctx context.Context, buckets []storage.Bucket, config ManagerCon
 		}
 	}
 	if config.Durable {
-		if err := checkTopologyManifest(config.StateDirectory, m.fingerprint, true); err != nil {
+		bindings, err := controlBindings(ctx, m.buckets)
+		if err != nil {
+			return nil, err
+		}
+		if err := checkTopologyManifest(config.StateDirectory, m.fingerprint, bindings, true); err != nil {
 			return nil, err
 		}
 	}
@@ -191,6 +199,16 @@ func NewManager(ctx context.Context, buckets []storage.Bucket, config ManagerCon
 	if err := m.Recover(ctx); err != nil {
 		m.Close()
 		return nil, err
+	}
+	// Filename cleanup is startup-only: after construction, a live writer may
+	// own a temporary/unindexed file which ordinary Recover must not remove.
+	for _, bucket := range m.buckets {
+		if recovery, ok := bucket.(storage.UnindexedChunkRecoverer); ok {
+			if err := recovery.RecoverUnindexedChunks(ctx); err != nil {
+				m.Close()
+				return nil, err
+			}
+		}
 	}
 	if config.GCInterval > 0 {
 		budget := config.GCBudget
@@ -253,6 +271,15 @@ func (m *Manager) Repository(key object.ResourceKey) (*IndexRepository, error) {
 	return m.repositoryForID(key.ResourceID())
 }
 
+func (m *Manager) BindQuerylessNamespace(ctx context.Context, namespace string) error {
+	for _, bucket := range m.buckets {
+		if err := m.repos[bucket.ID()].BindQuerylessNamespace(ctx, namespace); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func (m *Manager) Purge(ctx context.Context, raw string, control storage.PurgeControl) (failure error) {
 	defer func() { pkgmetrics.RecordRepresentationInvalidation(control.Hard, control.Dir, failure != nil) }()
 	var failures []error
@@ -279,20 +306,90 @@ func (m *Manager) Close() error {
 	return nil
 }
 
-func checkTopologyManifest(directory, fingerprint string, create bool) error {
+type controlBinding struct {
+	Identity    string `json:"identity"`
+	Incarnation string `json:"incarnation"`
+}
+
+type topologyManifest struct {
+	Version     int                       `json:"version"`
+	Fingerprint string                    `json:"fingerprint"`
+	Controls    map[string]controlBinding `json:"controls,omitempty"`
+}
+
+// Version 4 permits writeback cache publications. Older managers must refuse
+// this binding rather than assume every surviving file was synchronously sealed.
+const topologyManifestVersion = 4
+
+func controlBindings(ctx context.Context, buckets []storage.Bucket) (map[string]controlBinding, error) {
+	bindings := make(map[string]controlBinding, len(buckets))
+	for _, bucket := range buckets {
+		store, ok := bucket.(storage.DurableControlStore)
+		if !ok {
+			return nil, fmt.Errorf("bucket %q (%T) does not provide durable control records: %w", bucket.ID(), bucket, storage.ErrDurabilityUnsupported)
+		}
+		if err := store.CheckDurability(); err != nil {
+			return nil, fmt.Errorf("bucket %q (%T) durability check: %w", bucket.ID(), bucket, err)
+		}
+		identity, err := store.ControlIdentity()
+		if err != nil {
+			return nil, err
+		}
+		if identity == "" {
+			return nil, storage.ErrDurabilityUnsupported
+		}
+		binding := controlBinding{Identity: identity}
+		md, err := store.LoadControl(ctx, object.BarrierCatalogID())
+		if err == nil {
+			if md == nil || !md.ValidControl() || md.Barriers == nil || md.Barriers.Incarnation == "" {
+				return nil, ErrInvalidRecord
+			}
+			binding.Incarnation = md.Barriers.Incarnation
+		} else if !errors.Is(err, storage.ErrKeyNotFound) {
+			return nil, err
+		}
+		bindings[bucket.ID()] = binding
+	}
+	return bindings, nil
+}
+
+func checkTopologyManifest(directory, fingerprint string, bindings map[string]controlBinding, create bool) error {
 	path := filepath.Join(directory, "representation-topology.json")
 	data, err := os.ReadFile(path)
 	if err == nil {
-		var manifest struct {
-			Version     int    `json:"version"`
-			Fingerprint string `json:"fingerprint"`
-		}
-		if json.Unmarshal(data, &manifest) != nil || manifest.Version != 2 || manifest.Fingerprint != fingerprint {
+		var manifest topologyManifest
+		if json.Unmarshal(data, &manifest) != nil || (manifest.Version != 2 && manifest.Version != 3 && manifest.Version != topologyManifestVersion) || manifest.Fingerprint != fingerprint {
 			return ErrTopologyMismatch
 		}
-		return nil
+		if len(manifest.Controls) != 0 {
+			if len(manifest.Controls) != len(bindings) {
+				return ErrTopologyMismatch
+			}
+			for id, expected := range manifest.Controls {
+				if expected.Incarnation == "" || bindings[id] != expected {
+					return ErrTopologyMismatch
+				}
+			}
+			if manifest.Version == topologyManifestVersion {
+				return nil
+			}
+		} else {
+			if manifest.Version >= 3 {
+				return ErrTopologyMismatch
+			}
+			// Upgrade older manifests only against existing protected catalogs.
+			// An empty replacement index must never acquire the old state binding.
+			for _, binding := range bindings {
+				if binding.Incarnation == "" {
+					return ErrTopologyMismatch
+				}
+			}
+		}
+		if !create {
+			return nil
+		}
 	}
-	if !errors.Is(err, os.ErrNotExist) {
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
 	if !create {
@@ -301,10 +398,7 @@ func checkTopologyManifest(directory, fingerprint string, create bool) error {
 	if err := os.MkdirAll(directory, 0700); err != nil {
 		return err
 	}
-	data, _ = json.Marshal(struct {
-		Version     int    `json:"version"`
-		Fingerprint string `json:"fingerprint"`
-	}{2, fingerprint})
+	data, _ = json.Marshal(topologyManifest{topologyManifestVersion, fingerprint, bindings})
 	file, err := os.CreateTemp(directory, ".topology-*")
 	if err != nil {
 		return err

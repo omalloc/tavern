@@ -24,6 +24,14 @@ type ControlStore interface {
 	StoreControl(context.Context, *object.Metadata) error
 }
 
+// VolatileRepresentationBucket explicitly declares that both body bytes and
+// control records live only for this bucket instance. It permits the public
+// v2 owner to use process-local publication without claiming crash durability.
+type VolatileRepresentationBucket interface {
+	Bucket
+	VolatileRepresentations() bool
+}
+
 // SyncIndexDB is optional. SetSync must sync the encoded record and its WAL
 // before success, independent of ordinary Set configuration. Persistent is false
 // for memory filesystems and backends without a verified synchronous path.
@@ -35,6 +43,9 @@ type SyncIndexDB interface {
 type DurableControlStore interface {
 	ControlStore
 	CheckDurability() error
+	// ControlIdentity identifies the actual index location and backend, apart
+	// from the bucket's data path. It must remain stable across reopen.
+	ControlIdentity() (string, error)
 	StoreControlSync(context.Context, *object.Metadata) error
 }
 
@@ -83,6 +94,13 @@ type LegacyFillCoordinator interface {
 // a nil next cursor means this pass reached the end. Unreadable encodings are errors.
 type MetadataScanner interface {
 	ScanMetadata(context.Context, []byte, int) ([]*object.Metadata, []byte, error)
+}
+
+// UnindexedChunkRecoverer runs only during startup before accepting fills.
+// Writeback can lose metadata while files survive; these files must never be
+// reattached by guessing an identity from their names.
+type UnindexedChunkRecoverer interface {
+	RecoverUnindexedChunks(context.Context) error
 }
 
 type IndexScanner interface {

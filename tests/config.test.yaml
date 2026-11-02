@@ -37,22 +37,31 @@ server:
             X-XSS-Protection: "1; mode=block"
           remove:
             - "Server"
+    - name: transform
+      options:
+        enabled: false # 按 docs/managed-image-operations.md 配置后端与路由后再灰度开启
     - name: multirange
       options:
         merge: false
     - name: caching
       options:
-        fuzzy_refresh: false # deterministic TTL/revalidation tests; fuzzy policy has unit coverage
+        fuzzy_refresh: true
         fuzzy_refresh_rate: 0.1
-        collapsed_request: true
-        collapsed_request_wait_timeout: 100ms
         include_query_in_cache_key: true
-        async_flush_chunk: false
+        fill_range_percent: 100
+        object_pool_enabled: true
+        object_pool_size: 20000
+        async_flush_chunk: true
         vary_limit: 100
-        vary_ignore_key:
-          - "Cookie"
-          - "Access-Control-Request-Headers"
-          - "Access-Control-Request-Method"
+        response_sharing:
+          enabled: true # 需先开启 representation；仅合并通过响应头验证的等价完整冷 GET
+          max_body_bytes: 1048576
+          max_flights: 32
+          max_waiters: 32
+          wait_timeout: 500ms
+        representation:
+          enabled: true # 开启前配置 storage.representation；详见 docs/vary-representation-operations.md
+          namespace: http-v2
   access_log:
     enabled: true
     encrypt:
@@ -94,25 +103,15 @@ storage:
   diraware:
     enabled: false # 默认 true
     store_path: /tmp/.diraware
-    auto_clear: true 
+    auto_clear: true
   buckets:
     - path: inmemory
       driver: memory
-  #  - path: /cache1
-  #    type: normal
-  #    max_object_limit: 10000000
-  #    db_config:
-  #      cache_size: 1024000000
-  #      mem_table_size: 256000000
-  #      bytes_per_sync: 10240000
-  #      wal_bytes_per_sync: 20480000
-  #      wal_min_sync_interval: 5
-  #      write_sync_mode: false
+  representation: {}
 upstream:
   balancing: wrr
   address:
     - http://127.0.0.1:8000
-    # - unix:///tmp/run/tavern.sock
   max_idle_conns: 1000
   max_idle_conns_per_host: 500
   max_connections_per_server: 100

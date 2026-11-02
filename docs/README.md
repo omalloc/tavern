@@ -1,5 +1,7 @@
 # Tavern CDN 文档 / Tavern CDN Documentation
 
+> **v2 系列最终验收：验收均不通过（2026-11-02）。** 需求目的、实现动机、业务偏差、生命周期和测试证据见 [v2 变更逐项审查](./v2-change-requirements-review.md)。历史阶段记录不代表当前验收通过。
+
 欢迎来到 **Tavern CDN** 项目文档！这里提供了完整的生态系统文档，涵盖 Tavern (Go 缓存代理) 和 Gateway (OpenResty 网关) 两个核心组件。
 
 Welcome to the **Tavern CDN** documentation! This directory contains the complete ecosystem documentation covering both the Tavern (Go cache proxy) and Gateway (OpenResty gateway) components.
@@ -88,15 +90,16 @@ docs/
 |:---|:---|
 | [PURGE 设计 / PURGE Design](./purge.md) | PURGE 缓存清除的完整设计、配置和流程 |
 | [CDN 缓存分析 / CDN Cache Analysis](./cdn-cache-analysis.md) | Tavern vs Squid vs ATS 对比分析 |
+| [v2 变更逐项审查](./v2-change-requirements-review.md) | 24 项需求目的、实现理由、业务偏差、生命周期、证据和最终拒收结论 |
 | [Vary 与资源转换缓存设计](./vary-representation-design.md) | 改造前问题分析及目标架构；实际交付见实施方案与验收记录 |
 | [Vary/图片观测与面板](./representation-observability.md) | 有界指标口径、Grafana 分组和运行判断（P4.1） |
 | [表示缓存维护与故障演练](./representation-maintenance.md) | 旧 Vary 限速回收、屏障压缩、重启故障与固定样本基准（P4.2） |
 | [透明 v2 响应合并](./response-sharing-operations.md) | 独立开关、实际响应验证、缓冲预算与回滚（P4.3） |
-| [Vary/图片最终验收记录](./vary-representation-acceptance.md) | 分阶段需求/证据、全量 CI 验证和实际编码矩阵 |
+| [Vary/图片验收历史与状态更正](./vary-representation-acceptance.md) | 保留历史检查记载；顶部明确当前系列拒收结论 |
 | [托管图片路由启用与回滚](./managed-image-operations.md) | 成品条件/范围响应、no-transform、失败回退及公开配置（默认关闭） |
 | [图片 worker 契约与部署前检查](./image-worker-contract.md) | HTTP 协议、完整图片检查、预算和独立矩阵检查命令（P3.3） |
 | [透明 v2 缓存启用与回滚](./vary-representation-operations.md) | disk/Pebble 支持矩阵、默认关闭配置和停写交接 |
-| [Vary 与资源转换详细落地方案](./vary-representation-implementation-plan.md) | P1—P4 已完成，包含分批接口、验收及默认关闭的灰度回滚边界 |
+| [Vary 与资源转换详细落地方案](./vary-representation-implementation-plan.md) | 历史 P1—P4 方案及实施记录；当前系列验收均不通过 |
 | [系统设计规格 / System Design Spec](./superpowers/specs/2026-06-09-tavern-cdn-documentation-design.md) | 本文档集的设计规格 |
 | [实施计划 / Implementation Plan](./superpowers/plans/2026-06-09-tavern-cdn-documentation.md) | 文档集实施的计划 |
 

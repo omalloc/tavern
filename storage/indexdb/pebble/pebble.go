@@ -28,6 +28,7 @@ type PebbleDB struct {
 	skipErrRecord bool
 	closed        sync.Once
 	persistent    bool
+	writeback     writebackQueue
 }
 
 func init() {
@@ -36,6 +37,21 @@ func init() {
 
 // Get implements storage.IndexDB.
 func (p *PebbleDB) Get(ctx context.Context, key []byte) (*object.Metadata, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	p.writeback.mu.Lock()
+	if value, exists := p.writeback.pending[string(key)]; exists {
+		buf := bytes.Clone(value)
+		p.writeback.mu.Unlock()
+		if value == nil {
+			return nil, storage.ErrKeyNotFound
+		}
+		md := &object.Metadata{}
+		err := p.codec.Unmarshal(buf, md)
+		return md, err
+	}
+	p.writeback.mu.Unlock()
 	buf, closer, err := p.db.Get(key)
 	if err != nil {
 		if errors.Is(err, pebble.ErrNotFound) {
@@ -57,7 +73,9 @@ func (p *PebbleDB) Set(ctx context.Context, key []byte, val *object.Metadata) er
 		return err
 	}
 
-	return p.db.Set(key, buf, p.writeMode)
+	// Cache records use writeback even if legacy ordinary writes request Sync.
+	syncWrite := p.writeMode.GetSync() && val.RecordKind != object.RecordRepresentation && val.RecordKind != object.RecordResource
+	return p.write(ctx, key, buf, syncWrite)
 }
 
 func (p *PebbleDB) Persistent() bool { return p.persistent }
@@ -73,18 +91,18 @@ func (p *PebbleDB) SetSync(ctx context.Context, key []byte, val *object.Metadata
 	if err != nil {
 		return err
 	}
-	return p.db.Set(key, buf, pebble.Sync)
+	return p.write(ctx, key, buf, true)
 }
 
 func (p *PebbleDB) Scan(ctx context.Context, after []byte, limit int) ([]*object.Metadata, []byte, error) {
 	if limit <= 0 {
 		return nil, nil, errors.New("metadata scan limit must be positive")
 	}
-	iter, err := p.db.NewIter(&pebble.IterOptions{})
+	iter, closeIter, err := p.readIterator()
 	if err != nil {
 		return nil, nil, err
 	}
-	defer iter.Close()
+	defer closeIter()
 	valid := iter.First()
 	if len(after) > 0 {
 		valid = iter.SeekGE(after)
@@ -121,11 +139,11 @@ func (p *PebbleDB) Scan(ctx context.Context, after []byte, limit int) ([]*object
 
 // Iterate implements storage.IndexDB.
 func (p *PebbleDB) Iterate(ctx context.Context, prefix []byte, f storage.IterateFunc) error {
-	iter, err := p.db.NewIter(&pebble.IterOptions{})
+	iter, closeIter, err := p.readIterator()
 	if err != nil {
 		return err
 	}
-	defer iter.Close()
+	defer closeIter()
 
 	if p.skipErrRecord {
 		for iter.First(); iter.Valid(); iter.Next() {
@@ -161,12 +179,12 @@ func (p *PebbleDB) Iterate(ctx context.Context, prefix []byte, f storage.Iterate
 
 // Delete implements storage.IndexDB.
 func (p *PebbleDB) Delete(ctx context.Context, key []byte) error {
-	return p.db.Delete(key, p.writeMode)
+	return p.write(ctx, key, nil, p.writeMode.GetSync())
 }
 
 // Exist implements storage.IndexDB.
 func (p *PebbleDB) Exist(ctx context.Context, key []byte) bool {
-	_, _, err := p.db.Get(key)
+	_, err := p.Get(ctx, key)
 	return err == nil
 }
 
@@ -179,9 +197,14 @@ func (p *PebbleDB) Expired(ctx context.Context, f storage.IterateFunc) error {
 func (p *PebbleDB) Close() error {
 	var err error
 	p.closed.Do(func() {
-		_ = p.db.Flush()
+		if p.writeback.stop != nil {
+			close(p.writeback.stop)
+			<-p.writeback.done
+		}
+		err = p.flushWriteback()
+		err = errors.Join(err, p.db.Flush())
 		// force flush data to disk
-		err = p.db.Close()
+		err = errors.Join(err, p.db.Close())
 	})
 	return err
 }
@@ -242,12 +265,14 @@ func New(path string, option storage.Option) (storage.IndexDB, error) {
 		writeMode = pebble.NoSync
 	}
 
-	return &PebbleDB{
+	p := &PebbleDB{
 		codec:         option.Codec(),
 		db:            pdb,
 		writeMode:     writeMode, // 是否异步写操作
 		skipErrRecord: true,
 		closed:        sync.Once{},
 		persistent:    option.DBPath() != storage.TypeInMemory && path != "",
-	}, nil
+	}
+	p.startWriteback()
+	return p, nil
 }

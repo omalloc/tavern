@@ -1,7 +1,10 @@
 package object
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
+	"maps"
 	"math"
 	"slices"
 
@@ -63,6 +66,9 @@ type VariantRef struct {
 }
 
 type RepresentationInfo struct {
+	// Digests cover closed chunks. Recovery rejects same-length torn writeback
+	// files as well as missing/truncated ones. Older sealed records may omit it.
+	ChunkDigests map[uint32]string `json:"chunk_digests,omitempty" yaml:"chunk_digests,omitempty"`
 	// SourceBoundTTL derives freshness only from a current validation of exactly
 	// the selected source body version. It never grants independent lifetime.
 	SourceBoundTTL bool   `json:"source_bound_ttl,omitempty" yaml:"source_bound_ttl,omitempty"`
@@ -131,6 +137,7 @@ func (r *RepresentationInfo) Clone() *RepresentationInfo {
 		return nil
 	}
 	out := *r
+	out.ChunkDigests = maps.Clone(r.ChunkDigests)
 	out.SourceID = r.SourceID.Clone()
 	out.TransformSpec = slices.Clone(r.TransformSpec)
 	if r.Image != nil {
@@ -138,6 +145,14 @@ func (r *RepresentationInfo) Clone() *RepresentationInfo {
 		out.Image = &image
 	}
 	return &out
+}
+
+func (r *RepresentationInfo) RecordChunkDigest(index uint32, data []byte) {
+	if r.ChunkDigests == nil {
+		r.ChunkDigests = make(map[uint32]string)
+	}
+	digest := sha256.Sum256(data)
+	r.ChunkDigests[index] = hex.EncodeToString(digest[:])
 }
 
 // IsLegacyVary identifies legacy data that the HTTP cache no longer selects.

@@ -68,8 +68,9 @@ func (r *IndexRepository) BindFill(ctx context.Context, state *IndexState, lease
 	return nil
 }
 
-// JournalFill persists cleanup ownership before a writer creates a chunk. A
-// durable journal accepts incomplete descriptors but never publishes a root.
+// JournalFill records cleanup ownership before a writer creates a chunk.
+// Writeback coalesces these snapshots; strict durability syncs each journal.
+// Neither path publishes a root from an incomplete descriptor.
 func (r *IndexRepository) JournalFill(ctx context.Context, state *IndexState, lease *Reservation, bucket storage.Bucket, md *object.Metadata) error {
 	if state == nil || lease == nil || bucket == nil || md == nil || !state.key.Valid() {
 		return ErrInvalidRecord
@@ -80,7 +81,7 @@ func (r *IndexRepository) JournalFill(ctx context.Context, state *IndexState, le
 	if lease.released || !sameID(lease.boundID, md.ID) || bucket.ID() != lease.boundLocation {
 		return ErrSuperseded
 	}
-	if r.durable {
+	if r.durable && !r.writeback {
 		data := r.durableBuckets[bucket.ID()]
 		if data == nil {
 			return storage.ErrDurabilityUnsupported

@@ -107,6 +107,18 @@ func (d *diskBucket) CheckDurability() error {
 	return nil
 }
 
+func (d *diskBucket) ControlIdentity() (string, error) {
+	path, err := filepath.EvalSymlinks(d.dbPath)
+	if err != nil {
+		return "", err
+	}
+	path, err = filepath.Abs(path)
+	if err != nil {
+		return "", err
+	}
+	return d.opt.DBType + "\x00" + path, nil
+}
+
 func (d *diskBucket) StoreControlSync(ctx context.Context, md *object.Metadata) error {
 	if !md.ValidControl() {
 		return storage.ErrProtectedControl

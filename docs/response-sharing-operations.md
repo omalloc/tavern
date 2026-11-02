@@ -1,5 +1,7 @@
 # 透明 v2 响应合并
 
+> **验收状态（2026-11-02）：整个 v2 系列验收均不通过。** 本文记录已有实现与操作方式，不构成当前发布通过结论；业务缺口、性能及维护性问题见 [v2 变更审查结论](v2-change-requirements-review.md)。
+
 P4.3 提供独立、默认关闭的 `caching.response_sharing`。它要求 `caching.representation.enabled=true` 和既有 storage.representation 控制所有权；配置不满足或预算无效时启动失败。旧 `collapsed_request`、`collapsed_request_wait_timeout` 不启用此功能，proxy.Do 的旧 collapse 参数也不再共享响应。
 
 ```yaml
@@ -21,7 +23,7 @@ server:
 
 首版只处理没有既有表示的透明完整 GET。方法、URL（含转义、查询顺序和 Host）及全部实际选择头必须等价。每个请求拥有独立快照，并再次按本次 origin 的 Vary 检查，不能根据旧索引或摘要碰撞直接注册响应体。
 
-请求无 Body、Range、条件头、Cookie、Authorization、Proxy-Authorization 或指定 peer；请求 no-store/no-cache/max-age=0 同样旁路。未知字段保留顺序与缺失/空值差别。请求头快照最多 32 字段、16 KiB，URL 最多 16 KiB，超过则独立获取。带客户端证书或要求关闭连接的请求也采用保守旁路。不同 namespace/upstream 隔离范围，以及 incarnation、PURGE/revalidate epoch、目录 hard/soft 屏障、位置与 routing epoch，不能加入同一组。
+请求无 Body、Range、条件头、Cookie、Authorization、Proxy-Authorization 或指定 peer；请求 no-store/no-cache/max-age=0 同样旁路。未知字段保留顺序与缺失/空值差别。请求头快照最多 32 字段、16 KiB，URL 最多 16 KiB，超过则独立获取。带客户端证书或要求关闭连接的请求也采用保守旁路。不同 namespace/显式 isolation_scope，以及 incarnation、PURGE/revalidate epoch、目录 hard/soft 屏障、位置与 routing epoch，不能加入同一组。
 
 响应须为允许共享的完整 200，有唯一、可信的 Content-Length；Vary 星号/非法/超预算、private/no-store/no-cache、Set-Cookie、范围、Trailer、升级连接、未知长度或超过字节上限均不共享。拒绝时 leader 保留普通响应，等待者独立回源；不会先向等待者发送 leader 的响应头再判断资格。
 

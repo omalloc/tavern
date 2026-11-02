@@ -78,16 +78,23 @@ func (r *IndexRepository) loadCatalog(ctx context.Context) (*object.Metadata, er
 	if !md.ValidControl() || md.Barriers.Incarnation == "" || len(md.Barriers.Entries) > r.barrierLimit || barrierBytes(md.Barriers) > maxBarrierBytes {
 		return nil, ErrInvalidRecord
 	}
-	seen := make(map[string]struct{}, len(md.Barriers.Entries))
+	seen := make(map[barrierKey]struct{}, len(md.Barriers.Entries))
+	namespaces := make(map[string]bool)
+	if len(md.Barriers.QuerylessNamespaces) > 128 {
+		return nil, ErrInvalidRecord
+	}
+	for _, namespace := range md.Barriers.QuerylessNamespaces {
+		if namespace == "" || namespaces[namespace] {
+			return nil, ErrInvalidRecord
+		}
+		namespaces[namespace] = true
+	}
 	for _, entry := range md.Barriers.Entries {
 		prefix, err := canonicalBarrier(entry.CanonicalPrefix, entry.Exact)
-		identity := prefix
-		if entry.Exact {
-			identity = "exact:" + prefix
-		}
+		identity := barrierIdentity(entry)
 		_, duplicate := seen[identity]
 		if err != nil || prefix != entry.CanonicalPrefix || duplicate || entry.HardEpoch > md.Barriers.Revision || entry.SoftEpoch > md.Barriers.Revision ||
-			(entry.HardEpoch == 0 && entry.SoftEpoch == 0) {
+			(entry.HardEpoch == 0 && entry.SoftEpoch == 0) || entry.Namespace != "" && (!entry.Exact || !namespaces[entry.Namespace]) {
 			return nil, ErrInvalidRecord
 		}
 		seen[identity] = struct{}{}
@@ -102,6 +109,9 @@ func (r *IndexRepository) barriersFor(ctx context.Context, key object.ResourceKe
 	}
 	epochs := barrierEpochs{incarnation: md.Barriers.Incarnation}
 	for _, entry := range md.Barriers.Entries {
+		if entry.Namespace != "" && entry.Namespace != key.Namespace() {
+			continue
+		}
 		if entry.Exact && entry.CanonicalPrefix == key.CanonicalURL() || !entry.Exact && prefixMatches(entry.CanonicalPrefix, key.CanonicalURL()) {
 			epochs.hard = max(epochs.hard, entry.HardEpoch)
 			epochs.soft = max(epochs.soft, entry.SoftEpoch)
@@ -141,22 +151,34 @@ func (r *IndexRepository) invalidateURLBarrier(ctx context.Context, raw string, 
 	if md.Barriers.Revision == math.MaxUint64 {
 		return ErrInvalidRecord
 	}
-	index := slices.IndexFunc(md.Barriers.Entries, func(entry object.PrefixBarrier) bool { return entry.CanonicalPrefix == prefix && entry.Exact == exact })
-	if index < 0 {
-		if len(md.Barriers.Entries) >= r.barrierLimit {
-			return ErrBarrierLimit
+	targets := []object.PrefixBarrier{{CanonicalPrefix: prefix, Exact: exact}}
+	if exact {
+		u, _ := url.Parse(prefix)
+		if u.RawQuery != "" || u.ForceQuery {
+			u.RawQuery, u.ForceQuery = "", false
+			for _, namespace := range md.Barriers.QuerylessNamespaces {
+				targets = append(targets, object.PrefixBarrier{CanonicalPrefix: u.String(), Exact: true, Namespace: namespace})
+			}
 		}
-		md.Barriers.Entries = append(md.Barriers.Entries, object.PrefixBarrier{CanonicalPrefix: prefix, Exact: exact})
-		if barrierBytes(md.Barriers) > maxBarrierBytes {
-			return ErrBarrierLimit
-		}
-		index = len(md.Barriers.Entries) - 1
 	}
 	md.Barriers.Revision++
-	if mode == InvalidateHard {
-		md.Barriers.Entries[index].HardEpoch = md.Barriers.Revision
-	} else {
-		md.Barriers.Entries[index].SoftEpoch = md.Barriers.Revision
+	for _, target := range targets {
+		index := slices.IndexFunc(md.Barriers.Entries, func(entry object.PrefixBarrier) bool { return barrierIdentity(entry) == barrierIdentity(target) })
+		if index < 0 {
+			if len(md.Barriers.Entries) >= r.barrierLimit {
+				return ErrBarrierLimit
+			}
+			md.Barriers.Entries = append(md.Barriers.Entries, target)
+			index = len(md.Barriers.Entries) - 1
+		}
+		if mode == InvalidateHard {
+			md.Barriers.Entries[index].HardEpoch = md.Barriers.Revision
+		} else {
+			md.Barriers.Entries[index].SoftEpoch = md.Barriers.Revision
+		}
+	}
+	if barrierBytes(md.Barriers) > maxBarrierBytes {
+		return ErrBarrierLimit
 	}
 	slices.SortFunc(md.Barriers.Entries, func(a, b object.PrefixBarrier) int { return strings.Compare(a.CanonicalPrefix, b.CanonicalPrefix) })
 	if err := ctx.Err(); err != nil {
@@ -188,10 +210,74 @@ var _ storage.RepresentationPurger = (*IndexRepository)(nil)
 
 func barrierBytes(catalog *object.BarrierCatalog) int {
 	size := len(catalog.Incarnation) + 32
+	for _, namespace := range catalog.QuerylessNamespaces {
+		size += len(namespace) + 16
+	}
 	for _, entry := range catalog.Entries {
-		size += len(entry.CanonicalPrefix) + 32
+		size += len(entry.CanonicalPrefix) + len(entry.Namespace) + 32
 	}
 	return size
+}
+
+type barrierKey struct {
+	url, namespace string
+	exact          bool
+}
+
+func barrierIdentity(entry object.PrefixBarrier) barrierKey {
+	return barrierKey{entry.CanonicalPrefix, entry.Namespace, entry.Exact}
+}
+
+// BindQuerylessNamespace persists the public-URI mapping before fills begin.
+// It survives disabled reads, configuration changes and process restarts.
+func (r *IndexRepository) BindQuerylessNamespace(ctx context.Context, namespace string) error {
+	if namespace == "" {
+		return ErrInvalidRecord
+	}
+	r.barrierMu.Lock()
+	defer r.barrierMu.Unlock()
+	md, err := r.loadCatalog(ctx)
+	if err != nil {
+		return err
+	}
+	if slices.Contains(md.Barriers.QuerylessNamespaces, namespace) {
+		return nil
+	}
+	if len(md.Barriers.QuerylessNamespaces) >= 128 || md.Barriers.Revision == math.MaxUint64 {
+		return ErrBarrierLimit
+	}
+	md.Barriers.QuerylessNamespaces = append(md.Barriers.QuerylessNamespaces, namespace)
+	slices.Sort(md.Barriers.QuerylessNamespaces)
+	// Existing URI barriers also apply when enabling this mapping over an
+	// older cache. Do not let prior acknowledged PURGEs disappear on upgrade.
+	for _, entry := range slices.Clone(md.Barriers.Entries) {
+		if !entry.Exact || entry.Namespace != "" {
+			continue
+		}
+		u, _ := url.Parse(entry.CanonicalPrefix)
+		if u.RawQuery == "" && !u.ForceQuery {
+			continue
+		}
+		u.RawQuery, u.ForceQuery = "", false
+		mapped := object.PrefixBarrier{CanonicalPrefix: u.String(), Exact: true, Namespace: namespace, HardEpoch: entry.HardEpoch, SoftEpoch: entry.SoftEpoch}
+		index := slices.IndexFunc(md.Barriers.Entries, func(candidate object.PrefixBarrier) bool {
+			return barrierIdentity(candidate) == barrierIdentity(mapped)
+		})
+		if index < 0 {
+			if len(md.Barriers.Entries) >= r.barrierLimit {
+				return ErrBarrierLimit
+			}
+			md.Barriers.Entries = append(md.Barriers.Entries, mapped)
+		} else {
+			md.Barriers.Entries[index].HardEpoch = max(md.Barriers.Entries[index].HardEpoch, mapped.HardEpoch)
+			md.Barriers.Entries[index].SoftEpoch = max(md.Barriers.Entries[index].SoftEpoch, mapped.SoftEpoch)
+		}
+	}
+	md.Barriers.Revision++
+	if barrierBytes(md.Barriers) > maxBarrierBytes {
+		return ErrBarrierLimit
+	}
+	return r.storeControl(ctx, md)
 }
 
 // Invalidate persists even for a cold resource. Hard invalidation cuts logical
@@ -228,7 +314,7 @@ func (r *IndexRepository) Invalidate(ctx context.Context, key object.ResourceKey
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	return r.storeControl(ctx, root)
+	return r.storeControlSync(ctx, root)
 }
 
 // rootForFill runs with barrier read lock and resource lock. It never reads a

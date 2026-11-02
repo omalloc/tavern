@@ -162,6 +162,9 @@ func (w *representationWriter) flushLocked() error {
 	if err != nil {
 		return err
 	}
+	// VFS writers may mutate their input (including under race invariants).
+	// Hash the confirmed origin bytes before handing the buffer to storage.
+	w.md.Representation.RecordChunkDigest(index, w.buffer)
 	n, writeErr := writer.Write(w.buffer)
 	closeErr := writer.Close()
 	if writeErr != nil {

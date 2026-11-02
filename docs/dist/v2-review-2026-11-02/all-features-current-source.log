@@ -1,0 +1,353 @@
+=== RUN   TestCacheMethodAllowGETorHEAD
+=== RUN   TestCacheMethodAllowGETorHEAD/test_cache_method_allow_GET
+=== RUN   TestCacheMethodAllowGETorHEAD/test_cache_method_allow_GET_be_hit
+    cache_method_test.go:48: 
+        	Error Trace:	/Users/sendya/workspace/github.com/omalloc/tavern/tests/all-features/cache_method/cache_method_test.go:48
+        	Error:      	Not equal: 
+        	            	expected: 1048576
+        	            	actual  : 0
+        	Test:       	TestCacheMethodAllowGETorHEAD/test_cache_method_allow_GET_be_hit
+        	Messages:   	size should be file size
+    cache_method_test.go:50: 
+        	Error Trace:	/Users/sendya/workspace/github.com/omalloc/tavern/tests/all-features/cache_method/cache_method_test.go:50
+        	Error:      	Not equal: 
+        	            	expected: 200
+        	            	actual  : 502
+        	Test:       	TestCacheMethodAllowGETorHEAD/test_cache_method_allow_GET_be_hit
+        	Messages:   	response should be code 200
+    cache_method_test.go:52: 
+        	Error Trace:	/Users/sendya/workspace/github.com/omalloc/tavern/tests/all-features/cache_method/cache_method_test.go:52
+        	Error:      	Not equal: 
+        	            	expected: "9cdafb56cf9dccc1afdb8db9e5687fa9"
+        	            	actual  : ""
+        	            	
+        	            	Diff:
+        	            	--- Expected
+        	            	+++ Actual
+        	            	@@ -1 +1 @@
+        	            	-9cdafb56cf9dccc1afdb8db9e5687fa9
+        	            	+
+        	Test:       	TestCacheMethodAllowGETorHEAD/test_cache_method_allow_GET_be_hit
+        	Messages:   	etag should be equal
+    cache_method_test.go:54: 
+        	Error Trace:	/Users/sendya/workspace/github.com/omalloc/tavern/tests/all-features/cache_method/cache_method_test.go:54
+        	Error:      	"BYPASS from steins warm (tavern/4.0)" does not contain "HIT"
+        	Test:       	TestCacheMethodAllowGETorHEAD/test_cache_method_allow_GET_be_hit
+        	Messages:   	cache should be HIT
+=== RUN   TestCacheMethodAllowGETorHEAD/test_cache_method_allow_HEAD
+    cache_method_test.go:75: 
+        	Error Trace:	/Users/sendya/workspace/github.com/omalloc/tavern/tests/all-features/cache_method/cache_method_test.go:75
+        	Error:      	"BYPASS from steins warm (tavern/4.0)" does not contain "HIT"
+        	Test:       	TestCacheMethodAllowGETorHEAD/test_cache_method_allow_HEAD
+        	Messages:   	cache should be HIT
+=== RUN   TestCacheMethodAllowGETorHEAD/PURGE
+--- FAIL: TestCacheMethodAllowGETorHEAD (3.06s)
+    --- PASS: TestCacheMethodAllowGETorHEAD/test_cache_method_allow_GET (1.83s)
+    --- FAIL: TestCacheMethodAllowGETorHEAD/test_cache_method_allow_GET_be_hit (0.41s)
+    --- FAIL: TestCacheMethodAllowGETorHEAD/test_cache_method_allow_HEAD (0.41s)
+    --- PASS: TestCacheMethodAllowGETorHEAD/PURGE (0.41s)
+FAIL
+FAIL	github.com/omalloc/tavern/tests/all-features/cache_method	3.419s
+=== RUN   TestRevalidateDoubleSkip
+=== RUN   TestRevalidateDoubleSkip/test_Revalidate_normal_old-file
+    revalidate_doube_skip_test.go:30: resp size=5242880
+    revalidate_doube_skip_test.go:31: file path=/var/folders/0q/fdkb8kf95nd6yc7xgk1fgvhc0000gn/T/TestRevalidateDoubleSkip3208185654/001/file-5242880.bin
+=== RUN   TestRevalidateDoubleSkip/test_Revalidate_skip_old-file
+    revalidate_doube_skip_test.go:73: New Request Range=bytes=4341324-4417533
+    revalidate_doube_skip_test.go:52: header key=User-Agent, value=[Go-http-client/1.1]
+    revalidate_doube_skip_test.go:52: header key=I-X-Ups-Addr, value=[127.0.0.1:50902]
+    revalidate_doube_skip_test.go:52: header key=Range, value=[bytes=4341324-4417533]
+    revalidate_doube_skip_test.go:52: header key=X-Store-Url, value=[http://sendya.me.gslb.com/cases/revalidate-skip/file1.apk]
+    revalidate_doube_skip_test.go:52: header key=X-Test-Case, value=[/cases/revalidate-skip/file1.apk]
+    revalidate_doube_skip_test.go:55: If-None-Match=
+    revalidate_doube_skip_test.go:76: resp size=0
+    revalidate_doube_skip_test.go:77: file offset=4341324, end=4417533
+    revalidate_doube_skip_test.go:78: file path=/var/folders/0q/fdkb8kf95nd6yc7xgk1fgvhc0000gn/T/TestRevalidateDoubleSkip3208185654/001/file-5242880.bin
+    revalidate_doube_skip_test.go:85: 
+        	Error Trace:	/Users/sendya/workspace/github.com/omalloc/tavern/tests/all-features/caching/revalidate_doube_skip_test.go:85
+        	Error:      	Not equal: 
+        	            	expected: 206
+        	            	actual  : 500
+        	Test:       	TestRevalidateDoubleSkip/test_Revalidate_skip_old-file
+        	Messages:   	response should be code 206
+    revalidate_doube_skip_test.go:87: 
+        	Error Trace:	/Users/sendya/workspace/github.com/omalloc/tavern/tests/all-features/caching/revalidate_doube_skip_test.go:87
+        	Error:      	Not equal: 
+        	            	expected: "bytes 4341324-4417533/5242880"
+        	            	actual  : ""
+        	            	
+        	            	Diff:
+        	            	--- Expected
+        	            	+++ Actual
+        	            	@@ -1 +1 @@
+        	            	-bytes 4341324-4417533/5242880
+        	            	+
+        	Test:       	TestRevalidateDoubleSkip/test_Revalidate_skip_old-file
+        	Messages:   	response should be Content-Range
+    revalidate_doube_skip_test.go:91: 
+        	Error Trace:	/Users/sendya/workspace/github.com/omalloc/tavern/tests/all-features/caching/revalidate_doube_skip_test.go:91
+        	Error:      	Not equal: 
+        	            	expected: "372368fc51623a0e03f4bab1bd205d38"
+        	            	actual  : ""
+        	            	
+        	            	Diff:
+        	            	--- Expected
+        	            	+++ Actual
+        	            	@@ -1 +1 @@
+        	            	-372368fc51623a0e03f4bab1bd205d38
+        	            	+
+        	Test:       	TestRevalidateDoubleSkip/test_Revalidate_skip_old-file
+        	Messages:   	response should be ETag
+    revalidate_doube_skip_test.go:93: 
+        	Error Trace:	/Users/sendya/workspace/github.com/omalloc/tavern/tests/all-features/caching/revalidate_doube_skip_test.go:93
+        	Error:      	Not equal: 
+        	            	expected: "d41d8cd98f00b204e9800998ecf8427e"
+        	            	actual  : "d1d764c9f29f633a38d27fd7ab3b843c"
+        	            	
+        	            	Diff:
+        	            	--- Expected
+        	            	+++ Actual
+        	            	@@ -1 +1 @@
+        	            	-d41d8cd98f00b204e9800998ecf8427e
+        	            	+d1d764c9f29f633a38d27fd7ab3b843c
+        	Test:       	TestRevalidateDoubleSkip/test_Revalidate_skip_old-file
+        	Messages:   	response body should be equal to file MD5
+=== RUN   TestRevalidateDoubleSkip/PURGE
+--- FAIL: TestRevalidateDoubleSkip (2.27s)
+    --- PASS: TestRevalidateDoubleSkip/test_Revalidate_normal_old-file (0.44s)
+    --- FAIL: TestRevalidateDoubleSkip/test_Revalidate_skip_old-file (1.41s)
+    --- PASS: TestRevalidateDoubleSkip/PURGE (0.41s)
+FAIL
+FAIL	github.com/omalloc/tavern/tests/all-features/caching	2.633s
+testing: warning: no tests to run
+PASS
+ok  	github.com/omalloc/tavern/tests/all-features/chunked	0.158s [no tests to run]
+=== RUN   TestErrCodeCache
+=== RUN   TestErrCodeCache/test_errcode_cache_now
+=== RUN   TestErrCodeCache/test_errcode_cache_hit
+    errcode_test.go:103: 
+        	Error Trace:	/Users/sendya/workspace/github.com/omalloc/tavern/tests/all-features/errcode/errcode_test.go:103
+        	Error:      	"BYPASS from steins warm (tavern/4.0)" does not contain "HIT"
+        	Test:       	TestErrCodeCache/test_errcode_cache_hit
+        	Messages:   	cache should be MISS
+=== RUN   TestErrCodeCache/PURGE
+--- FAIL: TestErrCodeCache (1.21s)
+    --- PASS: TestErrCodeCache/test_errcode_cache_now (0.40s)
+    --- FAIL: TestErrCodeCache/test_errcode_cache_hit (0.40s)
+    --- PASS: TestErrCodeCache/PURGE (0.40s)
+FAIL
+FAIL	github.com/omalloc/tavern/tests/all-features/errcode	1.573s
+=== RUN   TestContentLenShorter
+=== RUN   TestContentLenShorter/test_content-length_shorter_old_file
+=== RUN   TestContentLenShorter/test_content-length_shorter_new_file
+=== RUN   TestContentLenShorter/test_content-length_shorter_whole_file
+    contentlength_test.go:190: 
+        	Error Trace:	/Users/sendya/workspace/github.com/omalloc/tavern/tests/all-features/filechanged/contentlength_test.go:190
+        	Error:      	Not equal: 
+        	            	expected: "new-file"
+        	            	actual  : ""
+        	            	
+        	            	Diff:
+        	            	--- Expected
+        	            	+++ Actual
+        	            	@@ -1 +1 @@
+        	            	-new-file
+        	            	+
+        	Test:       	TestContentLenShorter/test_content-length_shorter_whole_file
+        	Messages:   	response should be X-Case new-file
+    contentlength_test.go:192: 
+        	Error Trace:	/Users/sendya/workspace/github.com/omalloc/tavern/tests/all-features/filechanged/contentlength_test.go:192
+        	Error:      	"MISS from steins warm (tavern/4.0)" does not contain "HIT"
+        	Test:       	TestContentLenShorter/test_content-length_shorter_whole_file
+        	Messages:   	complete replacement should now be cached
+=== RUN   TestContentLenShorter/PURGE
+--- FAIL: TestContentLenShorter (1.74s)
+    --- PASS: TestContentLenShorter/test_content-length_shorter_old_file (0.41s)
+    --- PASS: TestContentLenShorter/test_content-length_shorter_new_file (0.51s)
+    --- FAIL: TestContentLenShorter/test_content-length_shorter_whole_file (0.41s)
+    --- PASS: TestContentLenShorter/PURGE (0.40s)
+FAIL
+FAIL	github.com/omalloc/tavern/tests/all-features/filechanged	2.095s
+=== RUN   TestRangeOffset
+=== RUN   TestRangeOffset/test_range_offset_bytes=0-524287_MISS
+=== RUN   TestRangeOffset/test_range_offset_bytes=0-524287_HIT
+    range_normal_test.go:59: 
+        	Error Trace:	/Users/sendya/workspace/github.com/omalloc/tavern/tests/all-features/range/range_normal_test.go:59
+        	Error:      	Not equal: 
+        	            	expected: 206
+        	            	actual  : 502
+        	Test:       	TestRangeOffset/test_range_offset_bytes=0-524287_HIT
+        	Messages:   	response should be code 206
+    range_normal_test.go:61: 
+        	Error Trace:	/Users/sendya/workspace/github.com/omalloc/tavern/tests/all-features/range/range_normal_test.go:61
+        	Error:      	"BYPASS from steins warm (tavern/4.0)" does not contain "HIT"
+        	Test:       	TestRangeOffset/test_range_offset_bytes=0-524287_HIT
+        	Messages:   	cache should be HIT
+    range_normal_test.go:63: 
+        	Error Trace:	/Users/sendya/workspace/github.com/omalloc/tavern/tests/all-features/range/range_normal_test.go:63
+        	Error:      	Not equal: 
+        	            	expected: 524288
+        	            	actual  : 0
+        	Test:       	TestRangeOffset/test_range_offset_bytes=0-524287_HIT
+        	Messages:   	size should be 524288
+=== RUN   TestRangeOffset/test_range_offset_bytes=524288-1048575_PART_MISS
+    range_normal_test.go:80: 
+        	Error Trace:	/Users/sendya/workspace/github.com/omalloc/tavern/tests/all-features/range/range_normal_test.go:80
+        	Error:      	"MISS from steins warm (tavern/4.0)" does not contain "PART_MISS"
+        	Test:       	TestRangeOffset/test_range_offset_bytes=524288-1048575_PART_MISS
+        	Messages:   	cache should be PART_MISS
+=== RUN   TestRangeOffset/test_range_offset_bytes=524288-1572863_PART_HIT
+    range_normal_test.go:100: 
+        	Error Trace:	/Users/sendya/workspace/github.com/omalloc/tavern/tests/all-features/range/range_normal_test.go:100
+        	Error:      	"MISS from steins warm (tavern/4.0)" does not contain "PART_HIT"
+        	Test:       	TestRangeOffset/test_range_offset_bytes=524288-1572863_PART_HIT
+        	Messages:   	cache should be PART_HIT
+=== RUN   TestRangeOffset/PURGE
+--- FAIL: TestRangeOffset (2.05s)
+    --- PASS: TestRangeOffset/test_range_offset_bytes=0-524287_MISS (0.41s)
+    --- FAIL: TestRangeOffset/test_range_offset_bytes=0-524287_HIT (0.40s)
+    --- FAIL: TestRangeOffset/test_range_offset_bytes=524288-1048575_PART_MISS (0.41s)
+    --- FAIL: TestRangeOffset/test_range_offset_bytes=524288-1572863_PART_HIT (0.42s)
+    --- PASS: TestRangeOffset/PURGE (0.40s)
+=== RUN   TestRangeExpiredRefresh
+=== RUN   TestRangeExpiredRefresh/test_range_full-cache_fill
+=== RUN   TestRangeExpiredRefresh/test_range_full-cache_HIT
+    range_normal_test.go:203: 
+        	Error Trace:	/Users/sendya/workspace/github.com/omalloc/tavern/tests/all-features/range/range_normal_test.go:203
+        	Error:      	"BYPASS from steins warm (tavern/4.0)" does not contain "HIT"
+        	Test:       	TestRangeExpiredRefresh/test_range_full-cache_HIT
+    range_normal_test.go:205: 
+        	Error Trace:	/Users/sendya/workspace/github.com/omalloc/tavern/tests/all-features/range/range_normal_test.go:205
+        	Error:      	Not equal: 
+        	            	expected: 524288
+        	            	actual  : 0
+        	Test:       	TestRangeExpiredRefresh/test_range_full-cache_HIT
+        	Messages:   	size should be file size
+    range_normal_test.go:207: 
+        	Error Trace:	/Users/sendya/workspace/github.com/omalloc/tavern/tests/all-features/range/range_normal_test.go:207
+        	Error:      	Not equal: 
+        	            	expected: "d41d8cd98f00b204e9800998ecf8427e"
+        	            	actual  : "8c92ff17ce3f40e3e0de9dc7144e969a"
+        	            	
+        	            	Diff:
+        	            	--- Expected
+        	            	+++ Actual
+        	            	@@ -1 +1 @@
+        	            	-d41d8cd98f00b204e9800998ecf8427e
+        	            	+8c92ff17ce3f40e3e0de9dc7144e969a
+        	Test:       	TestRangeExpiredRefresh/test_range_full-cache_HIT
+        	Messages:   	HASH should be equal
+=== RUN   TestRangeExpiredRefresh/test_range_full-cache_REFRESH_HIT_200
+    range_normal_test.go:215: 
+        	Error Trace:	/Users/sendya/workspace/github.com/omalloc/tavern/tests/all-features/range/range_normal_test.go:215
+        	            				/Users/sendya/workspace/github.com/omalloc/tavern/pkg/e2e/e2e_hander.go:45
+        	            				/opt/homebrew/Cellar/go/1.27.3/libexec/src/net/http/server.go:2358
+        	            				/opt/homebrew/Cellar/go/1.27.3/libexec/src/net/http/server.go:3436
+        	            				/opt/homebrew/Cellar/go/1.27.3/libexec/src/net/http/server.go:2157
+        	            				/opt/homebrew/Cellar/go/1.27.3/libexec/src/runtime/asm_arm64.s:1039
+        	Error:      	Not equal: 
+        	            	expected: ""
+        	            	actual  : "2929676d68766ee74a8ebb9b70656aa5"
+        	            	
+        	            	Diff:
+        	            	--- Expected
+        	            	+++ Actual
+        	            	@@ -1 +1 @@
+        	            	-
+        	            	+2929676d68766ee74a8ebb9b70656aa5
+        	Test:       	TestRangeExpiredRefresh/test_range_full-cache_REFRESH_HIT_200
+    range_normal_test.go:243: 
+        	Error Trace:	/Users/sendya/workspace/github.com/omalloc/tavern/tests/all-features/range/range_normal_test.go:243
+        	Error:      	"BYPASS from steins warm (tavern/4.0)" does not contain "REVALIDATE_HIT"
+        	Test:       	TestRangeExpiredRefresh/test_range_full-cache_REFRESH_HIT_200
+    range_normal_test.go:245: 
+        	Error Trace:	/Users/sendya/workspace/github.com/omalloc/tavern/tests/all-features/range/range_normal_test.go:245
+        	Error:      	Not equal: 
+        	            	expected: 524288
+        	            	actual  : 0
+        	Test:       	TestRangeExpiredRefresh/test_range_full-cache_REFRESH_HIT_200
+        	Messages:   	size should be file size
+    range_normal_test.go:247: 
+        	Error Trace:	/Users/sendya/workspace/github.com/omalloc/tavern/tests/all-features/range/range_normal_test.go:247
+        	Error:      	Not equal: 
+        	            	expected: "d41d8cd98f00b204e9800998ecf8427e"
+        	            	actual  : "8c92ff17ce3f40e3e0de9dc7144e969a"
+        	            	
+        	            	Diff:
+        	            	--- Expected
+        	            	+++ Actual
+        	            	@@ -1 +1 @@
+        	            	-d41d8cd98f00b204e9800998ecf8427e
+        	            	+8c92ff17ce3f40e3e0de9dc7144e969a
+        	Test:       	TestRangeExpiredRefresh/test_range_full-cache_REFRESH_HIT_200
+        	Messages:   	HASH should be equal
+=== RUN   TestRangeExpiredRefresh/test_range_full-cache_changed_REFRESH_MISS
+    range_normal_test.go:283: 
+        	Error Trace:	/Users/sendya/workspace/github.com/omalloc/tavern/tests/all-features/range/range_normal_test.go:283
+        	Error:      	"MISS from steins warm (tavern/4.0)" does not contain "REVALIDATE_MISS"
+        	Test:       	TestRangeExpiredRefresh/test_range_full-cache_changed_REFRESH_MISS
+=== RUN   TestRangeExpiredRefresh/PURGE
+--- FAIL: TestRangeExpiredRefresh (6.55s)
+    --- PASS: TestRangeExpiredRefresh/test_range_full-cache_fill (0.86s)
+    --- FAIL: TestRangeExpiredRefresh/test_range_full-cache_HIT (0.41s)
+    --- FAIL: TestRangeExpiredRefresh/test_range_full-cache_REFRESH_HIT_200 (2.41s)
+    --- FAIL: TestRangeExpiredRefresh/test_range_full-cache_changed_REFRESH_MISS (2.44s)
+    --- PASS: TestRangeExpiredRefresh/PURGE (0.40s)
+=== RUN   TestSuffixRangeHitUsesCachedObjectSize
+=== RUN   TestSuffixRangeHitUsesCachedObjectSize/warm_full_object
+=== RUN   TestSuffixRangeHitUsesCachedObjectSize/suffix_range_HIT
+    range_suffix_test.go:106: 
+        	Error Trace:	/Users/sendya/workspace/github.com/omalloc/tavern/tests/all-features/range/range_suffix_test.go:106
+        	Error:      	Not equal: 
+        	            	expected: 206
+        	            	actual  : 502
+        	Test:       	TestSuffixRangeHitUsesCachedObjectSize/suffix_range_HIT
+        	Messages:   	response should be code 206
+    range_suffix_test.go:107: 
+        	Error Trace:	/Users/sendya/workspace/github.com/omalloc/tavern/tests/all-features/range/range_suffix_test.go:107
+        	Error:      	"BYPASS from steins warm (tavern/4.0)" does not contain "HIT"
+        	Test:       	TestSuffixRangeHitUsesCachedObjectSize/suffix_range_HIT
+        	Messages:   	cache should be HIT
+    range_suffix_test.go:108: 
+        	Error Trace:	/Users/sendya/workspace/github.com/omalloc/tavern/tests/all-features/range/range_suffix_test.go:108
+        	Error:      	Not equal: 
+        	            	expected: "bytes 2096640-2097151/2097152"
+        	            	actual  : ""
+        	            	
+        	            	Diff:
+        	            	--- Expected
+        	            	+++ Actual
+        	            	@@ -1 +1 @@
+        	            	-bytes 2096640-2097151/2097152
+        	            	+
+        	Test:       	TestSuffixRangeHitUsesCachedObjectSize/suffix_range_HIT
+        	Messages:   	response should be Content-Range
+    range_suffix_test.go:109: 
+        	Error Trace:	/Users/sendya/workspace/github.com/omalloc/tavern/tests/all-features/range/range_suffix_test.go:109
+        	Error:      	Not equal: 
+        	            	expected: 512
+        	            	actual  : 0
+        	Test:       	TestSuffixRangeHitUsesCachedObjectSize/suffix_range_HIT
+        	Messages:   	size should be suffix length
+    range_suffix_test.go:110: 
+        	Error Trace:	/Users/sendya/workspace/github.com/omalloc/tavern/tests/all-features/range/range_suffix_test.go:110
+        	Error:      	Not equal: 
+        	            	expected: "ddda16a0269c3658580b76299ef72b28"
+        	            	actual  : "d41d8cd98f00b204e9800998ecf8427e"
+        	            	
+        	            	Diff:
+        	            	--- Expected
+        	            	+++ Actual
+        	            	@@ -1 +1 @@
+        	            	-ddda16a0269c3658580b76299ef72b28
+        	            	+d41d8cd98f00b204e9800998ecf8427e
+        	Test:       	TestSuffixRangeHitUsesCachedObjectSize/suffix_range_HIT
+        	Messages:   	response body should be suffix bytes
+=== RUN   TestSuffixRangeHitUsesCachedObjectSize/PURGE
+--- FAIL: TestSuffixRangeHitUsesCachedObjectSize (1.23s)
+    --- PASS: TestSuffixRangeHitUsesCachedObjectSize/warm_full_object (0.41s)
+    --- FAIL: TestSuffixRangeHitUsesCachedObjectSize/suffix_range_HIT (0.40s)
+    --- PASS: TestSuffixRangeHitUsesCachedObjectSize/PURGE (0.41s)
+FAIL
+FAIL	github.com/omalloc/tavern/tests/all-features/range	10.183s
+FAIL

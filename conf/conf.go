@@ -84,7 +84,9 @@ type Storage struct {
 }
 
 // RepresentationStorage retains control ownership even when caching reads are
-// disabled. Removing this binding while persisted v2 controls exist is rejected.
+// disabled. Pure memory buckets use process-local controls; disk buckets default
+// StateDirectory to a .tavern-v2 directory beneath a bucket root. Removing the
+// binding with persisted v2 controls is rejected.
 type RepresentationStorage struct {
 	LegacyVaryGCBudget  int           `json:"legacy_vary_gc_budget" yaml:"legacy_vary_gc_budget"`
 	LegacyVaryGCFileOps int           `json:"legacy_vary_gc_file_ops" yaml:"legacy_vary_gc_file_ops"`

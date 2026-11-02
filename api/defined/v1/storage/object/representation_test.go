@@ -58,8 +58,9 @@ func TestResourceRecordCodec(t *testing.T) {
 	partial.Representation.State = RepresentationFilling
 	barriers := &Metadata{ID: BarrierCatalogID(), RecordKind: RecordBarriers, Barriers: &BarrierCatalog{
 		SchemaVersion: RepresentationSchemaVersion, Incarnation: "catalog", Revision: 3,
+		QuerylessNamespaces: []string{"queryless"},
 		Entries: []PrefixBarrier{{CanonicalPrefix: "https://example.com/img/", HardEpoch: 2, SoftEpoch: 3},
-			{CanonicalPrefix: "https://example.com/img/a?x=1", Exact: true, HardEpoch: 3}},
+			{CanonicalPrefix: "https://example.com/img/a", Namespace: "queryless", Exact: true, HardEpoch: 3}},
 	}}
 	root.Resource.BarrierIncarnation = "catalog"
 	root.Resource.PrefixHardEpoch, root.Resource.PrefixSoftEpoch = 2, 3

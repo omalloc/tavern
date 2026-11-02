@@ -224,6 +224,12 @@ func TestPublicResponseSharingConfiguration(t *testing.T) {
 }
 
 func TestPublicResponseSharingColdGetUsesOneOrigin(t *testing.T) {
+	for _, driver := range []string{"native", "memory"} {
+		t.Run(driver, func(t *testing.T) { testPublicResponseSharingColdGet(t, driver) })
+	}
+}
+
+func testPublicResponseSharingColdGet(t *testing.T, driver string) {
 	var calls atomic.Int32
 	release := make(chan struct{})
 	var once sync.Once
@@ -234,7 +240,7 @@ func TestPublicResponseSharingColdGetUsesOneOrigin(t *testing.T) {
 		<-release
 		originImage(w, "verified source bytes", "Accept", `"origin"`)
 	})
-	store, err := storage.New(&conf.Storage{Driver: "native", DBType: "pebble", DBPath: ".index", SelectionPolicy: "hashring", Representation: &conf.RepresentationStorage{StateDirectory: t.TempDir()}, Buckets: []*conf.Bucket{{Path: t.TempDir(), MaxObjectLimit: 100}}}, log.GetLogger())
+	store, err := storage.New(&conf.Storage{Driver: "native", DBType: "pebble", DBPath: ".index", SelectionPolicy: "hashring", Representation: &conf.RepresentationStorage{StateDirectory: t.TempDir()}, Buckets: []*conf.Bucket{{Path: t.TempDir(), Driver: driver, MaxObjectLimit: 100}}}, log.GetLogger())
 	if err != nil {
 		t.Fatal(err)
 	}

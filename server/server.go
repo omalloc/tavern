@@ -2,7 +2,6 @@ package server
 
 import (
 	"context"
-	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -440,10 +439,6 @@ func (s *HTTPServer) buildMiddlewareChain(tripper http.RoundTripper) (http.Round
 func (s *HTTPServer) globalOptions(src map[string]any) map[string]any {
 
 	src["slice_size"] = s.config.Storage.SliceSize
-	if s.config.Upstream != nil {
-		encoded, _ := json.Marshal(s.config.Upstream)
-		src["representation_isolation_scope"] = fmt.Sprintf("%x", sha256.Sum256(encoded))
-	}
 	if s.config.Hostname != "" {
 		src["hostname"] = s.config.Hostname
 	}

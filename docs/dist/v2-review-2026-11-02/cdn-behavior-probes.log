@@ -1,0 +1,78 @@
+=== RUN   TestRepresentationFillCancellationClosesOriginAndReleasesBudget
+DEBUG msg=creating indexdb pebble in path memory
+INFO msg=middleware.caching init slice_size 64
+DEBUG msg=representation response admission resource_id=55acee8f359e5e413c40c1c8732639af2692e6a2e07bfccca029d8eb883affae result=admitted reason=eligible vary_fields=[accept]
+DEBUG msg=representation response admission resource_id=55acee8f359e5e413c40c1c8732639af2692e6a2e07bfccca029d8eb883affae result=admitted reason=eligible vary_fields=[accept]
+--- PASS: TestRepresentationFillCancellationClosesOriginAndReleasesBudget (0.01s)
+=== RUN   TestCDNAuditRangeMissingChunkFetchesWholeObject
+DEBUG msg=creating indexdb pebble in path memory
+INFO msg=middleware.caching init slice_size 64
+DEBUG msg=representation response admission resource_id=cb9f419fee4a77ed59f71e95aca52868a0522715f82a4ea380ee611f9370e26d result=admitted reason=eligible vary_fields=[]
+DEBUG msg=representation response admission resource_id=cb9f419fee4a77ed59f71e95aca52868a0522715f82a4ea380ee611f9370e26d result=admitted reason=eligible vary_fields=[]
+    representation_origin_test.go:771: origin ranges="bytes=0-63",""; second client status=206 bytes=64; calls=2
+--- PASS: TestCDNAuditRangeMissingChunkFetchesWholeObject (0.00s)
+=== RUN   TestCDNAuditSmallRangesNeverWarm
+DEBUG msg=creating indexdb pebble in path memory
+INFO msg=middleware.caching init slice_size 64
+DEBUG msg=representation response admission resource_id=14964bf65b557e2eaf866b83c635a7c555c11925609dbef50b53c119d2fd8e8f result=admitted reason=eligible vary_fields=[]
+DEBUG msg=representation response admission resource_id=14964bf65b557e2eaf866b83c635a7c555c11925609dbef50b53c119d2fd8e8f result=admitted reason=eligible vary_fields=[]
+    representation_origin_test.go:785: fill_range_percent=100; repeat bytes=10-19: origin calls=2 published representations=0
+--- PASS: TestCDNAuditSmallRangesNeverWarm (0.00s)
+=== RUN   TestCDNAuditPrefetchBypassesProcessor
+DEBUG msg=creating indexdb pebble in path memory
+INFO msg=middleware.caching init slice_size 64
+DEBUG msg=representation response admission resource_id=faf9d019cf66417a576e6293c0dfab97d447faa06071403b90427ee4d525d58e result=admitted reason=eligible vary_fields=[]
+    representation_origin_test.go:801: prefetch origin request="bytes=0-63|X-Prefetch=1"; variants=1 complete=false
+--- PASS: TestCDNAuditPrefetchBypassesProcessor (0.00s)
+=== RUN   TestCDNAuditFreshConditionalRequestStillHitsOrigin
+DEBUG msg=creating indexdb pebble in path memory
+INFO msg=middleware.caching init slice_size 64
+DEBUG msg=representation response admission resource_id=100faad476ef9cca4b3f271bedbf0a00df2d742197ecf5c07a06b7cb4a31deac result=admitted reason=eligible vary_fields=[]
+    representation_origin_test.go:814: fresh cached object + matching If-None-Match: status=304 cache=BYPASS from test vary-test (tavern/4.0) origin calls=2
+--- PASS: TestCDNAuditFreshConditionalRequestStillHitsOrigin (0.00s)
+=== RUN   TestCDNAuditNoCacheRequestNeitherValidatesNorUpdates
+DEBUG msg=creating indexdb pebble in path memory
+INFO msg=middleware.caching init slice_size 64
+DEBUG msg=representation response admission resource_id=05e44c0aad6fc087697953481429a3a4163eecbbeceab0d2030b17d886e8bb8e result=admitted reason=eligible vary_fields=[]
+DEBUG msg=lazilyRespond GET http://127.0.0.1:49695/image#tavern-v2/representation/228102cf748003aebbc5dfdf8ebf5b811ace02f661fa59ec0912d93dba40145a start 0 end 2
+DEBUG msg=loading chunk slice from path: /0/6c/086cdb1fe0940a5a5334012ef0420e3f2a3a4af5-000000 buf-range: 0-63
+    representation_origin_test.go:830: no-cache origin condition="" response="new"; next ordinary response="old"
+--- PASS: TestCDNAuditNoCacheRequestNeitherValidatesNorUpdates (0.00s)
+=== RUN   TestCDNAuditNoCacheResponseNeverStoredForValidation
+DEBUG msg=creating indexdb pebble in path memory
+INFO msg=middleware.caching init slice_size 64
+DEBUG msg=representation response admission resource_id=dffd749dd71bd23d3af1000521f7af289d309f7f2029257f405dc7a1de3776fc result=bypass reason=policy vary_fields=[]
+DEBUG msg=representation response admission resource_id=dffd749dd71bd23d3af1000521f7af289d309f7f2029257f405dc7a1de3776fc result=bypass reason=policy vary_fields=[]
+    representation_origin_test.go:843: response no-cache + ETag: origin calls=2 stored representations=0
+--- PASS: TestCDNAuditNoCacheResponseNeverStoredForValidation (0.00s)
+PASS
+ok  	github.com/omalloc/tavern/server/middleware/caching	0.511s
+=== RUN   TestCDNAuditExactPurgeCapacityCannotCompact
+DEBUG msg=creating indexdb pebble in path memory
+    index_test.go:466: catalog capacity=2, distinct PURGEs=3: compact removed=0 error=representation invalidation budget exhausted
+--- PASS: TestCDNAuditExactPurgeCapacityCannotCompact (0.01s)
+=== RUN   TestManagerStableTopologyAndNoFallback
+DEBUG msg=creating indexdb pebble in path /var/folders/0q/fdkb8kf95nd6yc7xgk1fgvhc0000gn/T/TestManagerStableTopologyAndNoFallback3392860633/001/.index
+DEBUG msg=start evict goroutine for /var/folders/0q/fdkb8kf95nd6yc7xgk1fgvhc0000gn/T/TestManagerStableTopologyAndNoFallback3392860633/001
+INFO msg=start sync load metadata from /var/folders/0q/fdkb8kf95nd6yc7xgk1fgvhc0000gn/T/TestManagerStableTopologyAndNoFallback3392860633/001
+INFO msg=bucket /var/folders/0q/fdkb8kf95nd6yc7xgk1fgvhc0000gn/T/TestManagerStableTopologyAndNoFallback3392860633/001 sync load metadata(0/chunk-0) done. per-second 0(0)/s
+DEBUG msg=creating indexdb pebble in path /var/folders/0q/fdkb8kf95nd6yc7xgk1fgvhc0000gn/T/TestManagerStableTopologyAndNoFallback3392860633/002/.index
+DEBUG msg=start evict goroutine for /var/folders/0q/fdkb8kf95nd6yc7xgk1fgvhc0000gn/T/TestManagerStableTopologyAndNoFallback3392860633/002
+INFO msg=start sync load metadata from /var/folders/0q/fdkb8kf95nd6yc7xgk1fgvhc0000gn/T/TestManagerStableTopologyAndNoFallback3392860633/002
+INFO msg=bucket /var/folders/0q/fdkb8kf95nd6yc7xgk1fgvhc0000gn/T/TestManagerStableTopologyAndNoFallback3392860633/002 sync load metadata(0/chunk-0) done. per-second 0(0)/s
+DEBUG msg=creating indexdb pebble in path /var/folders/0q/fdkb8kf95nd6yc7xgk1fgvhc0000gn/T/TestManagerStableTopologyAndNoFallback3392860633/004/.index
+DEBUG msg=start evict goroutine for /var/folders/0q/fdkb8kf95nd6yc7xgk1fgvhc0000gn/T/TestManagerStableTopologyAndNoFallback3392860633/004
+INFO msg=start sync load metadata from /var/folders/0q/fdkb8kf95nd6yc7xgk1fgvhc0000gn/T/TestManagerStableTopologyAndNoFallback3392860633/004
+INFO msg=bucket /var/folders/0q/fdkb8kf95nd6yc7xgk1fgvhc0000gn/T/TestManagerStableTopologyAndNoFallback3392860633/004 sync load metadata(0/chunk-0) done. per-second 0(0)/s
+--- PASS: TestManagerStableTopologyAndNoFallback (0.26s)
+PASS
+ok  	github.com/omalloc/tavern/storage/representation	0.727s
+=== RUN   TestMemoryRepresentationRejectsMixedStorage
+DEBUG msg=creating indexdb pebble in path memory
+DEBUG msg=creating indexdb pebble in path /var/folders/0q/fdkb8kf95nd6yc7xgk1fgvhc0000gn/T/TestMemoryRepresentationRejectsMixedStorage300695433/001/.index
+DEBUG msg=start evict goroutine for /var/folders/0q/fdkb8kf95nd6yc7xgk1fgvhc0000gn/T/TestMemoryRepresentationRejectsMixedStorage300695433/001
+INFO msg=start sync load metadata from /var/folders/0q/fdkb8kf95nd6yc7xgk1fgvhc0000gn/T/TestMemoryRepresentationRejectsMixedStorage300695433/001
+INFO msg=bucket /var/folders/0q/fdkb8kf95nd6yc7xgk1fgvhc0000gn/T/TestMemoryRepresentationRejectsMixedStorage300695433/001 sync load metadata(0/chunk-0) done. per-second 0(0)/s
+--- PASS: TestMemoryRepresentationRejectsMixedStorage (0.13s)
+PASS
+ok  	github.com/omalloc/tavern/storage	0.587s

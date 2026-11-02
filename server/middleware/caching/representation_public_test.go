@@ -17,12 +17,21 @@ import (
 )
 
 func TestPublicRepresentationReopenRollbackAndPurge(t *testing.T) {
+	for _, explicit := range []bool{true, false} {
+		t.Run(map[bool]string{true: "explicit-state", false: "default-state"}[explicit], func(t *testing.T) { testPublicRepresentationReopenRollbackAndPurge(t, explicit) })
+	}
+}
+
+func testPublicRepresentationReopenRollbackAndPurge(t *testing.T, explicit bool) {
 	var calls atomic.Int32
 	_, _, target := newVaryTestCache(t, func(w http.ResponseWriter, r *http.Request) {
 		calls.Add(1)
 		originImage(w, r.Header.Get("Accept"), "Accept", `"origin"`)
 	})
-	path, state := t.TempDir(), t.TempDir()
+	path, state := t.TempDir(), ""
+	if explicit {
+		state = t.TempDir()
+	}
 	config := &conf.Storage{Driver: "native", DBType: "pebble", DBPath: ".index", SelectionPolicy: "hashring", DirAware: &conf.DirAware{}, Representation: &conf.RepresentationStorage{StateDirectory: state}, Buckets: []*conf.Bucket{{Path: path, MaxObjectLimit: 100}}}
 	open := func(enabled bool) (storage.Storage, http.RoundTripper) {
 		t.Helper()
@@ -88,21 +97,52 @@ func TestPublicRepresentationReopenRollbackAndPurge(t *testing.T) {
 	}
 }
 
-func TestRepresentationPeerOverrideIsPartOfIsolation(t *testing.T) {
-	_, _, target := newVaryTestCache(t, func(http.ResponseWriter, *http.Request) {})
-	c := &Caching{opt: &cachingOption{IncludeQueryInCacheKey: true, representation: &representationLookup{namespace: "v2", isolationScope: "origin"}}}
-	a := varyRequest(t, target, nil)
-	b := a.Clone(a.Context())
-	b.Header.Set(protocol.InternalUpstreamAddr, "other-origin:80")
-	ka, err := c.representationKey(a)
+func TestRepresentationKeyUsesPublicIdentity(t *testing.T) {
+	c := &Caching{opt: &cachingOption{IncludeQueryInCacheKey: true, representation: &representationLookup{namespace: "v2", isolationScope: "cdn"}}}
+	original, err := http.NewRequest(http.MethodGet, "http://origin-a:8000/image?q=1", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	kb, err := c.representationKey(b)
+	original.Host = "cdn.example"
+	key, err := c.representationKey(original)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if ka.ResourceID() == kb.ResourceID() {
-		t.Fatal("peer override reused another origin's representation")
+	for _, tc := range []struct {
+		name   string
+		change func(*http.Request)
+		same   bool
+	}{
+		{"upstream header", func(r *http.Request) { r.Header.Set(protocol.InternalUpstreamAddr, "origin-b:8000") }, true},
+		{"dial target", func(r *http.Request) { r.URL.Host = "origin-b:8000" }, true},
+		{"public host", func(r *http.Request) { r.Host = "other.example" }, false},
+		{"path", func(r *http.Request) { r.URL.Path = "/other" }, false},
+		{"query", func(r *http.Request) { r.URL.RawQuery = "q=2" }, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			req := original.Clone(original.Context())
+			tc.change(req)
+			got, err := c.representationKey(req)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if (got.ResourceID() == key.ResourceID()) != tc.same {
+				t.Fatal("unexpected resource identity", got.CanonicalURL())
+			}
+		})
+	}
+	for _, tc := range []struct{ name, namespace, scope string }{
+		{"namespace", "other", "cdn"}, {"explicit scope", "v2", "other"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			isolated := &Caching{opt: &cachingOption{IncludeQueryInCacheKey: true, representation: &representationLookup{namespace: tc.namespace, isolationScope: tc.scope}}}
+			got, err := isolated.representationKey(original)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got.ResourceID() == key.ResourceID() {
+				t.Fatal("explicit isolation lost")
+			}
+		})
 	}
 }

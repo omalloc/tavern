@@ -12,6 +12,9 @@ import (
 var _ storage.ControlStore = (*memoryBucket)(nil)
 var _ storage.MetadataScanner = (*memoryBucket)(nil)
 var _ storage.RepresentationEviction = (*memoryBucket)(nil)
+var _ storage.VolatileRepresentationBucket = (*memoryBucket)(nil)
+
+func (m *memoryBucket) VolatileRepresentations() bool { return true }
 
 func (m *memoryBucket) SetRepresentationEvictor(handler func(context.Context, *object.Metadata) error) {
 	m.representationMu.Lock()

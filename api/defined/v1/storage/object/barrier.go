@@ -11,11 +11,13 @@ type BarrierCatalog struct {
 	TopologyFingerprint string          `json:"topology_fingerprint,omitempty" yaml:"topology_fingerprint,omitempty"`
 	Revision            uint64          `json:"revision" yaml:"revision"`
 	Entries             []PrefixBarrier `json:"entries" yaml:"entries"`
+	QuerylessNamespaces []string        `json:"queryless_namespaces,omitempty" yaml:"queryless_namespaces,omitempty"`
 }
 
 type PrefixBarrier struct {
 	CanonicalPrefix string `json:"canonical_prefix" yaml:"canonical_prefix"`
 	Exact           bool   `json:"exact,omitempty" yaml:"exact,omitempty"`
+	Namespace       string `json:"namespace,omitempty" yaml:"namespace,omitempty"`
 	HardEpoch       uint64 `json:"hard_epoch" yaml:"hard_epoch"`
 	SoftEpoch       uint64 `json:"soft_epoch" yaml:"soft_epoch"`
 }
@@ -26,6 +28,7 @@ func (b *BarrierCatalog) Clone() *BarrierCatalog {
 	}
 	out := *b
 	out.Entries = slices.Clone(b.Entries)
+	out.QuerylessNamespaces = slices.Clone(b.QuerylessNamespaces)
 	return &out
 }
 

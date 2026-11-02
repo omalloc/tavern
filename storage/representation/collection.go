@@ -2,8 +2,11 @@ package representation
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 
 	"github.com/omalloc/tavern/api/defined/v1/storage"
@@ -31,6 +34,14 @@ func (r *IndexRepository) verifyAt(ctx context.Context, location string, md *obj
 		stat, err := file.Stat()
 		if err == nil && stat.Size() != int64(min(md.BlockSize, md.Size-uint64(index)*md.BlockSize)) {
 			err = fmt.Errorf("invalid representation chunk length: %w", storage.ErrKeyNotFound)
+		}
+		if err == nil && md.Representation != nil {
+			if expected, exists := md.Representation.ChunkDigests[index]; exists {
+				digest := sha256.New()
+				if _, err = io.Copy(digest, file); err == nil && hex.EncodeToString(digest.Sum(nil)) != expected {
+					err = fmt.Errorf("invalid representation chunk digest: %w", storage.ErrKeyNotFound)
+				}
+			}
 		}
 		closeErr := file.Close()
 		if err == nil {
@@ -128,7 +139,7 @@ func (r *IndexRepository) collectCandidate(ctx context.Context, location string,
 				}
 			}
 		}
-		if r.durable {
+		if r.durable && !r.writeback {
 			// A prior synchronous write may have returned an ambiguous I/O
 			// error after becoming visible. Confirm current logical state is
 			// durable before deleting bytes that an older state could reference.

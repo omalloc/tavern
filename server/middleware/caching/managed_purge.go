@@ -23,7 +23,7 @@ func (p *managedPurger) Purge(ctx context.Context, raw string, control storage.P
 	if err != nil {
 		return storage.ErrInvalidPurge
 	}
-	plan, matched, err := p.router.Resolve(request)
+	plan, matched, err := p.router.ResolvePurge(request)
 	if err != nil {
 		return fmt.Errorf("managed purge mapping: %w", storage.ErrInvalidPurge)
 	}

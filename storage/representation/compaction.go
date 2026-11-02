@@ -84,7 +84,7 @@ func compactBarrierEntries(ctx context.Context, entries []object.PrefixBarrier, 
 		where := parsed[index]
 		result.Scanned++
 		for i, cover := range entries {
-			if i == index || cover.Exact || cover.HardEpoch < candidate.HardEpoch || cover.SoftEpoch < candidate.SoftEpoch {
+			if i == index || cover.Exact || cover.Namespace != "" && cover.Namespace != candidate.Namespace || cover.HardEpoch < candidate.HardEpoch || cover.SoftEpoch < candidate.SoftEpoch {
 				continue
 			}
 			ancestor := parsed[i]

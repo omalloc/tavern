@@ -90,6 +90,16 @@ func validParameterName(name string) bool {
 // infer aliases from file extensions or rewrite unrelated raw query bytes.
 // PURGE routing uses this same resolver; there is no second query parser.
 func (r *Router) Resolve(req *http.Request) (Plan, bool, error) {
+	return r.resolve(req, false)
+}
+
+// ResolvePurge uses the same parameter mapping without requiring a target
+// format: invalidation also accepts source URLs and directory prefixes.
+func (r *Router) ResolvePurge(req *http.Request) (Plan, bool, error) {
+	return r.resolve(req, true)
+}
+
+func (r *Router) resolve(req *http.Request, purge bool) (Plan, bool, error) {
 	for _, route := range r.routes {
 		if !strings.HasPrefix(req.URL.EscapedPath(), route.PathPrefix) {
 			continue
@@ -98,7 +108,7 @@ func (r *Router) Resolve(req *http.Request) (Plan, bool, error) {
 		if err != nil {
 			return Plan{}, true, err
 		}
-		if route.Mode == "explicit" && options.Format == "" {
+		if !purge && route.Mode == "explicit" && options.Format == "" {
 			return Plan{}, true, ErrInvalidParameter
 		}
 		source := *req.URL
@@ -116,8 +126,10 @@ func (r *Router) Resolve(req *http.Request) (Plan, bool, error) {
 		if err != nil {
 			return Plan{}, true, ErrInvalidParameter
 		}
-		if _, err = ParseAccept(ClientHeaders(req)); err != nil {
-			return Plan{}, true, err
+		if !purge {
+			if _, err = ParseAccept(ClientHeaders(req)); err != nil {
+				return Plan{}, true, err
+			}
 		}
 		return clonePlan(Plan{SourceURL: key.CanonicalURL(), FallbackToSource: route.FallbackToSource, Policy: route.Policy, Options: options, AcceptHeader: ClientHeaders(req)}), true, nil
 	}

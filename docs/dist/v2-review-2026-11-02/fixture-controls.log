@@ -1,0 +1,156 @@
+=== RUN   TestRevalidateDoubleSkip
+=== RUN   TestRevalidateDoubleSkip/test_Revalidate_normal_old-file
+    revalidate_doube_skip_test.go:31: resp size=5242880
+    revalidate_doube_skip_test.go:32: file path=/var/folders/0q/fdkb8kf95nd6yc7xgk1fgvhc0000gn/T/TestRevalidateDoubleSkip372601223/001/file-5242880.bin
+    revalidate_doube_skip_test.go:43: 
+        	Error Trace:	/Users/sendya/workspace/github.com/omalloc/tavern/tests/all-features/caching/revalidate_doube_skip_test.go:43
+        	Error:      	Not equal: 
+        	            	expected: "\"383af7e91091cc919a69d005952dc595\""
+        	            	actual  : "383af7e91091cc919a69d005952dc595"
+        	            	
+        	            	Diff:
+        	            	--- Expected
+        	            	+++ Actual
+        	            	@@ -1 +1 @@
+        	            	-"383af7e91091cc919a69d005952dc595"
+        	            	+383af7e91091cc919a69d005952dc595
+        	Test:       	TestRevalidateDoubleSkip/test_Revalidate_normal_old-file
+        	Messages:   	response should be ETag
+=== RUN   TestRevalidateDoubleSkip/test_Revalidate_skip_old-file
+    revalidate_doube_skip_test.go:74: New Request Range=bytes=4341324-4417533
+    revalidate_doube_skip_test.go:53: header key=I-X-Ups-Addr, value=[127.0.0.1:51059]
+    revalidate_doube_skip_test.go:53: header key=X-Store-Url, value=[http://sendya.me.gslb.com/cases/revalidate-skip/file1.apk]
+    revalidate_doube_skip_test.go:53: header key=X-Test-Case, value=[/cases/revalidate-skip/file1.apk]
+    revalidate_doube_skip_test.go:53: header key=User-Agent, value=[Go-http-client/1.1]
+    revalidate_doube_skip_test.go:56: If-None-Match=
+    revalidate_doube_skip_test.go:77: resp size=0
+    revalidate_doube_skip_test.go:78: file offset=4341324, end=4417533
+    revalidate_doube_skip_test.go:79: file path=/var/folders/0q/fdkb8kf95nd6yc7xgk1fgvhc0000gn/T/TestRevalidateDoubleSkip372601223/001/file-5242880.bin
+    revalidate_doube_skip_test.go:86: 
+        	Error Trace:	/Users/sendya/workspace/github.com/omalloc/tavern/tests/all-features/caching/revalidate_doube_skip_test.go:86
+        	Error:      	Not equal: 
+        	            	expected: 206
+        	            	actual  : 500
+        	Test:       	TestRevalidateDoubleSkip/test_Revalidate_skip_old-file
+        	Messages:   	response should be code 206
+    revalidate_doube_skip_test.go:88: 
+        	Error Trace:	/Users/sendya/workspace/github.com/omalloc/tavern/tests/all-features/caching/revalidate_doube_skip_test.go:88
+        	Error:      	Not equal: 
+        	            	expected: "bytes 4341324-4417533/5242880"
+        	            	actual  : ""
+        	            	
+        	            	Diff:
+        	            	--- Expected
+        	            	+++ Actual
+        	            	@@ -1 +1 @@
+        	            	-bytes 4341324-4417533/5242880
+        	            	+
+        	Test:       	TestRevalidateDoubleSkip/test_Revalidate_skip_old-file
+        	Messages:   	response should be Content-Range
+    revalidate_doube_skip_test.go:92: 
+        	Error Trace:	/Users/sendya/workspace/github.com/omalloc/tavern/tests/all-features/caching/revalidate_doube_skip_test.go:92
+        	Error:      	Not equal: 
+        	            	expected: "\"383af7e91091cc919a69d005952dc595\""
+        	            	actual  : ""
+        	            	
+        	            	Diff:
+        	            	--- Expected
+        	            	+++ Actual
+        	            	@@ -1 +1 @@
+        	            	-"383af7e91091cc919a69d005952dc595"
+        	            	+
+        	Test:       	TestRevalidateDoubleSkip/test_Revalidate_skip_old-file
+        	Messages:   	response should be ETag
+    revalidate_doube_skip_test.go:94: 
+        	Error Trace:	/Users/sendya/workspace/github.com/omalloc/tavern/tests/all-features/caching/revalidate_doube_skip_test.go:94
+        	Error:      	Not equal: 
+        	            	expected: "d41d8cd98f00b204e9800998ecf8427e"
+        	            	actual  : "2f0902c0e8c3c85b8231d629dc84f65c"
+        	            	
+        	            	Diff:
+        	            	--- Expected
+        	            	+++ Actual
+        	            	@@ -1 +1 @@
+        	            	-d41d8cd98f00b204e9800998ecf8427e
+        	            	+2f0902c0e8c3c85b8231d629dc84f65c
+        	Test:       	TestRevalidateDoubleSkip/test_Revalidate_skip_old-file
+        	Messages:   	response body should be equal to file MD5
+=== RUN   TestRevalidateDoubleSkip/PURGE
+--- FAIL: TestRevalidateDoubleSkip (2.26s)
+    --- FAIL: TestRevalidateDoubleSkip/test_Revalidate_normal_old-file (0.43s)
+    --- FAIL: TestRevalidateDoubleSkip/test_Revalidate_skip_old-file (1.41s)
+    --- PASS: TestRevalidateDoubleSkip/PURGE (0.40s)
+FAIL
+FAIL	github.com/omalloc/tavern/tests/all-features/caching	2.639s
+=== RUN   TestContentLenShorter
+=== RUN   TestContentLenShorter/test_content-length_shorter_old_file
+=== RUN   TestContentLenShorter/test_content-length_shorter_new_file
+=== RUN   TestContentLenShorter/test_content-length_shorter_whole_file
+=== RUN   TestContentLenShorter/PURGE
+--- PASS: TestContentLenShorter (1.63s)
+    --- PASS: TestContentLenShorter/test_content-length_shorter_old_file (0.41s)
+    --- PASS: TestContentLenShorter/test_content-length_shorter_new_file (0.41s)
+    --- PASS: TestContentLenShorter/test_content-length_shorter_whole_file (0.40s)
+    --- PASS: TestContentLenShorter/PURGE (0.40s)
+PASS
+ok  	github.com/omalloc/tavern/tests/all-features/filechanged	2.015s
+=== RUN   TestRangeExpiredRefresh
+=== RUN   TestRangeExpiredRefresh/test_range_full-cache_fill
+=== RUN   TestRangeExpiredRefresh/test_range_full-cache_HIT
+=== RUN   TestRangeExpiredRefresh/test_range_full-cache_REFRESH_HIT_200
+    range_normal_test.go:215: 
+        	Error Trace:	/Users/sendya/workspace/github.com/omalloc/tavern/tests/all-features/range/range_normal_test.go:215
+        	            				/Users/sendya/workspace/github.com/omalloc/tavern/pkg/e2e/e2e_hander.go:45
+        	            				/opt/homebrew/Cellar/go/1.27.3/libexec/src/net/http/server.go:2358
+        	            				/Users/sendya/workspace/github.com/omalloc/tavern/pkg/e2e/e2e.go:61
+        	            				/opt/homebrew/Cellar/go/1.27.3/libexec/src/net/http/server.go:2358
+        	            				/opt/homebrew/Cellar/go/1.27.3/libexec/src/net/http/server.go:3436
+        	            				/opt/homebrew/Cellar/go/1.27.3/libexec/src/net/http/server.go:2157
+        	            				/opt/homebrew/Cellar/go/1.27.3/libexec/src/runtime/asm_arm64.s:1039
+        	Error:      	Not equal: 
+        	            	expected: ""
+        	            	actual  : "\"85786ca4eed0daa5e13d2d91022b322b\""
+        	            	
+        	            	Diff:
+        	            	--- Expected
+        	            	+++ Actual
+        	            	@@ -1 +1 @@
+        	            	-
+        	            	+"85786ca4eed0daa5e13d2d91022b322b"
+        	Test:       	TestRangeExpiredRefresh/test_range_full-cache_REFRESH_HIT_200
+    range_normal_test.go:243: 
+        	Error Trace:	/Users/sendya/workspace/github.com/omalloc/tavern/tests/all-features/range/range_normal_test.go:243
+        	Error:      	"BYPASS from steins warm (tavern/4.0)" does not contain "REVALIDATE_HIT"
+        	Test:       	TestRangeExpiredRefresh/test_range_full-cache_REFRESH_HIT_200
+    range_normal_test.go:245: 
+        	Error Trace:	/Users/sendya/workspace/github.com/omalloc/tavern/tests/all-features/range/range_normal_test.go:245
+        	Error:      	Not equal: 
+        	            	expected: 524288
+        	            	actual  : 0
+        	Test:       	TestRangeExpiredRefresh/test_range_full-cache_REFRESH_HIT_200
+        	Messages:   	size should be file size
+    range_normal_test.go:247: 
+        	Error Trace:	/Users/sendya/workspace/github.com/omalloc/tavern/tests/all-features/range/range_normal_test.go:247
+        	Error:      	Not equal: 
+        	            	expected: "d41d8cd98f00b204e9800998ecf8427e"
+        	            	actual  : "b6396ceb44da7389b0c7adaf292d091b"
+        	            	
+        	            	Diff:
+        	            	--- Expected
+        	            	+++ Actual
+        	            	@@ -1 +1 @@
+        	            	-d41d8cd98f00b204e9800998ecf8427e
+        	            	+b6396ceb44da7389b0c7adaf292d091b
+        	Test:       	TestRangeExpiredRefresh/test_range_full-cache_REFRESH_HIT_200
+        	Messages:   	HASH should be equal
+=== RUN   TestRangeExpiredRefresh/test_range_full-cache_changed_REFRESH_MISS
+=== RUN   TestRangeExpiredRefresh/PURGE
+--- FAIL: TestRangeExpiredRefresh (6.55s)
+    --- PASS: TestRangeExpiredRefresh/test_range_full-cache_fill (0.87s)
+    --- PASS: TestRangeExpiredRefresh/test_range_full-cache_HIT (0.41s)
+    --- FAIL: TestRangeExpiredRefresh/test_range_full-cache_REFRESH_HIT_200 (2.41s)
+    --- PASS: TestRangeExpiredRefresh/test_range_full-cache_changed_REFRESH_MISS (2.43s)
+    --- PASS: TestRangeExpiredRefresh/PURGE (0.40s)
+FAIL
+FAIL	github.com/omalloc/tavern/tests/all-features/range	6.913s
+FAIL

@@ -568,7 +568,7 @@ func TestRepresentationValidationMissingBodyRetries(t *testing.T) {
 	}
 }
 
-func TestRepresentationValidationMissingAgeDoesNotResetAge(t *testing.T) {
+func TestRepresentationValidationMissingAgeRenewsFreshness(t *testing.T) {
 	var calls atomic.Int32
 	f := newOriginFixture(t, func(w http.ResponseWriter, _ *http.Request) {
 		if calls.Add(1) == 1 {
@@ -583,12 +583,16 @@ func TestRepresentationValidationMissingAgeDoesNotResetAge(t *testing.T) {
 	f.clock.Add(481)
 	resp, body := f.get(t, header)
 	age, _ := strconv.ParseInt(resp.Header.Get("Age"), 10, 64)
-	if body != "image" || age < 601 {
-		t.Fatal("missing Age became fresh", body, resp.Header)
+	if body != "image" || age != 0 {
+		t.Fatal("validation retained the previous response's age", body, resp.Header)
 	}
 	selected, err := f.repo.Lookup(t.Context(), f.key, header)
-	if err != nil || selected.Fresh {
-		t.Fatal("missing Age acquired a full new TTL", err)
+	if err != nil || !selected.Fresh || selected.Representation.ExpiresAt != f.clock.Load()+600 {
+		t.Fatal("successful validation did not renew TTL", err)
+	}
+	f.get(t, header)
+	if calls.Load() != 2 {
+		t.Fatal("validated response missed the cache", calls.Load())
 	}
 }
 

@@ -44,6 +44,7 @@ type IndexRepository struct {
 	initialLocation      string
 	lookup               LookupFunc
 	durable              bool
+	writeback            bool
 	dataBuckets          []storage.Bucket
 	durableBuckets       map[string]storage.DurableRepresentationBucket
 	barrierMu            sync.RWMutex // lock order: barrier, then resource shard
@@ -190,8 +191,8 @@ func (r *IndexRepository) updateLocked(ctx context.Context, key object.ResourceK
 	if record.PrefixHardEpoch != before.PrefixHardEpoch || record.PrefixSoftEpoch != before.PrefixSoftEpoch || record.BarrierIncarnation != before.BarrierIncarnation {
 		return nil, ErrInvalidRecord
 	}
-	// Durable references can only be added/replaced through Publish, which
-	// syncs immutable files outside the resource lock before committing them.
+	// Managed references can only be added/replaced through Publish, which
+	// checks complete metadata and invalidation epochs before committing them.
 	if r.durable || r.lifecycle {
 		if len(record.Variants) != len(before.Variants) || record.ActiveLocation != before.ActiveLocation {
 			return nil, ErrInvalidRecord
@@ -222,7 +223,11 @@ func (r *IndexRepository) updateLocked(ctx context.Context, key object.ResourceK
 	if r.durable && r.durableBuckets[record.ActiveLocation] == nil {
 		return nil, storage.ErrDurabilityUnsupported
 	}
-	if err := r.storeControl(ctx, md); err != nil {
+	store := r.storeControl
+	if record.PurgeEpoch != before.PurgeEpoch || record.RevalidateEpoch != before.RevalidateEpoch {
+		store = r.storeControlSync
+	}
+	if err := store(ctx, md); err != nil {
 		return nil, err
 	}
 	return md.Clone(), nil

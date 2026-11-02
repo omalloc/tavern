@@ -74,11 +74,9 @@ func (c *Caching) representationKey(req *http.Request) (object.ResourceKey, erro
 	if !c.opt.IncludeQueryInCacheKey {
 		u.RawQuery, u.ForceQuery = "", false
 	}
-	scope := c.opt.representation.isolationScope
-	if peer := req.Header.Get(protocol.InternalUpstreamAddr); peer != "" {
-		scope += "\x00peer\x00" + peer
-	}
-	return object.NewResourceKey(u.String(), c.opt.representation.namespace, scope)
+	// Origin selection is routing: failover and load balancing must retain the
+	// public resource's cache identity. Only an explicit scope separates caches.
+	return object.NewResourceKey(u.String(), c.opt.representation.namespace, c.opt.representation.isolationScope)
 }
 
 func (c *Caching) bypassRepresentation(req *http.Request) {
@@ -232,7 +230,7 @@ func (c *Caching) admitRepresentation(client, upstream *http.Request, resp *http
 		return resp
 	}
 	repo := c.representationRepo
-	lease, err := repo.ReserveFor(client.Context(), state, ref, c.opt.VaryLimit)
+	lease, err := repo.ReserveReplacementFor(client.Context(), state, ref, previous, c.opt.VaryLimit)
 	if err != nil {
 		reason = "control_error"
 		if errors.Is(err, representation.ErrSelectorLimit) {
@@ -327,11 +325,12 @@ func (c *Caching) validatedRepresentation(client, upstream *http.Request, valida
 		}
 		md.Headers[name] = slices.Clone(values)
 	}
-	if validation.Header.Get("Age") == "" {
-		age, _ := strconv.ParseInt(prior.Headers.Get("Age"), 10, 64)
-		resident := max(int64(0), received.Unix()-prior.RespUnix)
-		age = saturatedAge(max(int64(0), age), resident)
-		md.Headers.Set("Age", strconv.FormatInt(age, 10))
+	// Age measures time since the latest successful origin validation. A 304
+	// without Age contributes zero; its Date and this request's delay still
+	// bound freshness in representationFreshness.
+	md.Headers.Del("Age")
+	if values := validation.Header.Values("Age"); len(values) > 0 {
+		md.Headers["Age"] = slices.Clone(values)
 	}
 	md.Headers.Del("Content-Range")
 	md.Headers.Set("Content-Length", strconv.FormatUint(md.Size, 10))
@@ -361,7 +360,7 @@ func (c *Caching) validatedRepresentation(client, upstream *http.Request, valida
 		ref, err := representation.NewHTTPSelector(fields, representationSelectionHeader(upstream))
 		if err == nil {
 			repo := c.representationRepo
-			lease, err := repo.ReserveFor(client.Context(), state, ref, c.opt.VaryLimit)
+			lease, err := repo.ReserveReplacementFor(client.Context(), state, ref, previous, c.opt.VaryLimit)
 			if err == nil {
 				date, _ := http.ParseTime(md.Headers.Get("Date"))
 				ref.RepresentationID, ref.ResponseDate = md.ID.Clone(), date.Unix()

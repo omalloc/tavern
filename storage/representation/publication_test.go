@@ -49,6 +49,65 @@ func TestPublishConcurrentSelectors(t *testing.T) {
 	}
 }
 
+func TestReservationReplacementKeepsOldReferenceAndBoundsPendingChoices(t *testing.T) {
+	f := newFixture(t)
+	header := http.Header{"Accept": {"jpeg"}, "X-Theme": {"dark"}}
+	old, _ := f.candidate(t, []string{"Accept"}, header, "old", "old body", f.now.Unix())
+	f.publish(t, old)
+	state, err := f.repo.Capture(t.Context(), f.key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lateRef, lateMD := f.candidate(t, []string{"Accept"}, header, "late-old-selector", "late body", f.now.Unix()+2)
+	lateLease, err := f.repo.ReserveFor(t.Context(), state, lateRef, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	next, md := f.candidate(t, []string{"X-Theme"}, header, "next", "new body", f.now.Unix()+1)
+	lease, err := f.repo.ReserveReplacementFor(t.Context(), state, next, &old, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	other, _ := representation.NewHTTPSelector([]string{"X-Other"}, http.Header{"X-Other": {"value"}})
+	if pending, err := f.repo.ReserveReplacementFor(t.Context(), state, other, &old, 1); !errors.Is(err, representation.ErrSelectorLimit) {
+		f.repo.Release(pending)
+		t.Fatal("different pending replacements spent the same slot", err)
+	}
+	if _, body := f.body(t, header); body != "old body" {
+		t.Fatal("reservation removed readable old body")
+	}
+	f.repo.Release(lease)
+	if _, body := f.body(t, header); body != "old body" {
+		t.Fatal("aborted replacement removed old reference")
+	}
+	lease, err = f.repo.ReserveReplacementFor(t.Context(), state, next, &old, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	called := false
+	if ok, err := f.repo.Publish(t.Context(), state, lease, next, md, nil, func() error { called = true; return nil }); ok || !errors.Is(err, representation.ErrInvalidRecord) || called {
+		t.Fatal("borrowed slot published without retiring its owner", ok, err)
+	}
+	lease, err = f.repo.ReserveReplacementFor(t.Context(), state, next, &old, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ok, err := f.repo.Publish(t.Context(), state, lease, next, md, &old, func() error { return f.bucket.Store(t.Context(), md) }); err != nil || !ok {
+		t.Fatal(ok, err)
+	}
+	if _, body := f.body(t, header); body != "new body" {
+		t.Fatal("replacement did not publish", body)
+	}
+	called = false
+	if ok, err := f.repo.Publish(t.Context(), state, lateLease, lateRef, lateMD, nil, func() error { called = true; return f.bucket.Store(t.Context(), lateMD) }); ok || !errors.Is(err, representation.ErrSelectorLimit) || called {
+		t.Fatal("late original selector exceeded the replacement's budget", ok, err)
+	}
+	root, err := f.repo.Load(t.Context(), f.key)
+	if err != nil || len(root.Resource.Variants) != 1 {
+		t.Fatal("replacement exceeded choice budget", err)
+	}
+}
+
 func TestPublishLateValidationSameDate(t *testing.T) {
 	f := newFixture(t)
 	header := http.Header{"Accept": {"image/jpeg"}}

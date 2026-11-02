@@ -151,7 +151,7 @@ func (r *IndexRepository) MigrateResource(ctx context.Context, key object.Resour
 	current.Resource.Revision++
 	current.Resource.RoutingEpoch++
 	current.Resource.ActiveLocation = target
-	if err := r.storeControl(ctx, current); err != nil {
+	if err := r.storeControlSync(ctx, current); err != nil {
 		return err
 	}
 	return nil

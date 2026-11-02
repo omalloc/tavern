@@ -2,7 +2,11 @@
 
 日期：2026-10-29。
 
-状态：本方案 P1.1—P4.3 已实现，并完成第 10.3 节逐项核验。本地执行 CI 同等构建与全量测试通过；实际 WebP 编码器矩阵及公开图片路径另行通过显式检查。透明 v2、托管图片及响应合并均默认关闭。证据、发布边界和最终核验修复见 [验收记录](vary-representation-acceptance.md)。
+状态更正（2026-11-02）：**整个 v2 系列验收均不通过**。P1.1—P4.3 的阶段勾选和下文实施记录作为历史材料保留，不能代表需求、原有用例、性能及可维护性已通过当前验收。逐项目的、实现动机、偏差和证据见 [v2 变更审查结论](v2-change-requirements-review.md)，历史测试记载见 [原验收记录](vary-representation-acceptance.md)。
+
+2026-10-31 扩展：按新增要求开放纯 memory v2。实际 bucket 全部为 memory 时采用进程内控制与发布，重启清空缓存和屏障；磁盘仍要求原有同步持久化能力，不混用两种模式。历史批次中的 memory 受控测试边界由此次公开接入扩展，配置见 [操作说明](vary-representation-operations.md)。
+
+2026-11-02 配置简化：磁盘 `state_directory` 可省略，默认使用 bucket 根目录下的 `.tavern-v2/`。多 bucket 沿用已有默认绑定，首次初始化按规范路径稳定选择；显式路径优先，既有外部目录及失效历史不自动迁移或重建。
 
 前置分析：[HTTP Vary 与资源转换缓存改造设计](./vary-representation-design.md)。前置文档说明问题和目标架构；本文进一步确定模块边界、实施批次、阶段依赖、兼容方式和验收门槛。若两份文档在实施细节上存在差异，以本文的细化决策为准。
 
@@ -142,6 +146,8 @@ RepresentationID = H(ResourceID, incarnation, purge_epoch,
 DerivedID        = H(源表示 ID, 源内容版本, 完整 TransformSpec,
                      policy_version, encoder_version)
 ```
+
+2026-11-02 审查更正：上面历史公式中的“上游/凭据隔离范围”不能解释为自动绑定源站地址或 upstream 配置。当前局部修正只保留公开 URL、namespace 和显式 isolation_scope；路由节点不参与身份。鉴权请求另按缓存资格处理。需求和偏差见 [R22 审查](v2-change-requirements-review.md#r22-缓存身份不随源站路由变化)。
 
 所有 H 输入使用结构编码。物理记录仍使用现有 object.ID 和分块路径，但由单一 key-builder 生成 v2 虚拟后缀。保留 ID.Path() 的规范 URL 供运维识别；后缀包含固定版本/种类标记和摘要，不含原始 Cookie、Accept 或任意转换参数。构造器必须确保原 URL 与内部后缀不产生边界歧义，并通过现有 ID 编解码恢复测试。
 
@@ -672,7 +678,7 @@ P1.3 已提交为 `f6eb9c9`，由下面的 P1.4 批次接续完整 200/304 更�
 - 304 改变选择字段时保留已有 Body ID 和 body_generation；新增可选 storage_selector_fingerprint 记录该 Body 最初分配时的物理选择指纹，根中仍使用本次实际选择快照。避免为不变字节重新拼接物理子键，也为后续源内容版本复用保留身份。
 - VariantRef 与 RepresentationInfo 增加配对 revision。发布时先写带新版本的子元数据，再更新根引用；读取只接受版本一致的组合。即使 Date 相同，迟到的 304 也不能覆盖较新的验证结果；子更新成功而根写失败只能产生 MISS，不能令旧引用获得未经提交的新 TTL。
 - 版本预算同时计算 ready/pending 的不同选择项；重复更新已有选择不增加预算。超限只旁路新组合；关闭、取消、写失败和过时代际释放预留，失败清理只针对本次未发布 ID。Parts 用于记录正在写入文件的清理所有权，不作为确认可读块；普通 v2 Discard 清理其 Parts 与 Chunks。
-- 新鲜度计算使用可注入时钟，支持标准 TTL、s-maxage、Expires 和内部 TTL，并优先处理 no-store/private/no-cache。源 Date/Age 不清零，Age 和回源耗时从可用生命周期中扣除。304 缺少 Age 时保守保留原有当前年龄；缺少 Vary、Cache-Control 或验证器不当作删除。
+- 新鲜度计算使用可注入时钟，支持标准 TTL、s-maxage、Expires 和内部 TTL，并优先处理 no-store/private/no-cache。Age 和回源耗时从可用生命周期中扣除。304 按本次验证响应重新计算年龄，缺少 Age 按零计算；缺少 Vary、Cache-Control 或验证器不当作删除。原先累计旧年龄的处理已由 2026-10-31 审查修正。
 - HEAD 冷 MISS、Range 冷请求、206、未知长度和带请求 Body 的请求继续透传；已有完整表示仍可用于 HEAD/Range 读取。没有开放公开 v2 配置，也没有恢复旧请求合并或引入编解码依赖。
 
 验证结果（Go 1.26.0）：
@@ -793,8 +799,8 @@ P2.2 已提交为 `1ea5f5f`，由下面的 P2.3 批次接续 PURGE 与依赖失�
 
 - 存储层公开 `storage.representation.state_directory/gc_interval/gc_budget`，在请求中间件之前建立固定拓扑 Manager、同步控制目录与 PURGE 注册；公开模式要求全部参与位置为 disk/Pebble。新增 state directory 所有权锁，拒绝同目录第二个 Manager。
 - 缓存层公开默认关闭的 `representation.enabled` 与 namespace/isolation_scope，开启后普通无 Vary 资源也通过统一表示存储。Vary 字段数/快照大小目前只接受固定上限 32/16384；无持久化 Manager、无效预算或拓扑不符时启动失败。关键缓存初始化错误不能被 optional middleware 降为静默无缓存。
-- server 自动把 upstream 配置身份加入隔离范围，单次 peer 地址覆盖也有独立 ResourceID。新格式不回读旧对象/旧 Vary。关闭读取后普通旧格式仍可用，旧 Vary 继续旁路；存储 Manager 仍处理全部命名空间的 PURGE 与孤儿回收。已存在控制记录却移除 storage.representation 会拒绝启动，避免丢掉回滚期间的失效屏障。
-- 加入公开配置的真实磁盘关闭重开、两个 Vary 表示分别命中、关闭读取期间 PURGE、重新启用不复活旧数据测试，以及无 Manager 的启用拒绝、错误初始化不静默绕过和 peer 隔离测试。
+- 缓存身份使用公开 URL、namespace 和显式 isolation_scope；upstream 配置、单次 peer 覆盖与节点选择仅影响回源路由，切源、主备切换和负载均衡不改变 ResourceID。新格式不回读旧对象/旧 Vary。关闭读取后普通旧格式仍可用，旧 Vary 继续旁路；存储 Manager 仍处理全部命名空间的 PURGE 与孤儿回收。已存在控制记录却移除 storage.representation 会拒绝启动，避免丢掉回滚期间的失效屏障。
+- 加入公开配置的真实磁盘关闭重开、两个 Vary 表示分别命中、关闭读取期间 PURGE、重新启用不复活旧数据测试，以及无 Manager 的启用拒绝、错误初始化不静默绕过，以及指定 peer/负载均衡切换后的命中与过期更新测试。
 - 用真实 `newApp`/tableflip、独立子进程、Unix listener 与 SIGUSR2 演练活跃填充交接。旧请求被取消后新 PID 接管同一数据/索引目录；新进程对两个选择值分别回源一次并二次命中，旧进程正常退出。此前同步提交失败/重启、soft/hard PURGE/填充/304、目录冷资源、集合迁移及读取租约测试继续通过。
 
 验证：Go 1.26.0 下根 package、server、caching、storage、representation 的受影响包 race 验收全部通过；P2.5 已通过且源码未变的 iobuf/IndexDB/SharedKV/底层 bucket 检查未重复执行。未运行全仓库测试。真实 worker 与图片能力未假定存在。

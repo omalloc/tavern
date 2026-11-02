@@ -20,6 +20,13 @@ func WithDurability(buckets ...storage.Bucket) Option {
 
 func (r *IndexRepository) Durable() bool { return r.durable }
 
+// WithWriteback keeps durable invalidation history, but permits recent cache
+// publications to be lost on a crash. Process-local locks and epochs, rather
+// than fsync, determine when a successfully closed body becomes readable.
+func WithWriteback() Option {
+	return func(r *IndexRepository) { r.writeback = true }
+}
+
 func (r *IndexRepository) checkDurability() error {
 	controls, ok := r.controls.(storage.DurableControlStore)
 	if !ok {
@@ -49,6 +56,13 @@ func (r *IndexRepository) checkDurability() error {
 }
 
 func (r *IndexRepository) storeControl(ctx context.Context, md *object.Metadata) error {
+	if r.writeback && md.RecordKind == object.RecordResource {
+		return r.controls.StoreControl(ctx, md.Clone())
+	}
+	return r.storeControlSync(ctx, md)
+}
+
+func (r *IndexRepository) storeControlSync(ctx context.Context, md *object.Metadata) error {
 	if r.durable {
 		return r.controls.(storage.DurableControlStore).StoreControlSync(ctx, md.Clone())
 	}
@@ -56,7 +70,7 @@ func (r *IndexRepository) storeControl(ctx context.Context, md *object.Metadata)
 }
 
 func (r *IndexRepository) sealChild(ctx context.Context, location string, md *object.Metadata) error {
-	if !r.durable {
+	if !r.durable || r.writeback {
 		return nil
 	}
 	bucket := r.durableBuckets[location]
@@ -67,7 +81,7 @@ func (r *IndexRepository) sealChild(ctx context.Context, location string, md *ob
 }
 
 func (r *IndexRepository) syncChildData(ctx context.Context, state *IndexState, md *object.Metadata) error {
-	if !r.durable {
+	if !r.durable || r.writeback {
 		return nil
 	}
 	bucket := r.durableBuckets[state.root.Resource.ActiveLocation]

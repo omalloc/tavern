@@ -64,6 +64,12 @@ func sameReference(a, b object.VariantRef) bool {
 }
 
 func (r *IndexRepository) ReserveFor(ctx context.Context, state *IndexState, selector object.VariantRef, limit int) (*Reservation, error) {
+	return r.ReserveReplacementFor(ctx, state, selector, nil, limit)
+}
+
+// ReserveReplacementFor lends the selected reference's budget slot to its
+// replacement. The old reference remains readable until Publish succeeds.
+func (r *IndexRepository) ReserveReplacementFor(ctx context.Context, state *IndexState, selector object.VariantRef, previous *object.VariantRef, limit int) (*Reservation, error) {
 	if state == nil || !state.key.Valid() || validateSelector(selector) != nil {
 		return nil, ErrInvalidRecord
 	}
@@ -97,15 +103,16 @@ func (r *IndexRepository) ReserveFor(ctx context.Context, state *IndexState, sel
 			return nil, err
 		}
 	}
-	return r.reserveLocked(ctx, state.key, root.Resource, selector, limit)
+	return r.reserveLocked(ctx, state.key, root.Resource, selector, previous, limit)
 }
 
 // Publish merges references into the latest root and consumes the reservation.
 // storeChild runs under the short resource lock, after conflict checks. It is
 // local metadata I/O only; it must not read a body or perform network I/O.
 // storeChild publishes final metadata for both 200 and 304 without allowing a late validator to overwrite
-// another validation of the same ID. In durable mode the child files and metadata
-// are sealed before the synchronous root update, which is the publication point.
+// another validation of the same ID. Writeback publishes through the readable
+// overlay without fsync; strict durability seals files and metadata before the
+// synchronous root update. Both paths recheck invalidation epochs under lock.
 func (r *IndexRepository) Publish(ctx context.Context, state *IndexState, lease *Reservation, ref object.VariantRef, md *object.Metadata, previous *object.VariantRef, storeChild func() error) (published bool, failure error) {
 	defer func() { pkgmetrics.RecordRepresentationCommit(published, failure != nil) }()
 	if lease == nil {
@@ -113,6 +120,9 @@ func (r *IndexRepository) Publish(ctx context.Context, state *IndexState, lease 
 	}
 	defer r.Release(lease)
 	if state == nil || !state.key.Valid() || lease.key.ResourceID() != state.key.ResourceID() || !sameSelector(lease.selector, ref) || validateReference(ref) != nil {
+		return false, ErrInvalidRecord
+	}
+	if lease.previous != nil && (previous == nil || !sameReference(*lease.previous, *previous)) {
 		return false, ErrInvalidRecord
 	}
 	if md == nil || !md.HasReadableChunks() {
@@ -192,6 +202,14 @@ func (r *IndexRepository) Publish(ctx context.Context, state *IndexState, lease 
 			return false, ErrInvalidRecord
 		}
 	}
+	merged := mergeReferences(root.Resource.Variants, ref, previous)
+	// A fill of a formerly existing selector can outlive its replacement.
+	// Recheck the final set so that such a late fill cannot add the retired
+	// choice back beyond the budget accepted by its reservation.
+	nextCount := distinctSelectors(merged, ref.SelectionKind) + 1
+	if nextCount > lease.limit && nextCount > distinctSelectors(root.Resource.Variants, ref.SelectionKind) {
+		return false, ErrSelectorLimit
+	}
 	// A failed root write must not refresh an old reference, even when its
 	// Date is unchanged. Readers require matching child/reference versions.
 	ref.Revision = root.Resource.Revision + 1
@@ -209,14 +227,26 @@ func (r *IndexRepository) Publish(ctx context.Context, state *IndexState, lease 
 	if err := r.sealChild(ctx, root.Resource.ActiveLocation, child); err != nil {
 		return false, err
 	}
+	root.Resource.Revision++
+	root.Resource.Variants = append(merged, ref.Clone())
+	if err := ctx.Err(); err != nil {
+		return false, err
+	}
+	if err := r.storeControl(ctx, root); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+func mergeReferences(variants []object.VariantRef, ref object.VariantRef, previous *object.VariantRef) []object.VariantRef {
 	var merged []object.VariantRef
-	for _, existing := range root.Resource.Variants {
+	for _, existing := range variants {
 		if sameSelector(existing, ref) || previous != nil && sameReference(existing, *previous) {
 			continue
 		}
 		dependent := false
 		if existing.SelectionKind == object.SelectionManaged {
-			for _, source := range root.Resource.Variants {
+			for _, source := range variants {
 				if sameID(existing.SelectedSourceID, source.RepresentationID) && originReplaced(source, ref, previous) {
 					dependent = true
 					break
@@ -228,13 +258,25 @@ func (r *IndexRepository) Publish(ctx context.Context, state *IndexState, lease 
 		}
 		merged = append(merged, existing.Clone())
 	}
-	root.Resource.Revision++
-	root.Resource.Variants = append(merged, ref.Clone())
-	if err := ctx.Err(); err != nil {
-		return false, err
+	return merged
+}
+
+func distinctSelectors(variants []object.VariantRef, kind object.SelectionKind) int {
+	var distinct []object.VariantRef
+	for _, ref := range variants {
+		if ref.SelectionKind != kind {
+			continue
+		}
+		found := false
+		for _, prior := range distinct {
+			if sameSelector(prior, ref) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			distinct = append(distinct, ref)
+		}
 	}
-	if err := r.storeControl(ctx, root); err != nil {
-		return false, err
-	}
-	return true, nil
+	return len(distinct)
 }

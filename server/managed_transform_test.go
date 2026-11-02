@@ -83,10 +83,16 @@ func publicImageWorker(t *testing.T, calls *atomic.Int32) http.HandlerFunc {
 	}
 }
 func TestPublicManagedPipelineConfigurationAndReuse(t *testing.T) {
+	for _, driver := range []string{"native", "memory"} {
+		t.Run(driver, func(t *testing.T) { testPublicManagedPipeline(t, driver) })
+	}
+}
+
+func testPublicManagedPipeline(t *testing.T, driver string) {
 	old := storage.Current()
 	defer storage.SetDefault(old)
 	path, state := t.TempDir(), t.TempDir()
-	storageConfig := &conf.Storage{Driver: "native", DBType: "pebble", DBPath: ".index", SelectionPolicy: "hashring", SliceSize: 64, DirAware: &conf.DirAware{}, Representation: &conf.RepresentationStorage{StateDirectory: state}, Buckets: []*conf.Bucket{{Path: path, MaxObjectLimit: 100}}}
+	storageConfig := &conf.Storage{Driver: "native", DBType: "pebble", DBPath: ".index", SelectionPolicy: "hashring", SliceSize: 64, DirAware: &conf.DirAware{}, Representation: &conf.RepresentationStorage{StateDirectory: state}, Buckets: []*conf.Bucket{{Path: path, Driver: driver, MaxObjectLimit: 100}}}
 	store, err := storage.New(storageConfig, log.DefaultLogger)
 	if err != nil {
 		t.Fatal(err)
@@ -205,8 +211,8 @@ func TestPublicManagedPipelineConfigurationAndReuse(t *testing.T) {
 		t.Fatal("public multi-range changed conversion identity")
 	}
 
-	// A process/storage reopen must reach the same published product without
-	// opening the source or converting again (startup probes are counted apart).
+	// Disk reopens reuse the product; memory reopens must fetch and convert
+	// afresh. Startup worker probes are counted separately.
 	store.Close()
 	store, err = storage.New(storageConfig, log.DefaultLogger)
 	if err != nil {
@@ -228,8 +234,12 @@ func TestPublicManagedPipelineConfigurationAndReuse(t *testing.T) {
 		}
 	}()
 	probeCalls += rpc.Load() - reopenProbeStart
+	reopenWork := int32(1)
+	if driver == "memory" {
+		reopenWork = 2
+	}
 	reopened, reopenedBytes, err := request("GET", "format=png", nil)
-	if err != nil || !bytes.Equal(reopenedBytes, first) || !strings.HasPrefix(reopened.Header.Get("X-Cache"), "HIT") || origins.Load() != 1 || rpc.Load() != probeCalls+1 {
+	if err != nil || !bytes.Equal(reopenedBytes, first) || strings.HasPrefix(reopened.Header.Get("X-Cache"), "HIT") != (driver == "native") || origins.Load() != reopenWork || rpc.Load() != probeCalls+reopenWork {
 		t.Fatalf("reopen failed product reuse: origin=%d conversions=%d error=%v", origins.Load(), rpc.Load()-probeCalls, err)
 	}
 	if err = store.PURGE("https://example.com/images/source.jpg?format=png", storagev1.PurgeControl{Hard: true}); err != nil {
@@ -238,7 +248,7 @@ func TestPublicManagedPipelineConfigurationAndReuse(t *testing.T) {
 	if _, _, err = request("GET", "format=png", nil); err != nil {
 		t.Fatal(err)
 	}
-	if origins.Load() != 2 || rpc.Load() != probeCalls+2 {
+	if origins.Load() != reopenWork+1 || rpc.Load() != probeCalls+reopenWork+1 {
 		t.Fatal("public parameter-mapped PURGE missed source/product")
 	}
 	// Restart with conversion disabled; retained routes must still map PURGE even
@@ -290,7 +300,7 @@ func TestPublicManagedPipelineConfigurationAndReuse(t *testing.T) {
 	if err = store.PURGE("https://example.com/images/source.jpg?format=png", storagev1.PurgeControl{Hard: true}); err != nil {
 		t.Fatal(err)
 	}
-	if rpc.Load() != probeCalls+2 {
+	if rpc.Load() != probeCalls+reopenWork+1 {
 		t.Fatal("disabled routes called worker")
 	}
 	// Reopen enabled: the rollback-time mapped barrier must force new bytes.

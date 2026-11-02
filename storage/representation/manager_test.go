@@ -2,6 +2,7 @@ package representation_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -456,6 +457,70 @@ func TestManagerStableTopologyAndNoFallback(t *testing.T) {
 	}
 }
 
+type missingCatalogBucket struct{ managedBucket }
+
+func (b *missingCatalogBucket) LoadControl(ctx context.Context, id *object.ID) (*object.Metadata, error) {
+	if id.IsBarrierControl() {
+		return nil, storage.ErrKeyNotFound
+	}
+	return b.managedBucket.LoadControl(ctx, id)
+}
+
+func TestManagerManifestUpgradeBindsCatalogHistory(t *testing.T) {
+	f := newManagerFixture(t)
+	f.m.Close()
+	path := filepath.Join(f.stateDir, "representation-topology.json")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var manifest map[string]json.RawMessage
+	if err := json.Unmarshal(data, &manifest); err != nil {
+		t.Fatal(err)
+	}
+	delete(manifest, "controls")
+	manifest["version"] = json.RawMessage("2")
+	data, err = json.Marshal(manifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, data, 0600); err != nil {
+		t.Fatal(err)
+	}
+	f.open(t)
+	data, err = os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(data, &manifest); err != nil || len(manifest["controls"]) == 0 || string(manifest["version"]) != "4" {
+		t.Fatal("legacy manifest did not acquire control binding", err)
+	}
+	f.m.Close()
+	missing := &missingCatalogBucket{managedBucket: f.buckets[0]}
+	m, err := representation.NewManager(t.Context(), []storage.Bucket{missing, f.buckets[1]}, representation.ManagerConfig{StateDirectory: f.stateDir, Durable: true})
+	if m != nil {
+		m.Close()
+	}
+	if !errors.Is(err, representation.ErrTopologyMismatch) {
+		t.Fatal("missing catalog inherited acknowledged history", err)
+	}
+	md, err := f.buckets[0].LoadControl(t.Context(), object.BarrierCatalogID())
+	if err != nil {
+		t.Fatal(err)
+	}
+	md.Barriers.Incarnation = "replacement-history"
+	if err := f.buckets[0].StoreControlSync(t.Context(), md); err != nil {
+		t.Fatal(err)
+	}
+	m, err = representation.NewManager(t.Context(), []storage.Bucket{f.buckets[0], f.buckets[1]}, representation.ManagerConfig{StateDirectory: f.stateDir, Durable: true})
+	if m != nil {
+		m.Close()
+	}
+	if !errors.Is(err, representation.ErrTopologyMismatch) {
+		t.Fatal("replacement catalog inherited acknowledged history", err)
+	}
+}
+
 func TestManagerRecoveryAndBoundedOrphanCollection(t *testing.T) {
 	f := newManagerFixture(t)
 	source, _ := f.locations(t)
@@ -541,6 +606,9 @@ type volatileManagedBucket struct {
 }
 
 func (*volatileManagedBucket) CheckDurability() error { return storage.ErrDurabilityUnsupported }
+func (*volatileManagedBucket) ControlIdentity() (string, error) {
+	return "", storage.ErrDurabilityUnsupported
+}
 func (*volatileManagedBucket) StoreControlSync(context.Context, *object.Metadata) error {
 	return storage.ErrDurabilityUnsupported
 }

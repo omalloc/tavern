@@ -94,9 +94,11 @@ plugin:
 storage:
   driver: native # native, custom-driver
   db_type: pebble # ready [ pebble, nutsdb ], not implements [ boltdb, badgerdb ]
-  # 启用 v2 前取消注释；回滚关闭读取时保留本绑定和目录。
+  # 启用 v2 前添加本绑定；磁盘模式回滚关闭读取时保留本绑定和目录。
+  # 磁盘模式也可用 representation: {}，默认目录为 bucket 根目录下的 .tavern-v2。
+  # 全部 bucket 为 memory 时可直接使用 representation: {}，不需要状态目录。
   # representation:
-  #   state_directory: /cache-control/tavern-v2
+  #   state_directory: /cache-control/tavern-v2 # 可选显式覆盖；已有外部目录应保留原路径
   #   gc_interval: 1m
   #   gc_budget: 64
   #   legacy_vary_gc_budget: 0 # 默认关闭；开启时每轮扫描 1—128 条旧格式记录
@@ -128,7 +130,7 @@ storage:
         mem_table_size: 256000000
         bytes_per_sync: 10240000
         wal_bytes_per_sync: 20480000
-        wal_min_sync_interval: 5
+        wal_min_sync_interval: 0 # 秒；v2 同步发布不应设置秒级等待，0 保留同步落盘且不人为延迟。
         write_sync_mode: false
 #    - path: inmemory
 #      driver: memory

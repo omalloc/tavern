@@ -14,7 +14,7 @@ const representationKeyPrefix = "#tavern-v2/"
 var ErrInvalidResourceKey = errors.New("invalid representation resource key")
 
 // ResourceKey is immutable. Isolation scope participates in the digest without
-// exposing credentials or upstream identity in physical suffixes.
+// exposing the configured scope in physical suffixes.
 type ResourceKey struct {
 	canonicalURL string
 	namespace    string

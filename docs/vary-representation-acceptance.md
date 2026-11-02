@@ -1,6 +1,63 @@
 # Vary 与资源转换缓存最终验收
 
+> **最终验收状态更正（2026-11-02）：验收均不通过。** 下文保留历史实施和验证记录，不代表当前系列通过验收；当前源码已复现业务兼容问题，可阅读性、可维护性与性能要求也未满足。逐项需求、实现动机、偏差和证据见 [v2 变更审查结论](v2-change-requirements-review.md)。
+
 日期：2026-10-30。范围为 [实施方案](vary-representation-implementation-plan.md) P1.1—P4.3、共用不变量及第 10.3 节的全部完成条件。按当前源码、运行结果和提交历史核验，不以阶段勾选或提交说明本身证明完成。
+
+## 2026-11-02 普通缓存批量写回
+
+公开 Manager 改用普通缓存写回、可靠失效屏障模式。分片写入和发布不强制同步文件/目录、分片日志或子/根元数据；Pebble 合并同一键的最新快照，每秒批量写入和同步 WAL，队列按键数/字节数有界。读取和扫描包含未写回快照。PURGE 同步提交屏障及此前待写状态，避免后台重放旧索引；普通缓存允许崩溃丢失，失效历史不回退。低层显式 WithDurability 的严格持久发布测试继续保留。
+
+新增回归覆盖：写回合并与扫描、同步屏障在模拟未同步数据全部丢失后仍恢复、同键新旧更新排序、队列预算与停机排空、后台同步阻塞时普通写入继续；普通填充不调用强制同步、PURGE 同步失败不确认；精确 URL/目录/资源级 hard/soft 失效后直接退出进程，重启不会复活旧内容；缺文件、截断、等长损坏、丢失子索引和无索引孤儿文件的恢复。摘要在交给允许修改输入的 VFS 之前计算，覆盖内存/磁盘迁移的 race 检查。
+
+manifest 升级到版本 4；仅在原索引与 catalog 身份匹配时升级既有绑定，旧程序不能将异步缓存当作已同步封存的数据直接打开。启动恢复校验分片摘要并清理无索引文件；在线 Recover 保留活跃写入者的未登记文件。
+
+## 2026-11-02 磁盘默认控制目录
+
+磁盘省略 state_directory 时，默认使用 bucket 根目录下的 `.tavern-v2/`；显式配置保持优先。多个 bucket 沿用唯一已有默认绑定，首次初始化按规范绝对路径稳定选择。已有外部绑定不隐式迁移，缺失或存在歧义的默认绑定不重新创建，拓扑变化仍拒绝启动。
+
+Go 1.26.0 定向检查通过：
+
+```bash
+GOTOOLCHAIN=go1.26.0 go test -mod=readonly ./storage ./server/middleware/caching -run 'TestDefaultRepresentationDirectory|TestPublicRepresentationReopenRollbackAndPurge|TestPublicRepresentationRejectsChangedIndexPath|TestMemoryRepresentationStartupAndFreshIncarnation|TestPublicMemoryRepresentationVaryPurgeReadersAndRestart' -count=1
+```
+
+DefaultRepresentationDirectory* 覆盖 native/migrator、多 bucket 重排、非首 bucket 的既有默认目录、显式覆盖、缺失/歧义绑定及新增 bucket 的拒绝语义。PublicRepresentationReopenRollbackAndPurge 分别运行显式和默认目录，检查实际缓存字节重开命中及暂停期间 PURGE；内存模式仍不创建控制目录。本次未运行全仓检查。
+
+## 2026-10-31 纯 memory 公开接入
+
+按实际 bucket 能力自动选择：纯 memory 使用原有进程内协调器，disk/Pebble 继续使用同步持久化协议。新增显式易失能力声明，未满足持久化条件的磁盘后端不能因此降级。内存模式不创建 manifest/状态目录，重启后索引、数据、失效屏障及 incarnation 全部重新建立；memory/disk 混合和复用既有磁盘状态目录明确拒绝。
+
+定向 race 检查通过：
+
+```bash
+GOTOOLCHAIN=go1.26.0 go test -mod=readonly -race ./storage ./storage/representation ./storage/bucket/memory ./server/middleware/caching ./server -run 'Test.*(MemoryRepresentation|PublicMemory|PublicManagedPipeline|PublicResponseSharingColdGet|RepresentationEviction|ManagerEviction|DurableRepositoryRejects|PublicRepresentationReopen|PublicRepresentationRejects|ManagerStableTopology|ManagerManifest)' -count=1
+```
+
+MemoryRepresentationStartupAndFreshIncarnation 覆盖 native/migrator 及目录包装的公开配置；PublicMemoryRepresentation* 覆盖实际 Vary 字节/类型、HEAD/Range、soft 304、目录 hard PURGE、读取 pin/GC、迟到填充、Drain 和重启冷缓存。PublicManagedPipelineConfigurationAndReuse 与 PublicResponseSharingColdGetUsesOneOrigin 同时运行 native/memory；图片测试区分磁盘重开复用与内存重开重新转换。持久化后端原有目录与 catalog 保护定向回归通过。本轮没有运行全仓测试或外部 WebP 编码器矩阵。
+
+## 2026-10-31 审查修正
+
+复现并修正以下六个边界。下方全量验收记录属于 2026-10-30；本次仅运行受影响范围的定向检查，没有重跑全仓测试或外部 WebP 矩阵。
+
+| 问题 | 修正与回归 |
+| --- | --- |
+| 忽略查询参数后 PURGE 未覆盖缓存键 | 持久化命名空间映射，URI 与映射屏障一次提交；PublicRepresentationQuerylessPurgeSurvivesRollback、QuerylessPurgePreservesQueryAwareNamespaces、QuerylessBindingRetainsPriorPurgeHistoryAndReopens、QuerylessPurgeBudgetFailureDoesNotPartiallyCommit |
+| 切源保持公开 URL 缓存身份（2026-11-02 更正） | 移除 upstream 配置指纹、指定地址及 context peer 对缓存身份的影响；RepresentationOriginSwitchRetainsCache 覆盖 header/context/负载均衡切换后的命中与过期更新，PublicRepresentationUpstreamChangeRetainsCacheAfterReopen 覆盖改配置重开与 PURGE 后从新源站填充 |
+| 更换索引目录后丢失失效历史 | 绑定实际索引身份和 catalog incarnation，manifest 升级为版本 3 阻止旧程序忽略新语义；PublicRepresentationRejectsChangedIndexPath、ManagerManifestUpgradeBindsCatalogHistory 覆盖旧格式升级、缺失/替换 catalog 和原索引重开 |
+| 显式图片路由无法 PURGE 目录/源 URL | 共用参数映射，失效操作不要求 format；ManagedExplicitRoutePurge 覆盖目录、源 URL、转换 URL |
+| 304 缺少 Age 时无法恢复新鲜度 | 使用本次验证响应年龄；RepresentationValidationMissingAgeRenewsFreshness、ManagedExpiredSource304ReusesProduct 验证后续命中及不重复转换 |
+| 满预算时 Vary 字段变化无法替换 | 预留绑定待替换引用，提交复核最终预算；RepresentationVaryReplacementAtBudget 覆盖 200/304，ReservationReplacementKeepsOldReferenceAndBoundsPendingChoices 覆盖失败保留、并发预留和迟到旧选择项 |
+
+通过的检查使用 Go 1.26.0 和 `-mod=readonly`，保留工作区已有依赖更新：
+
+```bash
+go test -mod=readonly -race ./storage/representation ./server/middleware/caching -run 'Test.*(Representation|Managed|Publish|Reserv|Barrier|Manager|Queryless|Purge|Control|Generation|Migration)' -count=1
+go test -mod=readonly ./transform ./api/defined/v1/storage/object ./storage/bucket/disk ./storage ./server -run 'Test.*(Accept|Managed|Transform|ResourceRecord|Barrier|Control|Durab|Ownership|DiskWriter|Representation|Purge)' -count=1
+go test -mod=readonly -race ./storage/representation ./server/middleware/caching ./storage ./server -run 'Test.*(Manager|Manifest|PublicRepresentation|RepresentationStartup|StorageRepresentation)' -count=1
+```
+
+最后一条用于 manifest 版本保护改动后的重开与启动复核；其中 storage package 没有匹配测试，只完成编译。
 
 ## 实际检查
 
@@ -61,7 +118,7 @@
 | P2.4 全部集合迁移与淘汰要求 | CollectionMigrationAndReaderPins、MigrationFailuresLeaveSourceAndCollectTarget、MigrationPurgeAndLateFill、EvictionRetiresSourceDependenciesAndRespectsReaders、SupersededFillKeepsIndependentWriterPin；MigrateResource 是协调器接口，旧单对象自动升降不冒充 v2 自动策略 |
 | P2.5 #1—3 | origin 显式注入、proxy.Transport、clone 与 rewrite 顺序；TestInjectedOriginAndDrainingBypass、TestRequestRewriteMustPrecedeCacheLookup、RepresentationValidationCapturesActualUpstreamRequest |
 | P2.5 #4—6 | 生命周期 Group 等实际 finish，文件/DB 停写、跨进程所有权、旧进程迟到调用拒绝；DrainCancelsBlockedFillAndJoinsBodyCallbacks、LegacyCancellationKeepsLeaseUntilActualBodyClose、LegacyQueuedWriteOwnsBoundedLifecycle、DiskWriterOwnershipAcrossProcesses、LiveSIGUSR2DrainsFillBeforeNewWriter、HandoffRequiresDrainAndCloseBeforeStartingWriter |
-| P2.6 #1—7 | 上述持久失败、PURGE/304、迁移、注入及真实升级检查，加 PublicRepresentationReopenRollbackAndPurge、RepresentationPeerOverrideIsPartOfIsolation、InvalidRepresentationStartupCannotSilentlyRemoveCaching；公开开关与存储 owner 分离，暂停的保留托管路由明确 503，普通代理与映射 PURGE 仍可用 |
+| P2.6 #1—7 | 上述持久失败、PURGE/304、迁移、注入及真实升级检查，加 PublicRepresentationReopenRollbackAndPurge、RepresentationKeyUsesPublicIdentity、InvalidRepresentationStartupCannotSilentlyRemoveCaching；公开开关与存储 owner 分离，暂停的保留托管路由明确 503，普通代理与映射 PURGE 仍可用 |
 | P3.1 #1—3 | transform/accept.go、spec.go；AcceptSpecificityWeightsAndStablePriority、AcceptParametersAndFieldLines、AcceptRejectsMalformedOrUnboundedInput；格式参数失败不退成任意输出 |
 | P3.1 #4—7 | SpecNormalizesApplicableDefaultsAndOwnsIdentity、PNGIsLosslessAndDoesNotReuseJPEGQuality、AlphaAnimationAndCodecConstraints、PlanSnapshotsCannotBeForgedOrMutatedByHeaders；质量/背景/版本进入完整身份，无 resize/crop/首帧提取 |
 | P3.2 #1—3 | routes.go、managed_source.go、blob.go；SourceMapping/MappingRejectsDuplicate*、SpoolDecodedConfirmsEOFAndBoundsBothSizes、ManagedProviderCompressedSourceAndPrivateIsolation；固定源 Accept/identity，不递归公开 URL |

@@ -1,6 +1,7 @@
 package caching
 
 import (
+	"context"
 	"fmt"
 
 	"github.com/omalloc/tavern/api/defined/v1/storage"
@@ -40,10 +41,12 @@ func (o *cachingOption) bindRepresentations(store storage.Storage) error {
 	}
 	provider, ok := store.(representation.Provider)
 	if !ok || provider.RepresentationManager() == nil {
-		return fmt.Errorf("representation.enabled requires durable storage.representation.state_directory")
+		return fmt.Errorf("representation.enabled requires storage.representation binding")
 	}
-	if o.RepresentationIsolationScope != "" {
-		config.IsolationScope += "\x00upstream\x00" + o.RepresentationIsolationScope
+	if !o.IncludeQueryInCacheKey {
+		if err := provider.RepresentationManager().BindQuerylessNamespace(context.Background(), config.Namespace); err != nil {
+			return fmt.Errorf("bind representation query policy: %w", err)
+		}
 	}
 	o.representation = &representationLookup{manager: provider.RepresentationManager(), namespace: config.Namespace, isolationScope: config.IsolationScope, writes: true}
 	return nil

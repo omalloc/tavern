@@ -1,0 +1,12 @@
+=== RUN   TestCDNAuditOneByteLookupOpensEveryChunk
+DEBUG msg=creating indexdb pebble in path /var/folders/0q/fdkb8kf95nd6yc7xgk1fgvhc0000gn/T/TestCDNAuditOneByteLookupOpensEveryChunk164518213/001/.index
+DEBUG msg=start evict goroutine for /var/folders/0q/fdkb8kf95nd6yc7xgk1fgvhc0000gn/T/TestCDNAuditOneByteLookupOpensEveryChunk164518213/001
+INFO msg=start sync load metadata from /var/folders/0q/fdkb8kf95nd6yc7xgk1fgvhc0000gn/T/TestCDNAuditOneByteLookupOpensEveryChunk164518213/001
+INFO msg=bucket /var/folders/0q/fdkb8kf95nd6yc7xgk1fgvhc0000gn/T/TestCDNAuditOneByteLookupOpensEveryChunk164518213/001 sync load metadata(0/chunk-0) done. per-second 0(0)/s
+WARN msg=save kvstore domain example.com failed
+WARN msg=save kvstore domain example.com failed
+    index_test.go:500: 1-byte Range lookup before reading response: opened chunks=4 of 4
+    index_test.go:504: unrequested last chunk missing: first-byte lookup err=key not found opened chunks=4
+--- PASS: TestCDNAuditOneByteLookupOpensEveryChunk (0.07s)
+PASS
+ok  	github.com/omalloc/tavern/storage/representation	0.537s

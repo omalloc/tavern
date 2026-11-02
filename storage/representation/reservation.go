@@ -16,6 +16,8 @@ type Reservation struct {
 	id              string
 	key             object.ResourceKey
 	selector        object.VariantRef
+	previous        *object.VariantRef
+	limit           int
 	incarnation     string
 	purgeEpoch      uint64
 	revalidateEpoch uint64
@@ -55,10 +57,10 @@ func (r *IndexRepository) Reserve(ctx context.Context, key object.ResourceKey, s
 			return nil, err
 		}
 	}
-	return r.reserveLocked(ctx, key, root.Resource, selector, limit)
+	return r.reserveLocked(ctx, key, root.Resource, selector, nil, limit)
 }
 
-func (r *IndexRepository) reserveLocked(ctx context.Context, key object.ResourceKey, record *object.ResourceRecord, selector object.VariantRef, limit int) (*Reservation, error) {
+func (r *IndexRepository) reserveLocked(ctx context.Context, key object.ResourceKey, record *object.ResourceRecord, selector object.VariantRef, previous *object.VariantRef, limit int) (*Reservation, error) {
 	shard := r.shard(key)
 	if shard.pending == nil {
 		shard.pending = make(map[object.IDHash]map[string]*Reservation)
@@ -108,15 +110,34 @@ func (r *IndexRepository) reserveLocked(ctx context.Context, key object.Resource
 			break
 		}
 	}
-	if !known && len(distinct) >= limit {
+	count := len(distinct)
+	if previous != nil {
+		found := false
+		for _, ref := range record.Variants {
+			if sameReference(ref, *previous) && ref.SelectionKind == selector.SelectionKind {
+				found = true
+			}
+		}
+		if !found {
+			return nil, ErrSuperseded
+		}
+		// Pending candidates remain counted. Two different replacements cannot
+		// spend the same retired slot to exceed the resource's choice budget.
+		count--
+	}
+	if !known && count >= limit {
 		return nil, ErrSelectorLimit
 	}
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	reservation := &Reservation{id: uuid.NewString(), key: key, selector: selector.Clone(),
+	reservation := &Reservation{id: uuid.NewString(), key: key, selector: selector.Clone(), limit: limit,
 		incarnation: record.Incarnation, purgeEpoch: record.PurgeEpoch,
 		revalidateEpoch: record.RevalidateEpoch, routingEpoch: record.RoutingEpoch}
+	if previous != nil {
+		copy := previous.Clone()
+		reservation.previous = &copy
+	}
 	if pending == nil {
 		pending = make(map[string]*Reservation)
 	}

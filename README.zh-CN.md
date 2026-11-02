@@ -120,7 +120,7 @@ curl -sS -D - -o /dev/null http://localhost:8080/path/to/object
 
 - 单区间、后缀区间、开放区间和多区间响应
 - 部分命中与可配置的缺失区间填充
-- disk/Pebble 可选择启用持久化 Vary 表示缓存，默认关闭；参见[启用与回滚](docs/vary-representation-operations.md)。旧 Vary 仍旁路，`vary_ignore_key` 继续忽略
+- disk/Pebble 和纯 memory 均可选择启用 v2 Vary 表示缓存，默认关闭；磁盘模式持久化恢复，内存模式重启清空。参见[启用与回滚](docs/vary-representation-operations.md)。旧 Vary 仍旁路，`vary_ignore_key` 继续忽略
 - 托管 JPEG/PNG/WebP 图片路由通过经验证的 HTTP worker 执行，默认关闭；部署后端必须通过实际转换矩阵检查，参见[图片路由与回滚](docs/managed-image-operations.md)，Tavern 仍保持无 CGO 构建
 - 表示缓存、转换、排队与回收使用有界指标，配有 [Grafana 面板和运行说明](docs/representation-observability.md)
 - 可选择是否把查询参数纳入缓存键

@@ -1,10 +1,12 @@
 # 托管图片路由：启用、HTTP 行为与回滚
 
-P3.4 已接通公开转换入口，默认关闭。启用要求持久化 representation 缓存可用、查询参数参与缓存键、实际 HTTP worker 完整通过当前声明的输入输出矩阵检查。未部署后端或后端检查失败会拒绝启动，不会静默变成普通代理。
+> **验收状态（2026-11-02）：整个 v2 系列验收均不通过。** 本文记录已有实现与操作方式，不构成当前发布通过结论；业务缺口、性能及维护性问题见 [v2 变更审查结论](v2-change-requirements-review.md)。
+
+P3.4 已接通公开转换入口，默认关闭。启用要求 representation 管理器可用（磁盘持久化或纯 memory 模式）、查询参数参与缓存键、实际 HTTP worker 完整通过当前声明的输入输出矩阵检查。未部署后端或后端检查失败会拒绝启动，不会静默变成普通代理。
 
 ## 启用顺序
 
-1. 按 [透明 v2 操作说明](vary-representation-operations.md) 配置 disk/Pebble bucket 和 storage.representation.state_directory。保留控制目录、bucket 拓扑和单写入者约束。
+1. 按 [透明 v2 操作说明](vary-representation-operations.md) 配置 disk/Pebble 或纯 memory，并添加 `storage.representation: {}`。磁盘默认在 bucket 根目录下使用 `.tavern-v2/`，可显式设置 state_directory；已有外部目录应保留原配置。磁盘模式保留控制目录、拓扑和单写入者约束；内存模式重启后重新取源和转换，不恢复旧成品。
 2. 部署 worker，按 [worker 契约](image-worker-contract.md) 使用独立检查命令验收实际地址和 encoder_version。只声明已经通过的转换组合。
 3. 配置单一路由与小规模预算，再开启 transform.enabled 和 caching.representation.enabled。服务器启动还会执行一次矩阵检查；检查成功后才接受转换流量。
 4. 使用代表性图片校准字节、像素、并发和超时预算，观察回源与转换次数，再扩大路由。
@@ -109,6 +111,8 @@ mode 为 auto 时，没有明确 image 类型偏好的 Accept 保留源图；有
 关闭 transform.enabled；需要时同时关闭 caching.representation.enabled。保留 routes、参数名、backend.capabilities、命名空间、storage.representation 和已有目录，重新启动以完成停写交接。关闭后不联系 worker，保留的路由仍负责把 `?format=...` 的 PURGE 映射到对应源集合，因此回滚期间的失效会在重新开启后继续生效。
 
 保留路由下的 GET/HEAD 暂停为 no-store 503，仍带协商 Vary；不会把显式目标请求当普通 URL 直送源站，也不会把任意源 MIME 冒充目标输出。未匹配的普通请求继续透明代理，PURGE 等控制方法继续经过原处理链。若同时启用了 response_sharing，关闭 v2 读取时也要关闭 response_sharing.enabled；转换失败时允许源图回退的策略属于已启用托管路由的 fallback_to_source 配置，暂停路由默认明确返回错误。
+
+`mode: explicit` 的 format 必填规则仅约束图片请求。PURGE 可以使用目录 URL、没有 format 参数的源 URL，或带合法转换参数的公开 URL；参数移除继续使用同一映射规则，覆盖整个源资源集合。
 
 不可直接删掉路由历史、改变源参数映射、命名空间或复用控制目录给另一套拓扑。首版不支持热替换这些映射；先完成失效和维护迁移，再调整配置。保留完整路由定义也允许在 worker 暂时不可用时关闭转换并继续执行正确 PURGE。
 

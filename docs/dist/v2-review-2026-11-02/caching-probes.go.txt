@@ -1,0 +1,86 @@
+func TestCDNAuditRangeMissingChunkFetchesWholeObject(t *testing.T) {
+ var calls atomic.Int32
+ ranges := make(chan string, 4)
+ f := newOriginFixture(t, func(w http.ResponseWriter, r *http.Request) {
+  calls.Add(1); ranges <- r.Header.Get("Range")
+  w.Header().Set("Cache-Control", "max-age=600"); w.Header().Set("ETag", `"version-1"`)
+  http.ServeContent(w, r, "file", time.Unix(1700000000, 0), strings.NewReader(strings.Repeat("x", 256)))
+ })
+ f.get(t, http.Header{"Range": {"bytes=0-63"}})
+ resp, body := f.get(t, http.Header{"Range": {"bytes=128-191"}})
+ first, second := <-ranges, <-ranges
+ t.Logf("origin ranges=%q,%q; second client status=%d bytes=%d; calls=%d", first, second, resp.StatusCode, len(body), calls.Load())
+ if first != "bytes=0-63" || second != "" || len(body) != 64 { t.Fatal("observed behavior changed") }
+}
+
+func TestCDNAuditSmallRangesNeverWarm(t *testing.T) {
+ var calls atomic.Int32
+ f := newOriginFixture(t, func(w http.ResponseWriter, r *http.Request) {
+  calls.Add(1)
+  w.Header().Set("Cache-Control", "max-age=600"); w.Header().Set("ETag", `"version-1"`)
+  http.ServeContent(w, r, "file", time.Unix(1700000000, 0), strings.NewReader(strings.Repeat("x", 256)))
+ })
+ f.opt.FillRangePercent = 100
+ for range 2 { f.get(t, http.Header{"Range": {"bytes=10-19"}}) }
+ refs := len(f.root(t).Resource.Variants)
+ t.Logf("fill_range_percent=100; repeat bytes=10-19: origin calls=%d published representations=%d", calls.Load(), refs)
+ if calls.Load() != 2 || refs != 0 { t.Fatal("observed behavior changed") }
+}
+
+func TestCDNAuditPrefetchBypassesProcessor(t *testing.T) {
+ seen := make(chan string, 2)
+ f := newOriginFixture(t, func(w http.ResponseWriter, r *http.Request) {
+  seen <- r.Header.Get("Range")+"|X-Prefetch="+r.Header.Get(protocol.ProtocolPrefetchCacheKey)
+  w.Header().Set("Cache-Control", "max-age=600")
+  http.ServeContent(w, r, "file", time.Unix(1700000000, 0), strings.NewReader(strings.Repeat("x", 256)))
+ })
+ f.get(t, http.Header{"Range": {"bytes=0-63"}, protocol.ProtocolPrefetchCacheKey: {"1"}})
+ root := f.root(t)
+ selected, err := f.repo.Lookup(t.Context(), f.key, nil)
+ if err != nil { t.Fatal(err) }
+ upstream := <-seen
+ t.Logf("prefetch origin request=%q; variants=%d complete=%t", upstream, len(root.Resource.Variants), selected.Representation.HasComplete())
+ if upstream != "bytes=0-63|X-Prefetch=1" || selected.Representation.HasComplete() { t.Fatal("observed behavior changed") }
+}
+
+func TestCDNAuditFreshConditionalRequestStillHitsOrigin(t *testing.T) {
+ var calls atomic.Int32
+ f := newOriginFixture(t, func(w http.ResponseWriter, r *http.Request) {
+  calls.Add(1)
+  w.Header().Set("Cache-Control", "max-age=600"); w.Header().Set("ETag", `"v1"`)
+  http.ServeContent(w, r, "file", time.Unix(1700000000, 0), strings.NewReader("cached"))
+ })
+ f.get(t, nil)
+ resp, _ := f.get(t, http.Header{"If-None-Match": {`"v1"`}})
+ t.Logf("fresh cached object + matching If-None-Match: status=%d cache=%s origin calls=%d", resp.StatusCode, resp.Header.Get(protocol.ProtocolCacheStatusKey), calls.Load())
+ if resp.StatusCode != 304 || calls.Load() != 2 { t.Fatal("observed behavior changed") }
+}
+
+func TestCDNAuditNoCacheRequestNeitherValidatesNorUpdates(t *testing.T) {
+ var phase atomic.Bool
+ conditions := make(chan string, 4)
+ f := newOriginFixture(t, func(w http.ResponseWriter, r *http.Request) {
+  conditions <- r.Header.Get("If-None-Match")
+  if phase.Load() { originImage(w, "new", "", `"new"`) } else { originImage(w, "old", "", `"old"`) }
+ })
+ f.get(t, nil); <-conditions
+ phase.Store(true)
+ _, refreshed := f.get(t, http.Header{"Cache-Control": {"no-cache"}})
+ condition := <-conditions
+ _, following := f.get(t, nil)
+ t.Logf("no-cache origin condition=%q response=%q; next ordinary response=%q", condition, refreshed, following)
+ if condition != "" || refreshed != "new" || following != "old" { t.Fatal("observed behavior changed") }
+}
+
+func TestCDNAuditNoCacheResponseNeverStoredForValidation(t *testing.T) {
+ var calls atomic.Int32
+ f := newOriginFixture(t, func(w http.ResponseWriter, r *http.Request) {
+  calls.Add(1)
+  w.Header().Set("Cache-Control", "no-cache"); w.Header().Set("ETag", `"v1"`); w.Header().Set("Content-Length", "4")
+  fmt.Fprint(w, "body")
+ })
+ for range 2 { f.get(t, nil) }
+ refs := len(f.root(t).Resource.Variants)
+ t.Logf("response no-cache + ETag: origin calls=%d stored representations=%d", calls.Load(), refs)
+ if calls.Load() != 2 || refs != 0 { t.Fatal("observed behavior changed") }
+}

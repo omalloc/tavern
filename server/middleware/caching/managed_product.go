@@ -2,6 +2,7 @@ package caching
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -252,7 +253,8 @@ func (p *managedProvider) writeProduct(ctx context.Context, source *managedSourc
 		if err != nil {
 			return err
 		}
-		n, writeErr := io.CopyN(writer, reader, int64(min(md.BlockSize, md.Size-offset)))
+		digest := sha256.New()
+		n, writeErr := io.CopyN(io.MultiWriter(digest, writer), reader, int64(min(md.BlockSize, md.Size-offset)))
 		closeErr := writer.Close()
 		if writeErr != nil {
 			return writeErr
@@ -265,6 +267,10 @@ func (p *managedProvider) writeProduct(ctx context.Context, source *managedSourc
 		}
 		md.Parts.Remove(index)
 		md.Chunks.Set(index)
+		if md.Representation.ChunkDigests == nil {
+			md.Representation.ChunkDigests = make(map[uint32]string)
+		}
+		md.Representation.ChunkDigests[index] = hex.EncodeToString(digest.Sum(nil))
 		if err = bucket.Store(ctx, md); err != nil {
 			return err
 		}

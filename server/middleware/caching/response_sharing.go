@@ -348,7 +348,14 @@ func (b *sharingBufferBody) Read(p []byte) (int, error) {
 	if b.reader == nil {
 		return 0, io.ErrClosedPipe
 	}
-	return b.reader.Read(p)
+	n, err := b.reader.Read(p)
+	if n > 0 && b.reader.Len() == 0 {
+		// This buffer has already reached the origin's EOF. Report completion
+		// with the last bytes so the cache writer can publish before the client
+		// receives Content-Length bytes and is free to close the connection.
+		err = io.EOF
+	}
+	return n, err
 }
 func (b *sharingBufferBody) Close() error {
 	b.mu.Lock()

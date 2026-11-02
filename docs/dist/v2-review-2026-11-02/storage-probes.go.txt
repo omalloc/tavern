@@ -1,0 +1,51 @@
+func TestCDNAuditExactPurgeCapacityCannotCompact(t *testing.T) {
+ f := newFixture(t)
+ repo, err := representation.NewIndexRepository(f.controls, f.bucket.ID(), func(ctx context.Context, loc string, id *object.ID) (*object.Metadata, error) { return f.bucket.Lookup(ctx, id) }, representation.WithBarrierLimit(2))
+ if err != nil { t.Fatal(err) }
+ for _, raw := range []string{"https://example.com/a", "https://example.com/b"} {
+  if err := repo.InvalidateURL(t.Context(), raw, representation.InvalidateHard); err != nil { t.Fatal(err) }
+ }
+ compact, err := repo.CompactBarriers(t.Context(), 128)
+ if err != nil { t.Fatal(err) }
+ err = repo.InvalidateURL(t.Context(), "https://example.com/c", representation.InvalidateHard)
+ t.Logf("catalog capacity=2, distinct PURGEs=3: compact removed=%d error=%v", compact.Removed, err)
+ if compact.Removed != 0 || !errors.Is(err, storage.ErrInvalidationBudget) { t.Fatal("observed behavior changed") }
+}
+
+type cdnAuditReadBucket struct {
+ storage.DurableRepresentationBucket
+ opens int
+ missingLast bool
+}
+func (b *cdnAuditReadBucket) ReadChunkFile(ctx context.Context, id *object.ID, index uint32) (storage.File, string, error) {
+ b.opens++
+ if b.missingLast && index == 3 { return nil, "", storage.ErrKeyNotFound }
+ return b.DurableRepresentationBucket.ReadChunkFile(ctx, id, index)
+}
+func TestCDNAuditOneByteLookupOpensEveryChunk(t *testing.T) {
+ f := diskFixture(t, "")
+ probe := &cdnAuditReadBucket{DurableRepresentationBucket: f.bucket.(storage.DurableRepresentationBucket)}
+ repo, err := representation.NewIndexRepository(f.controls, f.bucket.ID(), func(ctx context.Context, loc string, id *object.ID) (*object.Metadata, error) { return f.bucket.Lookup(ctx, id) }, representation.WithDurability(probe), representation.WithWriteback(), representation.WithClock(func() time.Time { return f.now }))
+ if err != nil { t.Fatal(err) }
+ f.repo = repo
+ ref, md := f.candidate(t, nil, nil, "audit", strings.Repeat("x", 64), f.now.Unix())
+ md.Size = 256; md.Headers.Set("Content-Length", "256")
+ for i := uint32(0); i < 4; i++ {
+  writer, _, err := f.bucket.WriteChunkFile(t.Context(), md.ID, i)
+  if err != nil { t.Fatal(err) }
+  if _, err := io.WriteString(writer, strings.Repeat("x", 64)); err != nil { t.Fatal(err) }
+  if err := writer.Close(); err != nil { t.Fatal(err) }
+  md.Chunks.Set(i)
+ }
+ commitCandidate(t, f, ref, md)
+ probe.opens = 0
+ selected, err := repo.LookupRead(t.Context(), f.key, http.Header{"Range": {"bytes=0-0"}})
+ if err != nil { t.Fatal(err) }
+ selected.Lease.Close()
+ t.Logf("1-byte Range lookup before reading response: opened chunks=%d of 4", probe.opens)
+ if probe.opens != 4 { t.Fatal("observed behavior changed") }
+ probe.opens = 0; probe.missingLast = true
+ _, err = repo.LookupRead(t.Context(), f.key, http.Header{"Range": {"bytes=0-0"}})
+ t.Logf("unrequested last chunk missing: first-byte lookup err=%v opened chunks=%d", err, probe.opens)
+ if !errors.Is(err, storage.ErrKeyNotFound) { t.Fatal("observed behavior changed") }
+}
