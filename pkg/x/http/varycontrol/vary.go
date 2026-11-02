@@ -19,7 +19,10 @@ type Key []string
 type selectedHeader struct {
 	Name    string `json:"name"`
 	Present bool   `json:"present"`
-	Value   string `json:"value,omitempty"`
+	// JSON encodes bytes as base64, preserving opaque HTTP field values even
+	// when they are not valid UTF-8.
+	// Use a distinct field name so old plaintext v2 keys cannot alias these.
+	Value []byte `json:"value_bytes,omitempty"`
 }
 
 func (k Key) String() string {
@@ -54,12 +57,12 @@ func (k Key) VaryData(h http.Header) string {
 	for _, key := range k {
 		values, present := headerValues(h, key)
 		for i := range values {
-			values[i] = strings.TrimSpace(values[i])
+			values[i] = strings.Trim(values[i], " \t")
 		}
 		fields = append(fields, selectedHeader{
 			Name:    strings.ToLower(key),
 			Present: present,
-			Value:   strings.Join(values, ","),
+			Value:   []byte(strings.Join(values, ",")),
 		})
 	}
 
