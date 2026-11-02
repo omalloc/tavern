@@ -1,7 +1,7 @@
 strict: true
 pidfile: /tmp/tavern.pid
 logger:
-  level: info
+  level: debug
   caller: false
   traceid: true
   nopid: false
@@ -99,7 +99,7 @@ storage:
   diraware:
     enabled: false # 默认 true
     store_path: /tmp/.diraware
-    auto_clear: true 
+    auto_clear: true
   buckets:
     - path: inmemory
       driver: memory
