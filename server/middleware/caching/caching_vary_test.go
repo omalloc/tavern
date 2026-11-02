@@ -2,9 +2,11 @@ package caching
 
 import (
 	"errors"
+	"fmt"
 	"net/http"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -17,6 +19,42 @@ import (
 	"github.com/omalloc/tavern/storage/bucket/memory"
 	"github.com/omalloc/tavern/storage/sharedkv"
 )
+
+func TestStoreRootMetadataConcurrentMerge(t *testing.T) {
+	req, _ := http.NewRequestWithContext(t.Context(), http.MethodGet, "http://example.com/concurrent", nil)
+	base := newVaryTestCaching(t, req)
+	const variants = 32
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	for i := 0; i < variants; i++ {
+		root := base.md.Clone()
+		root.Flags = object.FlagVaryIndex
+		root.Size = 0
+		root.Headers = http.Header{"Vary": {"User-Agent"}}
+		root.VirtualKey = []string{fmt.Sprintf("variant-%d", i)}
+		c := &Caching{req: req, bucket: base.bucket, opt: base.opt, rootmd: root}
+		wg.Go(func() {
+			<-start
+			if err := c.storeRootMetadata(); err != nil {
+				t.Errorf("store root: %v", err)
+			}
+		})
+	}
+	close(start)
+	wg.Wait()
+	root, err := base.bucket.Lookup(t.Context(), base.rootID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(root.VirtualKey) != variants {
+		t.Fatalf("stored %d variants, want %d", len(root.VirtualKey), variants)
+	}
+	for i := 0; i < variants; i++ {
+		if key := fmt.Sprintf("variant-%d", i); !slices.Contains(root.VirtualKey, key) {
+			t.Errorf("lost variant %q", key)
+		}
+	}
+}
 
 func newVaryTestCaching(t *testing.T, req *http.Request) *Caching {
 	t.Helper()

@@ -1,6 +1,7 @@
 package caching
 
 import (
+	"hash/fnv"
 	"sync"
 
 	storagev1 "github.com/omalloc/tavern/api/defined/v1/storage"
@@ -8,26 +9,19 @@ import (
 
 var _ storagev1.ResourceLocker = (*Caching)(nil)
 
-var globalLocker = &resourceLocker{
-	locks: make(map[string]*sync.RWMutex),
-}
+var globalLocker = &resourceLocker{}
 
 type resourceLocker struct {
-	mu    sync.Mutex
-	locks map[string]*sync.RWMutex
+	// Fixed stripes bound memory independently of URL cardinality. Hash
+	// collisions only serialize unrelated objects; the same key always uses
+	// the same lock, including while other callers are waiting for it.
+	locks [256]sync.RWMutex
 }
 
 func (r *resourceLocker) getLock(key string) *sync.RWMutex {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-
-	if l, ok := r.locks[key]; ok {
-		return l
-	}
-
-	l := &sync.RWMutex{}
-	r.locks[key] = l
-	return l
+	h := fnv.New64a()
+	_, _ = h.Write([]byte(key))
+	return &r.locks[h.Sum64()%uint64(len(r.locks))]
 }
 
 // Key implements storage.ResourceLocker.

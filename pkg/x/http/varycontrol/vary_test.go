@@ -1,9 +1,34 @@
 package varycontrol
 
 import (
+	"bufio"
 	"net/http"
+	"strings"
 	"testing"
 )
+
+func TestVaryDataPreservesOpaqueHeaderBytes(t *testing.T) {
+	key := Clean("X-Mode")
+	seen := make(map[string]string)
+	for _, value := range []string{"\x80", "\x81", "\xff", "\ufffd", "gA==", "plain", "\u00a0plain"} {
+		raw := "GET / HTTP/1.1\r\nHost: example.com\r\nX-Mode: " + value + "\r\n\r\n"
+		req, err := http.ReadRequest(bufio.NewReader(strings.NewReader(raw)))
+		if err != nil {
+			t.Fatalf("parse header %q: %v", value, err)
+		}
+		data := key.VaryData(req.Header)
+		if data == `v2:[{"name":"x-mode","present":true,"value":"gA=="}]` {
+			t.Fatal("encoded value collided with an older plaintext v2 key")
+		}
+		if previous, ok := seen[data]; ok {
+			t.Fatalf("headers %q and %q share Vary key %s", previous, value, data)
+		}
+		seen[data] = value
+		if padded := key.VaryData(http.Header{"X-Mode": {" \t" + value + "\t "}}); padded != data {
+			t.Fatalf("HTTP optional whitespace changed key for %q", value)
+		}
+	}
+}
 
 func TestCleanCanonicalizesAndDeduplicatesFieldNames(t *testing.T) {
 	got := Clean("accept-encoding, User-Agent", "ACCEPT-ENCODING")
