@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -87,11 +88,13 @@ func (r *PurgePlugin) HandleFunc(next http.HandlerFunc) http.HandlerFunc {
 			return
 		}
 
-		ipPort := strings.Split(req.RemoteAddr, ":")
-		if _, ok := r.allowAddr[ipPort[0]]; !ok {
-			w.WriteHeader(http.StatusForbidden)
-			_metricPurgeRequestsTotal.WithLabelValues("403").Inc()
-			return
+		if !isUnixSocket(req) {
+			ipPort := strings.Split(req.RemoteAddr, ":")
+			if _, ok := r.allowAddr[ipPort[0]]; !ok {
+				w.WriteHeader(http.StatusForbidden)
+				_metricPurgeRequestsTotal.WithLabelValues("403").Inc()
+				return
+			}
 		}
 
 		storeUrl := req.Header.Get(protocol.InternalStoreUrl)
@@ -108,7 +111,7 @@ func (r *PurgePlugin) HandleFunc(next http.HandlerFunc) http.HandlerFunc {
 
 		ctrl := parsePurgeControl(req.Header.Get(r.opt.HeaderName))
 
-		r.log.Debugf("purge request %s received: %s %s", ipPort[0], storeUrl, ctrl.String())
+		r.log.Debugf("purge request %s received: %s %s", req.RemoteAddr, storeUrl, ctrl.String())
 
 		current := storage.Current()
 
@@ -214,4 +217,10 @@ func parsePurgeControl(headValue string) storagev1.PurgeControl {
 
 	// 没有配置推送选项
 	return ctrl
+}
+
+func isUnixSocket(req *http.Request) bool {
+	addr := req.Context().Value(http.LocalAddrContextKey)
+	_, ok := addr.(*net.UnixAddr)
+	return ok
 }
