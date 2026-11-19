@@ -19,7 +19,7 @@ jobs:
     - name: Set up Go
       uses: actions/setup-go@v4
       with:
-        go-version: '1.25'
+        go-version-file: go.mod
 
     - name: Build
       run: make build
@@ -31,4 +31,32 @@ jobs:
         echo "CacheServer is running"
 
     - name: Test
-      run: go test -count=1 -v ./...
+      run: go test -count=1 -v -coverprofile=coverage.txt ./...
+
+    - name: Upload coverage profile
+      uses: actions/upload-artifact@v4
+      with:
+        name: code-coverage
+        path: coverage.txt
+        if-no-files-found: error
+
+  coverage:
+    name: Go coverage report
+    if: github.event_name == 'pull_request'
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
+      pull-requests: write
+    steps:
+    - name: Compare coverage with main
+      id: report
+      uses: fgrosse/go-coverage-report@v1.5.0
+      with:
+        skip-comment: ${{ github.event.pull_request.head.repo.full_name != github.repository || github.event.pull_request.user.login == 'dependabot[bot]' }}
+
+    - name: Show coverage in job summary
+      env:
+        REPORT: ${{ steps.report.outputs.coverage_report }}
+      run: printf '%s\n' "$REPORT" >> "$GITHUB_STEP_SUMMARY"
